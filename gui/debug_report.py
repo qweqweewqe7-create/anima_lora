@@ -24,8 +24,8 @@ from pathlib import Path
 
 from scripts.daemon import config as _cfg
 
-_DAEMON_LOG_LINES = 200  # tail of daemon.log — where a dead-worker traceback lands
-_JOB_STDOUT_LINES = 40  # per-job stdout tail (only for non-done jobs)
+_DAEMON_LOG_LINES = 2000  # read window for daemon.log before filtering to today
+_JOB_STDOUT_LINES = 200  # per-job stdout tail (only for non-done jobs)
 _MAX_JOBS = 8  # newest N job dirs
 
 
@@ -42,6 +42,28 @@ def _tail_lines(path: Path, n: int) -> str:
         return ""
     text = blob.decode("utf-8", errors="replace")
     return "\n".join(text.splitlines()[-n:])
+
+
+def _today_log_lines(path: Path, n: int, today: str) -> str:
+    """Today's ``daemon.log`` records (``YYYY-MM-DD`` prefix == ``today``).
+
+    The log accumulates across many daemon restarts, so a raw tail buries the
+    current session under weeks of history. We keep only records stamped today,
+    plus untimestamped continuation lines (e.g. traceback bodies) that follow a
+    today record so a worker crash stays intact.
+    """
+    tail = _tail_lines(path, n)
+    if not tail:
+        return ""
+    kept: list[str] = []
+    in_today = False
+    for line in tail.splitlines():
+        stamped = len(line) >= 10 and line[:4].isdigit() and line[4] == "-"
+        if stamped:
+            in_today = line.startswith(today)
+        if in_today:
+            kept.append(line)
+    return "\n".join(kept)
 
 
 def _read_json(path: Path) -> dict | None:
@@ -127,9 +149,10 @@ def build_debug_report() -> str:
     lines.extend(_pidfile_block())
     lines.append("")
 
-    lines.append(f"## daemon.log (last {_DAEMON_LOG_LINES} lines)")
-    log_tail = _tail_lines(_cfg.DAEMON_LOG, _DAEMON_LOG_LINES)
-    lines.append(log_tail or "(no daemon.log)")
+    today = datetime.now().strftime("%Y-%m-%d")
+    lines.append(f"## daemon.log (today, {today})")
+    log_tail = _today_log_lines(_cfg.DAEMON_LOG, _DAEMON_LOG_LINES, today)
+    lines.append(log_tail or "(no daemon.log entries for today)")
     lines.append("")
 
     jobs = _recent_jobs()
