@@ -33,7 +33,7 @@ target_res = [1024, 896]
 #   make preprocess ARGS="--no_drop_lowres"      # keep every image
 #   make preprocess ARGS="--drop_lowres"         # force the configured threshold
 drop_lowres_images = true
-min_pixels = 500000
+min_pixels = 250000
 
 # Free-aspect token-band resize ("free-fit"). When true, images are NOT snapped
 # to one of the discrete per-tier buckets; instead the native aspect ratio is

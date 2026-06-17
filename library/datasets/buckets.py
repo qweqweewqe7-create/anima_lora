@@ -224,6 +224,24 @@ def token_counts_for_resos(resos) -> set:
     return {(w // 16) * (h // 16) for w, h in resos}
 
 
+def is_freefit_token_counts(counts) -> bool:
+    """True if any token count falls outside the canonical bucket-table catalog.
+
+    Free-fit (``docs/proposal/free_aspect_token_band_resize.md``) lands the patch
+    token count *anywhere* inside a tier's band, so a free-fit pool contains counts
+    that are not ``(W//16)*(H//16)`` of any ``CONSTANT_TOKEN_BUCKETS`` entry. Under
+    the static (non-``dynamic_seq``) compile path each such count is its own dynamo
+    graph → graph explosion + compile-cache guard poisoning
+    (``project_compile_cache_guard_poisoning``). Callers self-describing their token
+    pool off the cache use this to mirror train.py's "free-fit ⇒ force
+    compile_dynamic_seq" auto-enable (the bespoke distill loops carry their own copy
+    of that guard since train.py's never reaches them — see
+    ``project_daemon_wiring_pattern``).
+    """
+    table = token_counts_for_resos(all_constant_token_buckets())
+    return any(c not in table for c in counts)
+
+
 def snap_sample_size(width: int, height: int) -> Tuple[int, int]:
     """Snap a requested sample (W, H) to the DiT's 16px pixel grid.
 
