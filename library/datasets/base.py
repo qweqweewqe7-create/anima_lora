@@ -544,7 +544,12 @@ class BaseDataset(torch.utils.data.Dataset):
         self.image_data[info.image_key] = info
         self.image_to_subset[info.image_key] = subset
 
-    def make_buckets(self, constant_token_buckets: bool = False, target_res=None):
+    def make_buckets(
+        self,
+        constant_token_buckets: bool = False,
+        target_res=None,
+        freefit: bool = False,
+    ):
         """Assign every image to its nearest bucket resolution.
 
         With ``constant_token_buckets`` (the only training mode) buckets come
@@ -553,6 +558,12 @@ class BaseDataset(torch.utils.data.Dataset):
         AR-snaps. ``target_res`` is preprocess-only and inert here: the on-disk
         caches decide which tiers are present, and the compile token-family budget
         is derived from the populated buckets (train.py), not from this arg.
+
+        With ``freefit`` the predefined bucket set is instead the **union of the
+        distinct on-disk resized sizes** (read here as ``info.image_size``), so
+        each free-fit latent exact-matches its own (W, H) and nothing AR-snaps.
+        The token-family budget is still derived from the populated buckets — all
+        within one tier's band, so ``compile_dynamic_seq`` keeps them at one graph.
         """
         logger.info("loading image sizes.")
         for info in tqdm(self.image_data.values()):
@@ -565,13 +576,22 @@ class BaseDataset(torch.utils.data.Dataset):
         # restrict_to_byg_tuples) re-buckets identically.
         self._constant_token_buckets = constant_token_buckets
         self._target_res = target_res
+        self._freefit = freefit
 
         if self.bucket_manager is None:
             self.bucket_manager = BucketManager()
-            self.bucket_manager.make_buckets(
-                constant_token_buckets=constant_token_buckets,
-                target_res=target_res,
-            )
+            if freefit:
+                freefit_resos = {
+                    tuple(info.image_size)
+                    for info in self.image_data.values()
+                    if info.image_size is not None
+                }
+                self.bucket_manager.make_buckets(freefit_resos=freefit_resos)
+            else:
+                self.bucket_manager.make_buckets(
+                    constant_token_buckets=constant_token_buckets,
+                    target_res=target_res,
+                )
 
         img_ar_errors = []
         for image_info in self.image_data.values():
@@ -1533,6 +1553,7 @@ class BaseDataset(torch.utils.data.Dataset):
         self.make_buckets(
             constant_token_buckets=getattr(self, "_constant_token_buckets", True),
             target_res=getattr(self, "_target_res", None),
+            freefit=getattr(self, "_freefit", False),
         )
         return (len(kept), dropped)
 

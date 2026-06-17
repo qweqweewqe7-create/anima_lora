@@ -295,6 +295,83 @@ def choose_edge(width: int, height: int, target_res) -> int:
     return best_edge
 
 
+# ---------------------------------------------------------------------------
+# Free-fit ("free-aspect token-band") solver — see
+# docs/proposal/free_aspect_token_band_resize.md.
+#
+# Instead of snapping an image to one of the discrete CONSTANT_TOKEN_BUCKETS,
+# free-fit preserves the native aspect ratio and lands the patch-grid token
+# count *anywhere* inside the tier's token band ([4032, 4200] for 1024). Each
+# forward still runs at its true token count with zero padding; under
+# compile_dynamic_seq the whole band is one block graph, so the finer shape
+# granularity is free at compile time. Pure, deterministic functions — no I/O.
+
+DEFAULT_FREEFIT_MAX_RATIO = 4.0
+
+
+def freefit_band_for_edge(edge: int) -> tuple[int, int]:
+    """Token-count band ``(lo, hi)`` for a single tier — the free-fit search range.
+
+    Equals the ``(min, max)`` token count of the tier's discrete buckets (1024 →
+    ``(4032, 4200)``; 512 → ``(1008, 1024)``). Free-fit lands the patch-grid
+    token count anywhere in this closed interval, so the entire band collapses to
+    one ``compile_dynamic_seq`` graph at train time. A single-family tier (e.g.
+    768 → ``(2160, 2160)``) has no band freedom and free-fit degrades to the
+    snap table's divisor grids for it.
+    """
+    return token_count_range((edge,))
+
+
+def freefit_bucket(
+    width: int,
+    height: int,
+    band: tuple[int, int],
+    max_ratio: float = DEFAULT_FREEFIT_MAX_RATIO,
+    patch: int = 16,
+    rope_cap: int = 256,
+) -> tuple[int, int]:
+    """Native-aspect resize target whose patch grid fills the token ``band``.
+
+    Returns pixel ``(W, H)`` (both multiples of ``patch``) whose patch grid
+    ``(W//patch)*(H//patch)`` lies in ``[lo, hi]`` and whose aspect ratio is as
+    close as possible to the image's — clamped to ``[1/max_ratio, max_ratio]`` —
+    subject to ``max(W//patch, H//patch) <= rope_cap``. Deterministic in its
+    inputs.
+
+    Aspect distortion is sub-patch by construction (the cropped residual on the
+    covering axis is < ``patch`` px). Crop is zero unless the ratio clamp fired
+    (a degenerate input the caller explicitly allowed), in which case the caller
+    cover-crops to the clamped aspect just as the snap path does. The search is
+    exhaustive over the band — small (~10³ pairs) because the band is narrow and
+    bounded by ``rope_cap`` — so the result is the global aspect-error minimum,
+    tie-broken toward the grid that resizes the image the least.
+    """
+    lo, hi = int(band[0]), int(band[1])
+    if lo <= 0 or hi < lo:
+        raise ValueError(f"invalid free-fit band {band}")
+    a = width / height
+    a_clamped = min(max(a, 1.0 / max_ratio), float(max_ratio))
+
+    best: tuple | None = None
+    hp_max = min(rope_cap, hi)
+    for hp in range(1, hp_max + 1):
+        wp_lo = max(1, -(-lo // hp))  # ceil(lo / hp)
+        wp_hi = min(rope_cap, hi // hp)  # floor(hi / hp)
+        for wp in range(wp_lo, wp_hi + 1):
+            aspect_err = abs(wp / hp - a_clamped)
+            cover_scale = max(wp * patch / width, hp * patch / height)
+            # (aspect first, then least rescale, then a deterministic shape key).
+            key = (aspect_err, abs(math.log(cover_scale)), hp, wp)
+            if best is None or key < best:
+                best = key
+    if best is None:
+        raise ValueError(
+            f"free-fit band {band} admits no grid under rope_cap={rope_cap}"
+        )
+    _, _, hp, wp = best
+    return wp * patch, hp * patch
+
+
 # DCW v4 calibration aspect-bucket set.
 #
 # Top 5 (H, W) resolutions by frequency in post_image_dataset/lora/ (recounted
@@ -399,8 +476,20 @@ class BucketManager:
         self.buckets = sorted_buckets
         self.reso_to_id = sorted_reso_to_id
 
-    def make_buckets(self, constant_token_buckets: bool = False, target_res=None):
-        if constant_token_buckets:
+    def make_buckets(
+        self,
+        constant_token_buckets: bool = False,
+        target_res=None,
+        freefit_resos=None,
+    ):
+        if freefit_resos is not None:
+            # Free-fit: the predefined set IS the distinct on-disk cached (W, H).
+            # Free-fit shapes are not in the constant-token catalog, so without
+            # this select_bucket would AR-snap-and-resize them at load — defeating
+            # the purpose. Using the actual cached resolutions makes the docstring's
+            # "caches are the source of truth" literal: every latent exact-matches.
+            resos = sorted(set(tuple(r) for r in freefit_resos))
+        elif constant_token_buckets:
             # The full native-shape catalog (every tier), so select_bucket hits the
             # exact-match branch for any cached reso and keeps each latent at its
             # true (W, H) — a multi-tier dataset never AR-snaps non-1024 caches into
