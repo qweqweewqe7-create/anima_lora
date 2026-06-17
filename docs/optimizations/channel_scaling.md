@@ -2,7 +2,7 @@
 
 Per-channel input magnitude rebalancing for LoRA-family adapters — a **training-time optimizer-geometry feature**, not an inference plugin (it lived under `docs/inference/` until 2026-06-10; after `bake_inv_scale` at save time it is invisible to inference entirely). Absorbs a calibrated per-channel scale `s[c] = (mean|x[c]|)^α` into `lora_down` columns and applies `x / s` at forward, so the adapter output is unchanged at init but Adam's effective per-channel step no longer favors the DiT's DC-bias outlier channels.
 
-> **For the motivation** (DC-bias outlier channels in the frozen Anima DiT, decomposition into "register-token sinks" vs "stable outlier features", and the GraLoRA alternative weighed against), see **`scripts/calibration/channel_dominance_analysis.md`**. This doc is the usage reference.
+> **For the motivation** (DC-bias outlier channels in the frozen Anima DiT, decomposition into "register-token sinks" vs "stable outlier features", and the GraLoRA alternative weighed against), see **`_archive/bench/channel_stats/channel_dominance_analysis.md`**. This doc is the usage reference.
 
 ## Quick start
 

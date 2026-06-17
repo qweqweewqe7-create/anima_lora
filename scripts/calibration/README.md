@@ -19,11 +19,12 @@ python scripts/calibration/cns_calibrate.py --cfg 4.0 --n_aspects 3   # compiled
 ```
 
 - `cns_calibrate.py` — Phase-1 deploy calibrator (cfg=4.0, top-N aspect buckets);
-  writes the npz + per-aspect γ heatmaps next to it.
+  writes the npz (per-aspect σ50 staircase summary prints to stdout).
 - `gamma_probe.py` — read-only Phase-0 staircase check + the shared γ/FFT helpers
   `cns_calibrate` imports. `--out_dir` for its standalone npz/heatmaps.
-- `cns_plan.md` — precondition, phase log, composition tensions (premise
-  corroborated by `project_sigma_signal_resolves_by_045`).
+
+Phase log / precondition / composition tensions: `_archive/bench/cns/plan.md`
+(premise corroborated by `project_sigma_signal_resolves_by_045`).
 
 Consumer + math: `library/inference/corrections/cns.py`. User doc:
 `docs/inference/cns.md`.
@@ -35,21 +36,20 @@ Produces the calibrations the `channel_scaling_alpha > 0` LoRA path absorbs:
 ```bash
 # main stream → networks/calibration/channel_stats.safetensors
 python scripts/calibration/analyze_lora_input_channels.py --per_artist \
-    --dump_channel_stats networks/calibration/channel_stats.safetensors \
-    --out_json output/calibration/channel_dominance_base.json
+    --dump_channel_stats networks/calibration/channel_stats.safetensors
 
 # EasyControl cond stream → networks/calibration/cond_channel_stats.safetensors
 python scripts/calibration/cond_stream_profile.py --per_artist \
-    --dump_cond_stats networks/calibration/cond_channel_stats.safetensors \
-    --out_json output/calibration/cond_stream_profile.json
+    --dump_cond_stats networks/calibration/cond_channel_stats.safetensors
 ```
 
 - `analyze_lora_input_channels.py` — per-input-channel `mean|x|` over real samples
   × 5 sigmas → dominance report + dumpable calibration.
 - `cond_stream_profile.py` — the cond-stream counterpart (reuses the collector's
   dataset/dump helpers); cond calib does **not** transfer from the main file.
-- `channel_dominance_analysis.md` — the DC-bias-vs-attention-sink decomposition
-  and the GraLoRA alternative weighed against.
+
+The DC-bias-vs-attention-sink decomposition and the GraLoRA alternative weighed
+against: `_archive/bench/channel_stats/channel_dominance_analysis.md`.
 
 Consumer: `networks/lora_anima/factory.py` (`_CHANNEL_STATS_PATH`) and
 `networks/methods/easycontrol.py`. Regime analysis: memory
@@ -65,11 +65,10 @@ decode-time equivalent of NVIDIA's retrained `_2606` checkpoint).
 uv run python scripts/calibration/fit_color_calib.py --num_images 24 --steps 4
 ```
 
-- `fit_color_calib.py` — writes `pid_color_calib.safetensors` + report +
-  comparison strip to `--out_dir` (default `output/calibration/pid_color_calib/`).
-  Fit at the **exact** decode step count.
-- `stage1_vae_roundtrip.py` — the native Qwen VAE decoder `fit_color_calib`
-  reuses (latent-space identity check).
+- `fit_color_calib.py` — writes `pid_color_calib.safetensors` to `--out_dir`
+  (default `output/calibration/pid_color_calib/`); fit summary prints to stdout.
+  Fit at the **exact** decode step count. The native Qwen VAE decoder
+  (`WanVAE2d_`) that produces the reference RGB is inlined at the top of the file.
 
 The PiD node ships from the standalone `ComfyUI-Anima-PiD` repo. Findings:
 memory `project_pid_color_drift_calib`.

@@ -5,7 +5,7 @@ Measures the *completion matrix* γ(f, t) for Anima: how resolved each radial
 frequency band is at each sampling step. CNS (Colored Noise Sampling) recolors
 the SDE-injected noise by sqrt(1−γ) so the fixed stochastic-energy budget lands
 in the bands the network has NOT yet built. Before wiring that into the sampler
-we need to know the staircase is sharp on Anima. See scripts/calibration/cns_plan.md.
+we need to know the staircase is sharp on Anima. See _archive/bench/cns/plan.md.
 
 What it does (no engine edits):
   1. Drive deterministic ODE (euler) generations through the real pipeline via

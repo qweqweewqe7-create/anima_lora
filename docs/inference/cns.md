@@ -4,7 +4,7 @@ Training-free SDE sampler plug-in. Replaces the **white** noise that `ERSDESampl
 
 Paper: [Colored Noise Diffusion Sampling](https://hadardavidson.github.io/CNS/) (Davidson, Issachar, Benaim — Hebrew U., arXiv [2605.30332](https://arxiv.org/abs/2605.30332)). Local PDF at repo root `2605.30332v1.pdf`.
 
-**Read first:** `scripts/calibration/cns_plan.md` (precondition + Phase-0 staircase results + composition tensions). The γ premise is independently corroborated by `project_sigma_signal_resolves_by_045` (base resolves x0 by σ≈0.45; e_low triples in the σ<0.45 tail — that finding *is* the CNS γ-matrix viewed from the σ axis).
+**Read first:** `_archive/bench/cns/plan.md` (precondition + Phase-0 staircase results + composition tensions). The γ premise is independently corroborated by `project_sigma_signal_resolves_by_045` (base resolves x0 by σ≈0.45; e_low triples in the σ<0.45 tail — that finding *is* the CNS γ-matrix viewed from the σ axis).
 
 ## The mechanism (Algorithm 1, paper p.7)
 
@@ -27,7 +27,7 @@ w_c     /= std(w_c)                    # RMS-renormalize → conserve total vari
 
 ## Why it works on Anima — precondition verified
 
-CNS feeds on **spectral bias** (low-freq structure resolves early, high-freq detail late). Phase 0 measured this directly on Anima (`scripts/calibration/cns_plan.md`, 2026-05-31, GO):
+CNS feeds on **spectral bias** (low-freq structure resolves early, high-freq detail late). Phase 0 measured this directly on Anima (`_archive/bench/cns/plan.md`, 2026-05-31, GO):
 
 | config | t50 spread (low→high freq) | aggregate σ50 | linear-target MAE |
 |---|---|---|---|
@@ -127,5 +127,5 @@ One implementation divergence worth noting: Alg. 1 renormalizes by a single **gl
 | `inference.py` | `--cns` / `--cns_strength` CLI surface. |
 | `scripts/calibration/cns_calibrate.py` | Phase-1 completion-matrix calibration → the shipped npz + per-aspect γ heatmaps next to it. |
 | `scripts/calibration/gamma_probe.py` | Phase-0 read-only staircase check (one config). |
-| `scripts/calibration/cns_plan.md` | Precondition, phase log, composition tensions. |
+| `_archive/bench/cns/plan.md` | Precondition, phase log, composition tensions. |
 | `networks/calibration/cns_gamma.npz` | Shipped completion matrix (`--cns auto`). |

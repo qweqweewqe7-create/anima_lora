@@ -23,7 +23,8 @@ equivalent of what NVIDIA baked into ``_2606``.
 WHAT IT DOES
 ------------
 For N cached Anima latents it decodes a center crop two ways:
-  reference = native Qwen VAE  (WanVAE2d_, the decoder stage1 already validated)
+  reference = native Qwen VAE  (WanVAE2d_, inlined below — Anima latents decode
+                                in PiD's own Qwen-Image latent space)
   candidate = PiD 4-step SDE   (the shipping node's exact decode core)
 aligns them (PiD is 4x SR -> downsample to VAE resolution), and fits three
 transforms, each pixel-storage-free (closed form from accumulated moments):
@@ -34,7 +35,7 @@ transforms, each pixel-storage-free (closed form from accumulated moments):
      ComfyUI knobs (contrast=L gain, saturation=          the hand-dialed node chain
      chroma gain, tint=(a,b) shift, brightness=L shift)
 
-It reports before/after RMSE with a train/test split (generalization guard) and —
+It prints before/after RMSE with a train/test split (generalization guard) and —
 crucially — the PER-IMAGE SPREAD of the offset. A tight spread => a static bake
 fixes the drift. A wide spread is the irreducible 4-step SDE variance (the same
 mechanism behind the authors' "early-termination whitening") that no static
@@ -47,32 +48,301 @@ timestep-dependent, so a calibration fit at 4 steps will not transfer to 2 or 6.
 Run (from anima_lora/):
     uv run python scripts/calibration/fit_color_calib.py --num_images 24 --steps 4
 Output (--out_dir, default output/calibration/pid_color_calib/):
-pid_color_calib.safetensors, comparison.png, report.txt, metrics.json.
+pid_color_calib.safetensors  (the calibration is the only artifact; fit summary
+prints to stdout).
 """
 
 from __future__ import annotations
 
 import argparse
 import importlib
-import json
 import sys
 import types
 from pathlib import Path
 
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
-from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parents[2]  # anima_lora/
 sys.path.insert(0, str(REPO_ROOT))
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # for sibling stage1 import
 
-from stage1_vae_roundtrip import (  # noqa: E402  native Qwen VAE decoder (reuse, no dup)
-    _LATENTS_MEAN,
-    _LATENTS_STD,
-    WanVAE2d_,
-)
+
+# --- Native Qwen-Image VAE decoder (WanVAE2d_) -----------------------------------
+# Architecture copied verbatim from PiD/pid/_src/tokenizers/qwenimage_vae.py minus
+# the imaginaire framework deps (only torch needed). The reference RGB this calib
+# is fitted against comes from decoding our cached Anima latents with this decoder
+# — Anima latents already live in PiD's Qwen-Image latent space, so it accepts them
+# directly. Per-channel latent normalization = AutoencoderKLQwenImage config
+# defaults (byte-for-byte identical to library/models/qwen_vae.py).
+_LATENTS_MEAN = [
+    -0.7571,
+    -0.7089,
+    -0.9113,
+    0.1075,
+    -0.1745,
+    0.9653,
+    -0.1517,
+    1.5508,
+    0.4134,
+    -0.0715,
+    0.5517,
+    -0.3632,
+    -0.1922,
+    -0.9497,
+    0.2503,
+    -0.2921,
+]
+_LATENTS_STD = [
+    2.8184,
+    1.4541,
+    2.3275,
+    2.6558,
+    1.2196,
+    1.7708,
+    2.6052,
+    2.0743,
+    3.2687,
+    2.1526,
+    2.8652,
+    1.5579,
+    1.6382,
+    1.1253,
+    2.8251,
+    1.9160,
+]
+
+
+class RMS_norm(nn.Module):
+    def __init__(self, dim, channel_first=True, images=True, bias=False):
+        super().__init__()
+        shape = (dim, 1, 1) if channel_first else (dim,)
+        self.channel_first = channel_first
+        self.scale = dim**0.5
+        self.gamma = nn.Parameter(torch.ones(shape))
+        self.bias = nn.Parameter(torch.zeros(shape)) if bias else 0.0
+
+    def forward(self, x):
+        return (
+            F.normalize(x, dim=(1 if self.channel_first else -1))
+            * self.scale
+            * self.gamma
+            + self.bias
+        )
+
+
+class Upsample(nn.Upsample):
+    def forward(self, x):
+        return super().forward(x.float()).type_as(x)
+
+
+class Resample(nn.Module):
+    def __init__(self, dim, mode):
+        super().__init__()
+        self.dim = dim
+        self.mode = mode
+        if mode == "upsample2d":
+            self.resample = nn.Sequential(
+                Upsample(scale_factor=(2.0, 2.0), mode="nearest-exact"),
+                nn.Conv2d(dim, dim // 2, 3, padding=1),
+            )
+        elif mode == "downsample2d":
+            self.resample = nn.Sequential(
+                nn.ZeroPad2d((0, 1, 0, 1)), nn.Conv2d(dim, dim, 3, stride=(2, 2))
+            )
+        else:
+            self.resample = nn.Identity()
+
+    def forward(self, x):
+        return self.resample(x)
+
+
+class ResidualBlock(nn.Module):
+    def __init__(self, in_dim, out_dim, dropout=0.0):
+        super().__init__()
+        self.residual = nn.Sequential(
+            RMS_norm(in_dim, images=False),
+            nn.SiLU(),
+            nn.Conv2d(in_dim, out_dim, 3, padding=1),
+            RMS_norm(out_dim, images=False),
+            nn.SiLU(),
+            nn.Dropout(dropout),
+            nn.Conv2d(out_dim, out_dim, 3, padding=1),
+        )
+        self.shortcut = (
+            nn.Conv2d(in_dim, out_dim, 1) if in_dim != out_dim else nn.Identity()
+        )
+
+    def forward(self, x):
+        h = self.shortcut(x)
+        for layer in self.residual:
+            x = layer(x)
+        return x + h
+
+
+class AttentionBlock(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.norm = RMS_norm(dim)
+        self.to_qkv = nn.Conv2d(dim, dim * 3, 1)
+        self.proj = nn.Conv2d(dim, dim, 1)
+        nn.init.zeros_(self.proj.weight)
+
+    def forward(self, x):
+        identity = x
+        b, c, h, w = x.size()
+        x = self.norm(x)
+        q, k, v = (
+            self.to_qkv(x)
+            .reshape(b, 1, c * 3, -1)
+            .permute(0, 1, 3, 2)
+            .contiguous()
+            .chunk(3, dim=-1)
+        )
+        x = F.scaled_dot_product_attention(q, k, v)
+        x = x.squeeze(1).permute(0, 2, 1).reshape(b, c, h, w)
+        return self.proj(x) + identity
+
+
+class Encoder2d(nn.Module):
+    def __init__(
+        self,
+        dim=128,
+        z_dim=4,
+        dim_mult=[1, 2, 4, 4],
+        num_res_blocks=2,
+        attn_scales=[],
+        temperal_downsample=[True, True, False],
+        dropout=0.0,
+    ):
+        super().__init__()
+        dims = [dim * u for u in [1] + dim_mult]
+        scale = 1.0
+        self.conv1 = nn.Conv2d(3, dims[0], 3, padding=1)
+        downsamples = []
+        for i, (in_dim, out_dim) in enumerate(zip(dims[:-1], dims[1:])):
+            for _ in range(num_res_blocks):
+                downsamples.append(ResidualBlock(in_dim, out_dim, dropout))
+                if scale in attn_scales:
+                    downsamples.append(AttentionBlock(out_dim))
+                in_dim = out_dim
+            if i != len(dim_mult) - 1:
+                downsamples.append(Resample(out_dim, mode="downsample2d"))
+                scale /= 2.0
+        self.downsamples = nn.Sequential(*downsamples)
+        self.middle = nn.Sequential(
+            ResidualBlock(out_dim, out_dim, dropout),
+            AttentionBlock(out_dim),
+            ResidualBlock(out_dim, out_dim, dropout),
+        )
+        self.head = nn.Sequential(
+            RMS_norm(out_dim, images=False),
+            nn.SiLU(),
+            nn.Conv2d(out_dim, z_dim, 3, padding=1),
+        )
+
+    def forward(self, x):
+        x = self.conv1(x)
+        for layer in self.downsamples:
+            x = layer(x)
+        for layer in self.middle:
+            x = layer(x)
+        for layer in self.head:
+            x = layer(x)
+        return x
+
+
+class Decoder2d(nn.Module):
+    def __init__(
+        self,
+        dim=128,
+        z_dim=4,
+        dim_mult=[1, 2, 4, 4],
+        num_res_blocks=2,
+        attn_scales=[],
+        temperal_upsample=[False, True, True],
+        dropout=0.0,
+    ):
+        super().__init__()
+        dims = [dim * u for u in [dim_mult[-1]] + dim_mult[::-1]]
+        scale = 1.0 / 2 ** (len(dim_mult) - 2)
+        self.conv1 = nn.Conv2d(z_dim, dims[0], 3, padding=1)
+        self.middle = nn.Sequential(
+            ResidualBlock(dims[0], dims[0], dropout),
+            AttentionBlock(dims[0]),
+            ResidualBlock(dims[0], dims[0], dropout),
+        )
+        upsamples = []
+        for i, (in_dim, out_dim) in enumerate(zip(dims[:-1], dims[1:])):
+            if i == 1 or i == 2 or i == 3:
+                in_dim = in_dim // 2
+            for _ in range(num_res_blocks + 1):
+                upsamples.append(ResidualBlock(in_dim, out_dim, dropout))
+                if scale in attn_scales:
+                    upsamples.append(AttentionBlock(out_dim))
+                in_dim = out_dim
+            if i != len(dim_mult) - 1:
+                upsamples.append(Resample(out_dim, mode="upsample2d"))
+                scale *= 2.0
+        self.upsamples = nn.Sequential(*upsamples)
+        self.head = nn.Sequential(
+            RMS_norm(out_dim, images=False),
+            nn.SiLU(),
+            nn.Conv2d(out_dim, 3, 3, padding=1),
+        )
+
+    def forward(self, x):
+        x = self.conv1(x)
+        for layer in self.middle:
+            x = layer(x)
+        for layer in self.upsamples:
+            x = layer(x)
+        for layer in self.head:
+            x = layer(x)
+        return x
+
+
+class WanVAE2d_(nn.Module):
+    def __init__(
+        self,
+        dim=128,
+        z_dim=4,
+        dim_mult=[1, 2, 4, 4],
+        num_res_blocks=2,
+        attn_scales=[],
+        temperal_downsample=[True, True, False],
+        dropout=0.0,
+        temporal_window=4,
+    ):
+        super().__init__()
+        self.z_dim = z_dim
+        self.encoder = Encoder2d(
+            dim,
+            z_dim * 2,
+            dim_mult,
+            num_res_blocks,
+            attn_scales,
+            temperal_downsample,
+            dropout,
+        )
+        self.conv1 = nn.Conv2d(z_dim * 2, z_dim * 2, 1)
+        self.conv2 = nn.Conv2d(z_dim, z_dim, 1)
+        self.decoder = Decoder2d(
+            dim,
+            z_dim,
+            dim_mult,
+            num_res_blocks,
+            attn_scales,
+            temperal_downsample[::-1],
+            dropout,
+        )
+
+    def decode(self, z, scale):
+        z = z / scale[1].view(1, self.z_dim, 1, 1) + scale[0].view(1, self.z_dim, 1, 1)
+        x = self.conv2(z)
+        return self.decoder(x)
+
 
 # Default on-disk locations (verified present in this checkout).
 DEFAULT_PID_CKPT = REPO_ROOT.parent / "comfy/models/pid/pid_qwenimage_2kto4k_4step.pth"
@@ -216,9 +486,6 @@ def main():
         help="PiD sampling seed (fixed for reproducibility)",
     )
     ap.add_argument(
-        "--n_compare", type=int, default=4, help="triplets in comparison.png"
-    )
-    ap.add_argument(
         "--no_null_caption",
         action="store_true",
         help="use zero caption instead of faithful gemma null",
@@ -233,7 +500,7 @@ def main():
         "--out_dir",
         type=Path,
         default=REPO_ROOT / "output/calibration/pid_color_calib",
-        help="Directory for the fitted calib + report + comparison strip.",
+        help="Directory for the fitted calib safetensors.",
     )
     args = ap.parse_args()
 
@@ -320,7 +587,6 @@ def main():
     okl = {f"{w}_{m}": np.zeros(3) for w in ("p", "r") for m in ("s", "ss")}
     okl["n"] = 0
     per_img_off = []  # (dL, da, db) per image — ref minus pid means
-    compare = []  # (pid_lowres, ref) for the strip
 
     processed = 0
     for i, p in enumerate(npz_paths):
@@ -381,9 +647,6 @@ def main():
         okl["r_ss"] += (ok_r * ok_r).sum(0).cpu().numpy()
         okl["n"] += npx
         per_img_off.append((ok_r.mean(0) - ok_p.mean(0)).cpu().numpy())
-
-        if len(compare) < args.n_compare:
-            compare.append((pid01[0].cpu().numpy(), ref01[0].cpu().numpy()))
 
         processed += 1
         print(
@@ -506,72 +769,8 @@ def main():
         "  -> large std  => irreducible 4-step SDE variance (the authors'",
         "                   'early-termination whitening'); raise --steps / use ODE.",
     ]
-    report = "\n".join(lines)
-    (run_dir / "report.txt").write_text(report + "\n")
-    print("\n" + report)
-
-    # ---- comparison strip (best-effort; never lose the calib over a cosmetic glitch) ----
-    artifacts = ["pid_color_calib.safetensors", "report.txt"]
-    try:
-        M_t = torch.from_numpy(linear_M).float()
-        b_t = torch.from_numpy(linear_b).float()
-        rows = []
-        for pid_lr, ref_img in compare:
-            pid_t = torch.from_numpy(pid_lr).permute(
-                1, 2, 0
-            )  # (H,W,3) at ref resolution
-            calib = (pid_t @ M_t.T + b_t).clamp(0, 1)
-            ref_t = torch.from_numpy(ref_img).permute(1, 2, 0)
-            panels = torch.stack([pid_t, calib, ref_t]).permute(0, 3, 1, 2)  # (3,3,H,W)
-            s = min(1.0, 512 / max(panels.shape[-2:]))  # cap long side ~512px
-            if s < 1.0:
-                panels = F.interpolate(panels, scale_factor=s, mode="area")
-            row = torch.cat(
-                list(panels.permute(0, 2, 3, 1)), dim=1
-            )  # [PiD|PiD+calib|VAE-ref]
-            rows.append(row)
-        # rows may differ in width (varying aspect ratios) -> normalize to a common width
-        tw = min(r.shape[1] for r in rows)
-        rows = [
-            F.interpolate(
-                r.permute(2, 0, 1)[None],
-                size=(round(r.shape[0] * tw / r.shape[1]), tw),
-                mode="area",
-            )[0].permute(1, 2, 0)
-            for r in rows
-        ]
-        strip = torch.cat(rows, dim=0).clamp(0, 1)
-        Image.fromarray((strip.numpy() * 255).astype(np.uint8)).save(
-            run_dir / "comparison.png"
-        )
-        artifacts.append("comparison.png")
-    except Exception as e:  # noqa: BLE001 — strip is a convenience, not the deliverable
-        print(f"[warn] comparison strip failed ({e}); calib + report still saved")
-
-    metrics = {
-        "rmse_before": rmse_before,
-        "rmse_after_all": rmse_after_all,
-        "rmse_train": rmse_train,
-        "rmse_test": rmse_test,
-        "rmse_drop_pct": 100 * (1 - rmse_after_all / rmse_before),
-        "linear_M": linear_M.tolist(),
-        "linear_b": linear_b.tolist(),
-        "per_channel_gain": pc_gain.tolist(),
-        "per_channel_bias": pc_bias.tolist(),
-        "oklab_knobs": {
-            "contrast_L_gain": L_gain,
-            "brightness_L_shift": L_shift,
-            "saturation_chroma": sat,
-            "tint_a": tint_a,
-            "tint_b": tint_b,
-        },
-        "per_image_offset_mean_Lab": mean_off.tolist(),
-        "per_image_offset_std_Lab": spread.tolist(),
-        "device": str(device),
-        "artifacts": artifacts,
-    }
-    (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2) + "\n")
-    print(f"\n[done] {run_dir}")
+    print("\n" + "\n".join(lines))
+    print(f"\n[done] wrote {run_dir / 'pid_color_calib.safetensors'}")
 
 
 if __name__ == "__main__":

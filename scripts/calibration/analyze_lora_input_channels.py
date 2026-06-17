@@ -33,13 +33,14 @@ Usage
     # Regenerate the vendored calibration consumed by channel_scaling_alpha > 0:
     python scripts/calibration/analyze_lora_input_channels.py --per_artist \\
         --dit models/diffusion_models/anima-base-v1.0.safetensors \\
-        --dump_channel_stats networks/calibration/channel_stats.safetensors \\
-        --out_json output/calibration/channel_dominance_base.json
+        --dump_channel_stats networks/calibration/channel_stats.safetensors
 
     # With a trained adapter (channel stats from LoRA-wrapped linears' inputs):
     python scripts/calibration/analyze_lora_input_channels.py \\
         --lora_weight output/anima-tlora-0415-12.safetensors \\
-        --out_json output/calibration/channel_dominance_0415-12.json
+        --dump_channel_stats networks/calibration/channel_stats.safetensors
+
+The dominance analysis prints to stdout; the safetensors is the only file written.
 
 Separating sinks from DC bias
 -----------------------------
@@ -53,7 +54,6 @@ dominant channel. Interpretation:
 
 import argparse
 import glob
-import json
 import logging
 import os
 from collections import defaultdict
@@ -111,7 +111,6 @@ def parse_args():
     p.add_argument("--attn_mode", default="flash")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--top_k_channels", type=int, default=8)
-    p.add_argument("--out_json", default=None)
     p.add_argument(
         "--dump_channel_stats",
         default=None,
@@ -542,43 +541,6 @@ def main():
 
     for group_name in sorted(groups.keys()):
         print_group_summary(group_name, groups[group_name], args.print_top_n_modules)
-
-    if args.out_json:
-        os.makedirs(os.path.dirname(args.out_json) or ".", exist_ok=True)
-        payload = {
-            "lora_weight": args.lora_weight,
-            "dit": args.dit,
-            "num_samples": len(stems),
-            "per_artist": bool(args.per_artist),
-            "per_artist_n": args.per_artist_n,
-            "sample_stems": [s[0] for s in stems],
-            "sigmas": sigmas,
-            "n_forward_passes": n_forward,
-            "overall": {
-                "mean_dominance": float(all_dominances.mean()),
-                "median_dominance": float(np.median(all_dominances)),
-                "p90_dominance": float(np.percentile(all_dominances, 90)),
-                "p99_dominance": float(np.percentile(all_dominances, 99)),
-                "max_dominance": float(all_dominances.max()),
-            },
-            "groups": {
-                g: {
-                    "n": len(ms),
-                    "mean_dominance": float(
-                        np.mean([m["dominance_ratio"] for m in ms])
-                    ),
-                    "median_dominance": float(
-                        np.median([m["dominance_ratio"] for m in ms])
-                    ),
-                    "max_dominance": float(max(m["dominance_ratio"] for m in ms)),
-                }
-                for g, ms in groups.items()
-            },
-            "per_module": per_module,
-        }
-        with open(args.out_json, "w") as f:
-            json.dump(payload, f, indent=2)
-        print(f"\nwrote {args.out_json}")
 
     if args.dump_channel_stats:
         dump_channel_stats_safetensors(stats, args.dump_channel_stats)

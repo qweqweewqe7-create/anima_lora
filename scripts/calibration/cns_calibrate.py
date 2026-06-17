@@ -33,7 +33,7 @@ Run from repo root (anima_lora/):
 
 Output:
     networks/calibration/cns_gamma.npz   (the shipped artifact `--cns auto` loads)
-    <out>.png next to it                 (per-aspect γ heatmaps, best-effort)
+    (a per-aspect σ50 staircase summary prints to stdout — no report file)
 """
 
 from __future__ import annotations
@@ -316,41 +316,6 @@ def main() -> None:
         f"\nwrote calibration → {out_path}  (gamma {ship_gamma.shape}, "
         f"averaged={args.average_aspects})"
     )
-
-    # Per-aspect γ heatmaps next to the artifact (best-effort diagnostic).
-    try:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-
-        sig_mid = sigmas_ref[:-1]
-        ext = [centers_ref[0], centers_ref[-1], sig_mid[-1], sig_mid[0]]
-        fig, ax = plt.subplots(
-            1, len(aspects), figsize=(5 * len(aspects), 4.2), squeeze=False
-        )
-        for j, hw in enumerate(aspects):
-            im = ax[0][j].imshow(
-                gamma[j],
-                aspect="auto",
-                origin="lower",
-                extent=ext,
-                vmin=0,
-                vmax=1,
-                cmap="viridis",
-            )
-            ax[0][j].set(
-                title=f"γ {hw[0]}x{hw[1]} (spread {s50_spreads[j]:+.2f})",
-                xlabel="radial freq f",
-                ylabel="σ (→0 done)",
-            )
-            fig.colorbar(im, ax=ax[0][j])
-        fig.tight_layout()
-        plot_path = out_path.with_suffix(".png")
-        fig.savefig(plot_path, dpi=110)
-        print(f"  heatmaps → {plot_path}")
-    except Exception as e:
-        print(f"  (plot skipped: {e})")
 
     print("\n=== CNS calibration ===")
     for hw, sp, ag in zip(aspects, s50_spreads, agg_s50s):

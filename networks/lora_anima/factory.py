@@ -48,7 +48,7 @@ def _load_channel_scales(
     Only rebalances variants whose down-projection is trainable — exactly
     inert on frozen-basis ortho variants (see
     ``docs/optimizations/channel_scaling.md`` §Liveness).
-    See ``scripts/calibration/channel_dominance_analysis.md`` for motivation.
+    See ``_archive/bench/channel_stats/channel_dominance_analysis.md`` for motivation.
     """
     raw_alpha = kwargs.get("channel_scaling_alpha", 0.0)
     channel_scaling_alpha = float(raw_alpha) if raw_alpha is not None else 0.0

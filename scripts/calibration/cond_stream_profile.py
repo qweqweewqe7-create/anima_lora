@@ -49,8 +49,9 @@ What this does
 Usage
 -----
     python scripts/calibration/cond_stream_profile.py --per_artist \
-        --dump_cond_stats networks/calibration/cond_channel_stats.safetensors \
-        --out_json output/calibration/cond_stream_profile.json
+        --dump_cond_stats networks/calibration/cond_channel_stats.safetensors
+
+The profile/decision rule prints to stdout; the safetensors is the only file written.
 
 Decision rule (printed at the end):
     cond dom_raw low                         → don't bother scaling the cond stream
@@ -59,9 +60,7 @@ Decision rule (printed at the end):
 """
 
 import argparse
-import json
 import logging
-import os
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -141,7 +140,6 @@ def parse_args():
         help="Write the cond-stream per-channel mean|x| to a safetensors "
         "(same keys as the shipped file) — the bespoke cond calibration.",
     )
-    p.add_argument("--out_json", default=None)
     return p.parse_args()
 
 
@@ -388,39 +386,6 @@ def main():
     if args.dump_cond_stats:
         dump_channel_stats_safetensors(stats, args.dump_cond_stats)
         print(f"\n  cond-specific calibration written to {args.dump_cond_stats}")
-
-    if args.out_json:
-        os.makedirs(os.path.dirname(args.out_json) or ".", exist_ok=True)
-        payload = {
-            "dit": args.dit,
-            "alpha": args.alpha,
-            "num_samples": len(stems),
-            "cond_source": "paired_dir" if cond_stems else "ref==target",
-            "sample_stems": [s[0] for s in stems],
-            "shipped_stats": args.shipped_stats,
-            "overall": {
-                "dom_raw": o_dom,
-                "cosine_cond_main": o_cos,
-                "xfer_efficiency": o_eff,
-                "dom_xfer": _med(all_rows, "dom_xfer"),
-            },
-            "groups": {
-                g: {
-                    "n": len(rs),
-                    "cosine": _med(rs, "cosine_cond_main"),
-                    "dom_raw": _med(rs, "dom_raw"),
-                    "dom_self": _med(rs, "dom_self"),
-                    "dom_xfer": _med(rs, "dom_xfer"),
-                    "xfer_efficiency": _med(rs, "xfer_efficiency"),
-                }
-                for g, rs in groups.items()
-            },
-            "per_module": per_module,
-            "verdict": verdict,
-        }
-        with open(args.out_json, "w") as f:
-            json.dump(payload, f, indent=2)
-        print(f"  wrote {args.out_json}")
 
 
 if __name__ == "__main__":

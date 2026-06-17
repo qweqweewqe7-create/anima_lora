@@ -9,7 +9,7 @@ global noise scale-up — so RMS renormalization (paper §A) is load-bearing.
 
 The completion matrix is produced offline by ``scripts/calibration/cns_calibrate.py`` (cfg=4.0,
 top-3 aspects) and shipped as ``networks/calibration/cns_gamma.npz``. This module
-only *consumes* it. Phase plan + premise: ``scripts/calibration/cns_plan.md``; the γ premise is
+only *consumes* it. Phase plan + premise: ``_archive/bench/cns/plan.md``; the γ premise is
 independently corroborated by ``project_sigma_signal_resolves_by_045``.
 
 Seam: ``ERSDESampler._sample_noise`` (``library/inference/sampling.py``). CNS is a
