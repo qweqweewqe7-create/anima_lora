@@ -48,9 +48,9 @@ What this does
 
 Usage
 -----
-    python bench/channel_stats/cond_stream_profile.py --per_artist \
-        --dump_cond_stats bench/channel_stats/results/cond_channel_stats.safetensors \
-        --out_json bench/channel_stats/results/cond_stream_profile.json
+    python scripts/calibration/cond_stream_profile.py --per_artist \
+        --dump_cond_stats networks/calibration/cond_channel_stats.safetensors \
+        --out_json output/calibration/cond_stream_profile.json
 
 Decision rule (printed at the end):
     cond dom_raw low                         → don't bother scaling the cond stream
@@ -62,27 +62,33 @@ import argparse
 import json
 import logging
 import os
+import sys
 from collections import defaultdict
+from pathlib import Path
 
 import numpy as np
 import torch
 from safetensors.torch import load_file
 
-from bench._anima import DEFAULT_DIT
-from library.anima import weights as anima_utils
-from library.log import setup_logging
-from networks.methods import easycontrol
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling collector import
+
+from anima_lora import default_checkpoints  # noqa: E402
+from library.anima import weights as anima_utils  # noqa: E402
+from library.log import setup_logging  # noqa: E402
+from networks.methods import easycontrol  # noqa: E402
 
 # Reuse the base collector's dataset + dump helpers verbatim — same stems, same
 # key/fused-mirror convention, so the cond dump is drop-in swappable with the
 # shipped main-stream file.
-from bench.channel_stats.analyze_lora_input_channels import (
+from analyze_lora_input_channels import (  # noqa: E402
     classify_module,
     dump_channel_stats_safetensors,
     find_sample_stems,
     load_cached_te,
     load_latent_npz,
 )
+
+DEFAULT_DIT = default_checkpoints().dit
 
 setup_logging()
 logger = logging.getLogger(__name__)

@@ -18,15 +18,46 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from einops import rearrange
 from PIL import Image
 
 # Per-channel latent normalization — AutoencoderKLQwenImage config defaults.
 # (Byte-for-byte identical to library/models/qwen_vae.py:1037.)
-_LATENTS_MEAN = [-0.7571, -0.7089, -0.9113, 0.1075, -0.1745, 0.9653, -0.1517, 1.5508,
-                 0.4134, -0.0715, 0.5517, -0.3632, -0.1922, -0.9497, 0.2503, -0.2921]
-_LATENTS_STD = [2.8184, 1.4541, 2.3275, 2.6558, 1.2196, 1.7708, 2.6052, 2.0743,
-                3.2687, 2.1526, 2.8652, 1.5579, 1.6382, 1.1253, 2.8251, 1.9160]
+_LATENTS_MEAN = [
+    -0.7571,
+    -0.7089,
+    -0.9113,
+    0.1075,
+    -0.1745,
+    0.9653,
+    -0.1517,
+    1.5508,
+    0.4134,
+    -0.0715,
+    0.5517,
+    -0.3632,
+    -0.1922,
+    -0.9497,
+    0.2503,
+    -0.2921,
+]
+_LATENTS_STD = [
+    2.8184,
+    1.4541,
+    2.3275,
+    2.6558,
+    1.2196,
+    1.7708,
+    2.6052,
+    2.0743,
+    3.2687,
+    2.1526,
+    2.8652,
+    1.5579,
+    1.6382,
+    1.1253,
+    2.8251,
+    1.9160,
+]
 
 
 class RMS_norm(nn.Module):
@@ -34,12 +65,17 @@ class RMS_norm(nn.Module):
         super().__init__()
         shape = (dim, 1, 1) if channel_first else (dim,)
         self.channel_first = channel_first
-        self.scale = dim ** 0.5
+        self.scale = dim**0.5
         self.gamma = nn.Parameter(torch.ones(shape))
         self.bias = nn.Parameter(torch.zeros(shape)) if bias else 0.0
 
     def forward(self, x):
-        return F.normalize(x, dim=(1 if self.channel_first else -1)) * self.scale * self.gamma + self.bias
+        return (
+            F.normalize(x, dim=(1 if self.channel_first else -1))
+            * self.scale
+            * self.gamma
+            + self.bias
+        )
 
 
 class Upsample(nn.Upsample):
@@ -58,7 +94,9 @@ class Resample(nn.Module):
                 nn.Conv2d(dim, dim // 2, 3, padding=1),
             )
         elif mode == "downsample2d":
-            self.resample = nn.Sequential(nn.ZeroPad2d((0, 1, 0, 1)), nn.Conv2d(dim, dim, 3, stride=(2, 2)))
+            self.resample = nn.Sequential(
+                nn.ZeroPad2d((0, 1, 0, 1)), nn.Conv2d(dim, dim, 3, stride=(2, 2))
+            )
         else:
             self.resample = nn.Identity()
 
@@ -70,10 +108,17 @@ class ResidualBlock(nn.Module):
     def __init__(self, in_dim, out_dim, dropout=0.0):
         super().__init__()
         self.residual = nn.Sequential(
-            RMS_norm(in_dim, images=False), nn.SiLU(), nn.Conv2d(in_dim, out_dim, 3, padding=1),
-            RMS_norm(out_dim, images=False), nn.SiLU(), nn.Dropout(dropout), nn.Conv2d(out_dim, out_dim, 3, padding=1),
+            RMS_norm(in_dim, images=False),
+            nn.SiLU(),
+            nn.Conv2d(in_dim, out_dim, 3, padding=1),
+            RMS_norm(out_dim, images=False),
+            nn.SiLU(),
+            nn.Dropout(dropout),
+            nn.Conv2d(out_dim, out_dim, 3, padding=1),
         )
-        self.shortcut = nn.Conv2d(in_dim, out_dim, 1) if in_dim != out_dim else nn.Identity()
+        self.shortcut = (
+            nn.Conv2d(in_dim, out_dim, 1) if in_dim != out_dim else nn.Identity()
+        )
 
     def forward(self, x):
         h = self.shortcut(x)
@@ -94,15 +139,29 @@ class AttentionBlock(nn.Module):
         identity = x
         b, c, h, w = x.size()
         x = self.norm(x)
-        q, k, v = self.to_qkv(x).reshape(b, 1, c * 3, -1).permute(0, 1, 3, 2).contiguous().chunk(3, dim=-1)
+        q, k, v = (
+            self.to_qkv(x)
+            .reshape(b, 1, c * 3, -1)
+            .permute(0, 1, 3, 2)
+            .contiguous()
+            .chunk(3, dim=-1)
+        )
         x = F.scaled_dot_product_attention(q, k, v)
         x = x.squeeze(1).permute(0, 2, 1).reshape(b, c, h, w)
         return self.proj(x) + identity
 
 
 class Encoder2d(nn.Module):
-    def __init__(self, dim=128, z_dim=4, dim_mult=[1, 2, 4, 4], num_res_blocks=2, attn_scales=[],
-                 temperal_downsample=[True, True, False], dropout=0.0):
+    def __init__(
+        self,
+        dim=128,
+        z_dim=4,
+        dim_mult=[1, 2, 4, 4],
+        num_res_blocks=2,
+        attn_scales=[],
+        temperal_downsample=[True, True, False],
+        dropout=0.0,
+    ):
         super().__init__()
         dims = [dim * u for u in [1] + dim_mult]
         scale = 1.0
@@ -118,9 +177,16 @@ class Encoder2d(nn.Module):
                 downsamples.append(Resample(out_dim, mode="downsample2d"))
                 scale /= 2.0
         self.downsamples = nn.Sequential(*downsamples)
-        self.middle = nn.Sequential(ResidualBlock(out_dim, out_dim, dropout), AttentionBlock(out_dim),
-                                    ResidualBlock(out_dim, out_dim, dropout))
-        self.head = nn.Sequential(RMS_norm(out_dim, images=False), nn.SiLU(), nn.Conv2d(out_dim, z_dim, 3, padding=1))
+        self.middle = nn.Sequential(
+            ResidualBlock(out_dim, out_dim, dropout),
+            AttentionBlock(out_dim),
+            ResidualBlock(out_dim, out_dim, dropout),
+        )
+        self.head = nn.Sequential(
+            RMS_norm(out_dim, images=False),
+            nn.SiLU(),
+            nn.Conv2d(out_dim, z_dim, 3, padding=1),
+        )
 
     def forward(self, x):
         x = self.conv1(x)
@@ -134,14 +200,25 @@ class Encoder2d(nn.Module):
 
 
 class Decoder2d(nn.Module):
-    def __init__(self, dim=128, z_dim=4, dim_mult=[1, 2, 4, 4], num_res_blocks=2, attn_scales=[],
-                 temperal_upsample=[False, True, True], dropout=0.0):
+    def __init__(
+        self,
+        dim=128,
+        z_dim=4,
+        dim_mult=[1, 2, 4, 4],
+        num_res_blocks=2,
+        attn_scales=[],
+        temperal_upsample=[False, True, True],
+        dropout=0.0,
+    ):
         super().__init__()
         dims = [dim * u for u in [dim_mult[-1]] + dim_mult[::-1]]
         scale = 1.0 / 2 ** (len(dim_mult) - 2)
         self.conv1 = nn.Conv2d(z_dim, dims[0], 3, padding=1)
-        self.middle = nn.Sequential(ResidualBlock(dims[0], dims[0], dropout), AttentionBlock(dims[0]),
-                                    ResidualBlock(dims[0], dims[0], dropout))
+        self.middle = nn.Sequential(
+            ResidualBlock(dims[0], dims[0], dropout),
+            AttentionBlock(dims[0]),
+            ResidualBlock(dims[0], dims[0], dropout),
+        )
         upsamples = []
         for i, (in_dim, out_dim) in enumerate(zip(dims[:-1], dims[1:])):
             if i == 1 or i == 2 or i == 3:
@@ -155,7 +232,11 @@ class Decoder2d(nn.Module):
                 upsamples.append(Resample(out_dim, mode="upsample2d"))
                 scale *= 2.0
         self.upsamples = nn.Sequential(*upsamples)
-        self.head = nn.Sequential(RMS_norm(out_dim, images=False), nn.SiLU(), nn.Conv2d(out_dim, 3, 3, padding=1))
+        self.head = nn.Sequential(
+            RMS_norm(out_dim, images=False),
+            nn.SiLU(),
+            nn.Conv2d(out_dim, 3, 3, padding=1),
+        )
 
     def forward(self, x):
         x = self.conv1(x)
@@ -169,14 +250,39 @@ class Decoder2d(nn.Module):
 
 
 class WanVAE2d_(nn.Module):
-    def __init__(self, dim=128, z_dim=4, dim_mult=[1, 2, 4, 4], num_res_blocks=2, attn_scales=[],
-                 temperal_downsample=[True, True, False], dropout=0.0, temporal_window=4):
+    def __init__(
+        self,
+        dim=128,
+        z_dim=4,
+        dim_mult=[1, 2, 4, 4],
+        num_res_blocks=2,
+        attn_scales=[],
+        temperal_downsample=[True, True, False],
+        dropout=0.0,
+        temporal_window=4,
+    ):
         super().__init__()
         self.z_dim = z_dim
-        self.encoder = Encoder2d(dim, z_dim * 2, dim_mult, num_res_blocks, attn_scales, temperal_downsample, dropout)
+        self.encoder = Encoder2d(
+            dim,
+            z_dim * 2,
+            dim_mult,
+            num_res_blocks,
+            attn_scales,
+            temperal_downsample,
+            dropout,
+        )
         self.conv1 = nn.Conv2d(z_dim * 2, z_dim * 2, 1)
         self.conv2 = nn.Conv2d(z_dim, z_dim, 1)
-        self.decoder = Decoder2d(dim, z_dim, dim_mult, num_res_blocks, attn_scales, temperal_downsample[::-1], dropout)
+        self.decoder = Decoder2d(
+            dim,
+            z_dim,
+            dim_mult,
+            num_res_blocks,
+            attn_scales,
+            temperal_downsample[::-1],
+            dropout,
+        )
 
     def decode(self, z, scale):
         z = z / scale[1].view(1, self.z_dim, 1, 1) + scale[0].view(1, self.z_dim, 1, 1)
@@ -186,17 +292,31 @@ class WanVAE2d_(nn.Module):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--vae_pth", default="/tmp/pid_ckpts/checkpoints/QwenImage_VAE_2d.pth")
-    ap.add_argument("--npz", default="post_image_dataset/lora/kat_(bu-kunn)/11071601_1024x1008_anima.npz")
-    ap.add_argument("--src", default="post_image_dataset/resized/kat_(bu-kunn)/11071601.png")
-    ap.add_argument("--out_dir", default="bench/pid/results")
+    ap.add_argument(
+        "--vae_pth", default="/tmp/pid_ckpts/checkpoints/QwenImage_VAE_2d.pth"
+    )
+    ap.add_argument(
+        "--npz",
+        default="post_image_dataset/lora/kat_(bu-kunn)/11071601_1024x1008_anima.npz",
+    )
+    ap.add_argument(
+        "--src", default="post_image_dataset/resized/kat_(bu-kunn)/11071601.png"
+    )
+    ap.add_argument("--out_dir", default="output/calibration/pid_vae_roundtrip")
     args = ap.parse_args()
 
     device = "cuda"
     dtype = torch.float32
 
-    cfg = dict(dim=96, z_dim=16, dim_mult=[1, 2, 4, 4], num_res_blocks=2, attn_scales=[],
-               temperal_downsample=[False, True, True], dropout=0.0)
+    cfg = dict(
+        dim=96,
+        z_dim=16,
+        dim_mult=[1, 2, 4, 4],
+        num_res_blocks=2,
+        attn_scales=[],
+        temperal_downsample=[False, True, True],
+        dropout=0.0,
+    )
     model = WanVAE2d_(**cfg)
     ckpt = torch.load(args.vae_pth, map_location="cpu", weights_only=False)
     missing, unexpected = model.load_state_dict(ckpt, strict=False)
@@ -212,8 +332,10 @@ def main():
     latent = torch.from_numpy(d[lat_key]).to(device, dtype)  # (16, h, w), normalized
     if latent.ndim == 3:
         latent = latent.unsqueeze(0)
-    print(f"[latent] key={lat_key} shape={tuple(latent.shape)} "
-          f"min={latent.min():.3f} max={latent.max():.3f} std={latent.std():.3f}")
+    print(
+        f"[latent] key={lat_key} shape={tuple(latent.shape)} "
+        f"min={latent.min():.3f} max={latent.max():.3f} std={latent.std():.3f}"
+    )
 
     mean = torch.tensor(_LATENTS_MEAN, device=device, dtype=dtype)
     std = torch.tensor(_LATENTS_STD, device=device, dtype=dtype)
@@ -222,7 +344,9 @@ def main():
     with torch.no_grad():
         recon = model.decode(latent, scale)  # (1,3,H,W) in [-1,1]
     recon = recon.clamp(-1, 1)[0].float().cpu()
-    print(f"[recon] shape={tuple(recon.shape)} min={recon.min():.3f} max={recon.max():.3f}")
+    print(
+        f"[recon] shape={tuple(recon.shape)} min={recon.min():.3f} max={recon.max():.3f}"
+    )
 
     img = ((recon + 1.0) * 127.5).clamp(0, 255).to(torch.uint8).permute(1, 2, 0).numpy()
     os.makedirs(args.out_dir, exist_ok=True)
@@ -232,12 +356,18 @@ def main():
 
     # Compare against original resized source (metric: PSNR in [-1,1] space, resized to match).
     if os.path.exists(args.src):
-        src = Image.open(args.src).convert("RGB").resize((recon.shape[-1], recon.shape[-2]), Image.LANCZOS)
+        src = (
+            Image.open(args.src)
+            .convert("RGB")
+            .resize((recon.shape[-1], recon.shape[-2]), Image.LANCZOS)
+        )
         src_t = torch.from_numpy(np.asarray(src)).float().permute(2, 0, 1) / 127.5 - 1.0
         mse = F.mse_loss(recon, src_t).item()
         psnr = -10.0 * np.log10(mse + 1e-12)
         print(f"[compare vs source] mse={mse:.5f} psnr={psnr:.2f} dB")
-        print("  >> PSNR >~20 dB means the latent decodes to the right image (space matches).")
+        print(
+            "  >> PSNR >~20 dB means the latent decodes to the right image (space matches)."
+        )
 
 
 if __name__ == "__main__":

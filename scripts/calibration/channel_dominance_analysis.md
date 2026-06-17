@@ -4,7 +4,7 @@ Investigation triggered by *GraLoRA: Granular Low-Rank Adaptation for Parameter-
 
 ## Setup
 
-- **Script**: `bench/channel_stats/analyze_lora_input_channels.py` — registers `forward_pre_hook` on every `nn.Linear` in the DiT, accumulates per-input-channel `sum|x|`, `max|x|`, and token count over a batch of real samples, then reports dominance (`max(mean|x|) / median(mean|x|)`) and peak-to-mean (`max|x| / mean|x|` on the most dominant channel).
+- **Script**: `scripts/calibration/analyze_lora_input_channels.py` — registers `forward_pre_hook` on every `nn.Linear` in the DiT, accumulates per-input-channel `sum|x|`, `max|x|`, and token count over a batch of real samples, then reports dominance (`max(mean|x|) / median(mean|x|)`) and peak-to-mean (`max|x| / mean|x|` on the most dominant channel).
 - **Samples**: 8 images from `post_image_dataset/` using cached VAE latents (`*_anima.npz`) and cached T5 outputs (`*_anima_te.safetensors`, `crossattn_emb_v0`). Text encoder and VAE are never loaded.
 - **Timesteps**: sigmas `{0.1, 0.3, 0.5, 0.7, 0.9}` — 40 forward passes total per run.
 - **Configurations run**:

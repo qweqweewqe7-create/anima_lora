@@ -31,15 +31,15 @@ inputs (image patch tokens), and the remediation differs.
 Usage
 -----
     # Regenerate the vendored calibration consumed by channel_scaling_alpha > 0:
-    python bench/channel_stats/analyze_lora_input_channels.py --per_artist \\
+    python scripts/calibration/analyze_lora_input_channels.py --per_artist \\
         --dit models/diffusion_models/anima-base-v1.0.safetensors \\
         --dump_channel_stats networks/calibration/channel_stats.safetensors \\
-        --out_json bench/channel_stats/results/channel_dominance_base.json
+        --out_json output/calibration/channel_dominance_base.json
 
     # With a trained adapter (channel stats from LoRA-wrapped linears' inputs):
-    python bench/channel_stats/analyze_lora_input_channels.py \\
+    python scripts/calibration/analyze_lora_input_channels.py \\
         --lora_weight output/anima-tlora-0415-12.safetensors \\
-        --out_json bench/channel_stats/results/channel_dominance_0415-12.json
+        --out_json output/calibration/channel_dominance_0415-12.json
 
 Separating sinks from DC bias
 -----------------------------
@@ -63,10 +63,12 @@ import torch
 from safetensors.torch import load_file, save_file
 
 
-from bench._anima import DEFAULT_DIT
+from anima_lora import default_checkpoints
 from library.anima import weights as anima_utils
 from library.log import setup_logging
 from networks import lora_anima
+
+DEFAULT_DIT = default_checkpoints().dit
 
 setup_logging()
 logger = logging.getLogger(__name__)

@@ -81,7 +81,7 @@ Seams in the per-step loop (`generation.py:708-826`):
   - Per-aspect: γ likely needs per-bucket calibration (mirror DCW_ASPECT_BUCKETS).
 - **Phase 1 — WIRED (2026-05-31).** Recolors `ERSDESampler._sample_noise` behind
   `--cns <path|auto>` (+ `--cns_strength` safety blend). Pieces:
-  - **Completion matrix** = `bench/cns/calibrate.py`: drives the Phase-0 euler
+  - **Completion matrix** = `scripts/calibration/cns_calibrate.py`: drives the Phase-0 euler
     capture across the **deploy config** — `--cfg 4.0`, top-`--n_aspects 3`
     `DCW_ASPECT_BUCKETS` ((1200,896),(1344,800),(896,1200), all (H,W)) — and
     bundles per-aspect γ[A,T,F] into `networks/calibration/cns_gamma.npz` (the
@@ -110,7 +110,7 @@ Seams in the per-step loop (`generation.py:708-826`):
     auto` vs er_sde white. Compose-test with er_sde∘Spectrum (cached-step error
     must not grow — see Spectrum row above).
   - **Calibration is GPU-heavy** (generates 3 aspects × prompts × seeds at cfg=4);
-    not run yet — `python bench/cns/calibrate.py --cfg 4.0 --n_aspects 3`. It
+    not run yet — `python scripts/calibration/cns_calibrate.py --cfg 4.0 --n_aspects 3`. It
     **loads the DiT once + precomputes all text + frees the TE** (TE→free→DiT
     invariant) and **compiles by default** (`--compile`/`--no-compile`): the 3
     default aspects are all token-count 4200, so `compile_blocks` builds a single
