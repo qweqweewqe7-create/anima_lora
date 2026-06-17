@@ -553,7 +553,7 @@ class BaseDataset(torch.utils.data.Dataset):
     ):
         """Assign every image to its nearest bucket resolution.
 
-        With ``constant_token_buckets`` (the only training mode) buckets come
+        With ``constant_token_buckets`` (the default mode) buckets come
         from the full native-shape catalog (``all_constant_token_buckets`` — every
         tier), so every cached latent exact-matches its true (W, H) and nothing
         AR-snaps. ``target_res`` is preprocess-only and inert here: the on-disk

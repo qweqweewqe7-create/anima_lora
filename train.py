@@ -1471,7 +1471,7 @@ class AnimaTrainer:
             train_dataset_group, val_dataset_group = (
                 config_util.generate_dataset_group_by_blueprint(
                     blueprint.dataset_group,
-                    # Native constant-token bucketing is the only mode: the sampler
+                    # Native constant-token bucketing is the default mode: the sampler
                     # buckets into the full native-shape catalog so compile_blocks'
                     # flatten keys on token count, not resolution. target_res is
                     # inert here (passed only for signature compat) — every cached

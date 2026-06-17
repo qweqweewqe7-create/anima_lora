@@ -9,11 +9,18 @@ import numpy as np
 # many near-square→elongated patch grids — and crucially every bucket *exactly*
 # fills its token count, so there is zero intra-bucket padding by construction.
 #
-# This table is designed for native shapes (the only mode): it collapses to
+# This table is designed for native shapes (the default mode): it collapses to
 # just TWO distinct token counts → two compiled block graphs (via
 # compile_blocks' flatten), with no padding and therefore no flash pad leak.
 # The rope per-axis cap is 256 patches (max_img/patch_spatial); the largest dim
 # here is 2016px → 126.
+#
+# Free-fit (opt-in `freefit=true`, see freefit_bucket / is_freefit_token_counts
+# below and docs/proposal/free_aspect_token_band_resize.md) is the alternative:
+# it keeps native aspect ratio and lands the token count anywhere inside a tier's
+# band instead of snapping here. It coexists with — does not replace — this table
+# (which stays the default and stays frozen for DCW) and rides compile_dynamic_seq
+# so the off-table counts stay one graph.
 #
 # Two families instead of one because a single token count's divisors near √N
 # are sparse (4032 alone jumps aspect 1.29→1.75); interleaving 4032 and 4200
