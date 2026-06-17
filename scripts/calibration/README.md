@@ -67,8 +67,9 @@ uv run python scripts/calibration/fit_color_calib.py --num_images 24 --steps 4
 
 - `fit_color_calib.py` — writes `pid_color_calib.safetensors` to `--out_dir`
   (default `output/calibration/pid_color_calib/`); fit summary prints to stdout.
-  Fit at the **exact** decode step count. The native Qwen VAE decoder
-  (`WanVAE2d_`) that produces the reference RGB is inlined at the top of the file.
+  Fit at the **exact** decode step count. The reference RGB is produced by the
+  production decoder (`load_vae` + `decode_to_pixels`, `--vae` defaults to the
+  configured Qwen-Image VAE).
 
 The PiD node ships from the standalone `ComfyUI-Anima-PiD` repo. Findings:
 memory `project_pid_color_drift_calib`.

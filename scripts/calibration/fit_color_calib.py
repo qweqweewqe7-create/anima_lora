@@ -23,8 +23,10 @@ equivalent of what NVIDIA baked into ``_2606``.
 WHAT IT DOES
 ------------
 For N cached Anima latents it decodes a center crop two ways:
-  reference = native Qwen VAE  (WanVAE2d_, inlined below — Anima latents decode
-                                in PiD's own Qwen-Image latent space)
+  reference = native Qwen VAE  (the production ``load_vae`` +
+                                ``decode_to_pixels`` — the exact decoder the
+                                inference path uses; Anima latents already live
+                                in the Qwen-Image latent space)
   candidate = PiD 4-step SDE   (the shipping node's exact decode core)
 aligns them (PiD is 4x SR -> downsample to VAE resolution), and fits three
 transforms, each pixel-storage-free (closed form from accumulated moments):
@@ -62,286 +64,21 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 
 REPO_ROOT = Path(__file__).resolve().parents[2]  # anima_lora/
 sys.path.insert(0, str(REPO_ROOT))
 
-
-# --- Native Qwen-Image VAE decoder (WanVAE2d_) -----------------------------------
-# Architecture copied verbatim from PiD/pid/_src/tokenizers/qwenimage_vae.py minus
-# the imaginaire framework deps (only torch needed). The reference RGB this calib
-# is fitted against comes from decoding our cached Anima latents with this decoder
-# — Anima latents already live in PiD's Qwen-Image latent space, so it accepts them
-# directly. Per-channel latent normalization = AutoencoderKLQwenImage config
-# defaults (byte-for-byte identical to library/models/qwen_vae.py).
-_LATENTS_MEAN = [
-    -0.7571,
-    -0.7089,
-    -0.9113,
-    0.1075,
-    -0.1745,
-    0.9653,
-    -0.1517,
-    1.5508,
-    0.4134,
-    -0.0715,
-    0.5517,
-    -0.3632,
-    -0.1922,
-    -0.9497,
-    0.2503,
-    -0.2921,
-]
-_LATENTS_STD = [
-    2.8184,
-    1.4541,
-    2.3275,
-    2.6558,
-    1.2196,
-    1.7708,
-    2.6052,
-    2.0743,
-    3.2687,
-    2.1526,
-    2.8652,
-    1.5579,
-    1.6382,
-    1.1253,
-    2.8251,
-    1.9160,
-]
+from anima_lora import default_checkpoints  # noqa: E402
+from library.io.cache import load_cached_latents  # noqa: E402
+from library.models.qwen_vae import load_vae  # noqa: E402
 
 
-class RMS_norm(nn.Module):
-    def __init__(self, dim, channel_first=True, images=True, bias=False):
-        super().__init__()
-        shape = (dim, 1, 1) if channel_first else (dim,)
-        self.channel_first = channel_first
-        self.scale = dim**0.5
-        self.gamma = nn.Parameter(torch.ones(shape))
-        self.bias = nn.Parameter(torch.zeros(shape)) if bias else 0.0
-
-    def forward(self, x):
-        return (
-            F.normalize(x, dim=(1 if self.channel_first else -1))
-            * self.scale
-            * self.gamma
-            + self.bias
-        )
-
-
-class Upsample(nn.Upsample):
-    def forward(self, x):
-        return super().forward(x.float()).type_as(x)
-
-
-class Resample(nn.Module):
-    def __init__(self, dim, mode):
-        super().__init__()
-        self.dim = dim
-        self.mode = mode
-        if mode == "upsample2d":
-            self.resample = nn.Sequential(
-                Upsample(scale_factor=(2.0, 2.0), mode="nearest-exact"),
-                nn.Conv2d(dim, dim // 2, 3, padding=1),
-            )
-        elif mode == "downsample2d":
-            self.resample = nn.Sequential(
-                nn.ZeroPad2d((0, 1, 0, 1)), nn.Conv2d(dim, dim, 3, stride=(2, 2))
-            )
-        else:
-            self.resample = nn.Identity()
-
-    def forward(self, x):
-        return self.resample(x)
-
-
-class ResidualBlock(nn.Module):
-    def __init__(self, in_dim, out_dim, dropout=0.0):
-        super().__init__()
-        self.residual = nn.Sequential(
-            RMS_norm(in_dim, images=False),
-            nn.SiLU(),
-            nn.Conv2d(in_dim, out_dim, 3, padding=1),
-            RMS_norm(out_dim, images=False),
-            nn.SiLU(),
-            nn.Dropout(dropout),
-            nn.Conv2d(out_dim, out_dim, 3, padding=1),
-        )
-        self.shortcut = (
-            nn.Conv2d(in_dim, out_dim, 1) if in_dim != out_dim else nn.Identity()
-        )
-
-    def forward(self, x):
-        h = self.shortcut(x)
-        for layer in self.residual:
-            x = layer(x)
-        return x + h
-
-
-class AttentionBlock(nn.Module):
-    def __init__(self, dim):
-        super().__init__()
-        self.norm = RMS_norm(dim)
-        self.to_qkv = nn.Conv2d(dim, dim * 3, 1)
-        self.proj = nn.Conv2d(dim, dim, 1)
-        nn.init.zeros_(self.proj.weight)
-
-    def forward(self, x):
-        identity = x
-        b, c, h, w = x.size()
-        x = self.norm(x)
-        q, k, v = (
-            self.to_qkv(x)
-            .reshape(b, 1, c * 3, -1)
-            .permute(0, 1, 3, 2)
-            .contiguous()
-            .chunk(3, dim=-1)
-        )
-        x = F.scaled_dot_product_attention(q, k, v)
-        x = x.squeeze(1).permute(0, 2, 1).reshape(b, c, h, w)
-        return self.proj(x) + identity
-
-
-class Encoder2d(nn.Module):
-    def __init__(
-        self,
-        dim=128,
-        z_dim=4,
-        dim_mult=[1, 2, 4, 4],
-        num_res_blocks=2,
-        attn_scales=[],
-        temperal_downsample=[True, True, False],
-        dropout=0.0,
-    ):
-        super().__init__()
-        dims = [dim * u for u in [1] + dim_mult]
-        scale = 1.0
-        self.conv1 = nn.Conv2d(3, dims[0], 3, padding=1)
-        downsamples = []
-        for i, (in_dim, out_dim) in enumerate(zip(dims[:-1], dims[1:])):
-            for _ in range(num_res_blocks):
-                downsamples.append(ResidualBlock(in_dim, out_dim, dropout))
-                if scale in attn_scales:
-                    downsamples.append(AttentionBlock(out_dim))
-                in_dim = out_dim
-            if i != len(dim_mult) - 1:
-                downsamples.append(Resample(out_dim, mode="downsample2d"))
-                scale /= 2.0
-        self.downsamples = nn.Sequential(*downsamples)
-        self.middle = nn.Sequential(
-            ResidualBlock(out_dim, out_dim, dropout),
-            AttentionBlock(out_dim),
-            ResidualBlock(out_dim, out_dim, dropout),
-        )
-        self.head = nn.Sequential(
-            RMS_norm(out_dim, images=False),
-            nn.SiLU(),
-            nn.Conv2d(out_dim, z_dim, 3, padding=1),
-        )
-
-    def forward(self, x):
-        x = self.conv1(x)
-        for layer in self.downsamples:
-            x = layer(x)
-        for layer in self.middle:
-            x = layer(x)
-        for layer in self.head:
-            x = layer(x)
-        return x
-
-
-class Decoder2d(nn.Module):
-    def __init__(
-        self,
-        dim=128,
-        z_dim=4,
-        dim_mult=[1, 2, 4, 4],
-        num_res_blocks=2,
-        attn_scales=[],
-        temperal_upsample=[False, True, True],
-        dropout=0.0,
-    ):
-        super().__init__()
-        dims = [dim * u for u in [dim_mult[-1]] + dim_mult[::-1]]
-        scale = 1.0 / 2 ** (len(dim_mult) - 2)
-        self.conv1 = nn.Conv2d(z_dim, dims[0], 3, padding=1)
-        self.middle = nn.Sequential(
-            ResidualBlock(dims[0], dims[0], dropout),
-            AttentionBlock(dims[0]),
-            ResidualBlock(dims[0], dims[0], dropout),
-        )
-        upsamples = []
-        for i, (in_dim, out_dim) in enumerate(zip(dims[:-1], dims[1:])):
-            if i == 1 or i == 2 or i == 3:
-                in_dim = in_dim // 2
-            for _ in range(num_res_blocks + 1):
-                upsamples.append(ResidualBlock(in_dim, out_dim, dropout))
-                if scale in attn_scales:
-                    upsamples.append(AttentionBlock(out_dim))
-                in_dim = out_dim
-            if i != len(dim_mult) - 1:
-                upsamples.append(Resample(out_dim, mode="upsample2d"))
-                scale *= 2.0
-        self.upsamples = nn.Sequential(*upsamples)
-        self.head = nn.Sequential(
-            RMS_norm(out_dim, images=False),
-            nn.SiLU(),
-            nn.Conv2d(out_dim, 3, 3, padding=1),
-        )
-
-    def forward(self, x):
-        x = self.conv1(x)
-        for layer in self.middle:
-            x = layer(x)
-        for layer in self.upsamples:
-            x = layer(x)
-        for layer in self.head:
-            x = layer(x)
-        return x
-
-
-class WanVAE2d_(nn.Module):
-    def __init__(
-        self,
-        dim=128,
-        z_dim=4,
-        dim_mult=[1, 2, 4, 4],
-        num_res_blocks=2,
-        attn_scales=[],
-        temperal_downsample=[True, True, False],
-        dropout=0.0,
-        temporal_window=4,
-    ):
-        super().__init__()
-        self.z_dim = z_dim
-        self.encoder = Encoder2d(
-            dim,
-            z_dim * 2,
-            dim_mult,
-            num_res_blocks,
-            attn_scales,
-            temperal_downsample,
-            dropout,
-        )
-        self.conv1 = nn.Conv2d(z_dim * 2, z_dim * 2, 1)
-        self.conv2 = nn.Conv2d(z_dim, z_dim, 1)
-        self.decoder = Decoder2d(
-            dim,
-            z_dim,
-            dim_mult,
-            num_res_blocks,
-            attn_scales,
-            temperal_downsample[::-1],
-            dropout,
-        )
-
-    def decode(self, z, scale):
-        z = z / scale[1].view(1, self.z_dim, 1, 1) + scale[0].view(1, self.z_dim, 1, 1)
-        x = self.conv2(z)
-        return self.decoder(x)
+# The reference RGB is produced by the *production* decoder — ``load_vae``
+# builds the same ``AutoencoderKLQwenImage`` (base_dim=96 / z_dim=16, identical
+# latents_mean/std) the inference path uses, and ``decode_to_pixels`` applies the
+# per-channel de-normalization internally. Anima's cached latents already live in
+# the Qwen-Image latent space, so they decode directly.
 
 
 # Default on-disk locations (verified present in this checkout).
@@ -349,7 +86,7 @@ DEFAULT_PID_CKPT = REPO_ROOT.parent / "comfy/models/pid/pid_qwenimage_2kto4k_4st
 DEFAULT_NULL_CAP = (
     REPO_ROOT.parent / "comfy/models/pid/pid_null_caption_gemma.safetensors"
 )
-DEFAULT_VAE = REPO_ROOT / "models/vae/QwenImage_VAE_2d.pth"
+DEFAULT_VAE = default_checkpoints().vae  # production Qwen-Image VAE safetensors
 DEFAULT_NODE_DIR = REPO_ROOT.parent / "comfy/custom_nodes/comfyui-anima-pid"
 DEFAULT_LATENT_GLOB = "post_image_dataset/lora/**/*_anima.npz"
 
@@ -391,12 +128,7 @@ def rgb01_to_oklab(rgb: torch.Tensor) -> torch.Tensor:
 
 def load_latent(npz_path: Path) -> torch.Tensor:
     """Return cached Anima latent (16,h,w), already (mu-mean)/std normalized."""
-    d = np.load(npz_path)
-    key = next(k for k in d.files if k.startswith("latents_"))
-    lat = torch.from_numpy(d[key]).float()
-    if lat.ndim == 4:
-        lat = lat[0]
-    return lat  # (16,h,w)
+    return load_cached_latents(str(npz_path))[0]  # (C,H,W) float32
 
 
 def center_crop(lat: torch.Tensor, crop: int) -> torch.Tensor:
@@ -492,7 +224,7 @@ def main():
     )
     ap.add_argument("--pid_ckpt", type=Path, default=DEFAULT_PID_CKPT)
     ap.add_argument("--null_caption", type=Path, default=DEFAULT_NULL_CAP)
-    ap.add_argument("--vae_pth", type=Path, default=DEFAULT_VAE)
+    ap.add_argument("--vae", type=Path, default=DEFAULT_VAE)
     ap.add_argument("--node_dir", type=Path, default=DEFAULT_NODE_DIR)
     ap.add_argument("--latent_glob", default=DEFAULT_LATENT_GLOB)
     ap.add_argument("--label", default="colorcalib")
@@ -532,23 +264,11 @@ def main():
     print(f"[data] sampling {n} latents (evenly spaced over pool)")
 
     # ---- native Qwen VAE (reference decoder) ----
-    print(f"[vae] loading {args.vae_pth}")
-    vae = WanVAE2d_(
-        dim=96,
-        z_dim=16,
-        dim_mult=[1, 2, 4, 4],
-        num_res_blocks=2,
-        attn_scales=[],
-        temperal_downsample=[False, True, True],
-        dropout=0.0,
-    )
-    vae.load_state_dict(
-        torch.load(args.vae_pth, map_location="cpu", weights_only=False), strict=False
-    )
-    vae = vae.to(dev, torch.float32).eval().requires_grad_(False)
-    vae_mean = torch.tensor(_LATENTS_MEAN, device=dev)
-    vae_std = torch.tensor(_LATENTS_STD, device=dev)
-    vae_scale = [vae_mean, 1.0 / vae_std]
+    # The production decoder: load_vae builds the AutoencoderKLQwenImage the
+    # inference path uses, and decode_to_pixels applies the latent de-norm.
+    print(f"[vae] loading {args.vae}")
+    vae = load_vae(str(args.vae), device=dev, dtype=torch.float32, eval=True)
+    vae.requires_grad_(False)
 
     # ---- PiD decoder (candidate) ----
     pid_core = load_pid_core(args.node_dir)
@@ -600,9 +320,7 @@ def main():
         lat5 = lat.unsqueeze(0)  # (1,16,h,w)
 
         with torch.no_grad():
-            ref = vae.decode(lat5.float(), vae_scale).clamp(
-                -1, 1
-            )  # (1,3, h*8, w*8) in [-1,1]
+            ref = vae.decode_to_pixels(lat5.float())  # (1,3, h*8, w*8) in [-1,1]
             pid, tiled = decode_pid(
                 pid_core, net, lat5.to(pid_dtype), args, null_cap, pid_dtype
             )
