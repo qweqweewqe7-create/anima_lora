@@ -147,6 +147,10 @@ STRINGS: dict[str, str] = {
     "preprocess_status_caches": "キャッシュ — 潜在変数: {lat}, テキスト: {te}, PE: {pe}",
     "preprocess_status_masks": "マスク: {masks}",
     "preprocess_status_no_resized": "リサイズ済み画像がありません。",
+    "preprocess_no_resized_to_process": (
+        "post_image_dataset/resized/ にリサイズ済み画像がありません。先に前処理"
+        "（リサイズ）を実行してください — マスク生成とグループ化はリサイズ済み画像を対象に動作します。"
+    ),
     "preprocess_open_dataset_dir": "cacheフォルダを開く",
     "preprocess_open_dataset_dir_tooltip": "post_image_dataset/ フォルダ（リサイズ済み画像 + キャッシュ）をファイルマネージャーで開きます。",
     "preprocess_clear_scope_cache": "現在scopeのキャッシュ削除",
@@ -346,8 +350,6 @@ STRINGS: dict[str, str] = {
     "dataset_resize_preview": "リサイズプレビューを表示",
     "dataset_resize_preview_tooltip": "前処理 target_res が選択する中央クロップ領域と最終 bucket を表示します。元ファイルは変更しません。",
     "dataset_resize_preview_label": "{width}x{height} @ {edge}",
-    "dataset_preprocess_use_short": "使用 (A)",
-    "dataset_preprocess_use_tooltip": "現在の画像を前処理対象としてマークします。元ファイルは変更しません。",
     "dataset_preprocess_skip_short": "スキップ (S)",
     "dataset_preprocess_skip_tooltip": "現在の画像を前処理 resize でスキップするようにマークします。元ファイルは変更しません。",
     "dataset_preprocess_clear_short": "解除 (F)",

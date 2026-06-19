@@ -85,7 +85,9 @@ from gui import daemon as gui_daemon
 from gui._paths import (
     DEFAULT_CAPTION_INSERT_NO_ARTIST,
     DEFAULT_CAPTION_VALIDATE_ARTIST_TAGS,
+    IMAGE_EXTS,
 )
+from gui.config_io import default_resized_dir
 from gui._job_mixin import DaemonJobMixin
 from gui.i18n import current_language, t
 from gui.progress import TqdmProgressTracker, make_progress_bar
@@ -1023,12 +1025,9 @@ class ImageViewerTab(DaemonJobMixin, LazyTabMixin, QWidget):
         self.resize_preview_cb.setEnabled(False)
         self.resize_preview_cb.toggled.connect(self._on_overlay_toggled)
         img_head.addWidget(self.resize_preview_cb)
-        self.preprocess_use_btn = QPushButton(t("dataset_preprocess_use_short"))
-        self.preprocess_use_btn.setToolTip(t("dataset_preprocess_use_tooltip"))
-        self.preprocess_use_btn.clicked.connect(
-            lambda: self._set_current_preprocess_decision("use", advance=True)
-        )
-        img_head.addWidget(self.preprocess_use_btn)
+        # No explicit "Use" button — an image with no decision is already
+        # processed (preprocess only honours skip/move), so "use" was a no-op
+        # marker. Skip / Clear / Move cover the real states.
         self.preprocess_skip_btn = QPushButton(t("dataset_preprocess_skip_short"))
         self.preprocess_skip_btn.setToolTip(t("dataset_preprocess_skip_tooltip"))
         self.preprocess_skip_btn.clicked.connect(
@@ -1145,12 +1144,6 @@ class ImageViewerTab(DaemonJobMixin, LazyTabMixin, QWidget):
         _esc = QShortcut(QKeySequence(Qt.Key_Escape), self.tree, self._unmark_current)
         _esc.setContext(Qt.WidgetShortcut)
         for target in (self.tree, self.img):
-            use_sc = QShortcut(
-                QKeySequence("A"),
-                target,
-                lambda: self._set_current_preprocess_decision("use", advance=True),
-            )
-            use_sc.setContext(Qt.WidgetShortcut)
             skip_sc = QShortcut(
                 QKeySequence("S"),
                 target,
@@ -1251,6 +1244,18 @@ class ImageViewerTab(DaemonJobMixin, LazyTabMixin, QWidget):
         if self._job_id:  # a grouping run is already attached
             QMessageBox.information(
                 self, "", t("dataset_group_queued", job_id=self._job_id)
+            )
+            return
+        # Grouping keys off PE-Spatial features of the resized images; with none
+        # on disk the task exits with an opaque "no images to group". Point the
+        # user at the real cause (run Preprocess first) instead.
+        resized_dir = default_resized_dir()
+        has_resized = resized_dir.is_dir() and any(
+            p.suffix.lower() in IMAGE_EXTS for p in resized_dir.rglob("*")
+        )
+        if not has_resized:
+            QMessageBox.warning(
+                self, t("error"), t("preprocess_no_resized_to_process")
             )
             return
         # Grouping is GPU work — free the resident tagger first so they don't
@@ -2450,7 +2455,6 @@ class ImageViewerTab(DaemonJobMixin, LazyTabMixin, QWidget):
     def _refresh_preprocess_controls(self) -> None:
         path = self._current_image_path()
         enabled = path is not None
-        self.preprocess_use_btn.setEnabled(enabled)
         self.preprocess_skip_btn.setEnabled(enabled)
         current_has_decision = (
             path in self._preprocess_decisions or path in self._marked
