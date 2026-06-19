@@ -58,6 +58,17 @@ def main() -> None:
         action="store_false",
         help="Use the stock 3D causal-Conv3d VAE instead of the 2D fold.",
     )
+    # Encode in fp32 instead of bf16. The fp32 save already happens regardless;
+    # this also encodes in fp32, removing the (structured but ~17 dB-below-recon)
+    # bf16 accumulation error and making the 2D fold bit-exact. See
+    # bench/qwen_vae_2d/encode_dtype_probe.py — quality-neutral, hygiene only.
+    parser.add_argument(
+        "--no_half_vae",
+        "--fp32_vae",
+        dest="no_half_vae",
+        action="store_true",
+        help="Encode latents in fp32 (default: bf16). Bit-exact 2D fold; slower.",
+    )
     parser.add_argument(
         "--path_pattern",
         "--path-pattern",
@@ -87,10 +98,10 @@ def main() -> None:
         return
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    dtype = torch.bfloat16
+    dtype = torch.float32 if args.no_half_vae else torch.bfloat16
 
     print(f"{pending}/{total} images need latents.")
-    print(f"Loading VAE from {args.vae} ...")
+    print(f"Loading VAE from {args.vae} (encode dtype: {dtype}) ...")
     vae = qwen_image_autoencoder_kl.load_vae(
         args.vae,
         device="cpu",

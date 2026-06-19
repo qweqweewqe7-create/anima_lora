@@ -102,3 +102,31 @@ def test_full_vae_2d_matches_3d_latents():
     # fp32 over 61 layers + differing cuDNN/oneDNN algos: small rounding only.
     max_abs = (lat3d - lat2d).abs().max().item()
     assert max_abs < 5e-3, f"latent max|Δ| = {max_abs:.3e}"
+
+
+def test_full_vae_2d_matches_3d_decode():
+    """Whole-VAE decode (the inference path): 2D fold matches 3D within bf16 noise."""
+    if os.environ.get("CUDA_VISIBLE_DEVICES") == "" or not torch.cuda.is_available():
+        device = "cpu"
+    else:
+        device = "cuda:0"
+
+    torch.manual_seed(0)
+    # z_dim latent channels at 1/8 spatial scale of a 128px image.
+    lat = torch.randn(1, 16, 16, 16, device=device)
+
+    vae = load_vae(
+        str(VAE_PATH),
+        device=device,
+        dtype=torch.float32,
+        eval=True,
+        disable_cache=True,
+    )
+    with torch.no_grad():
+        px3d = vae.decode_to_pixels(lat.float())
+        vae.convert_to_2d()
+        px2d = vae.decode_to_pixels(lat.float())
+
+    assert vae.is_2d is True
+    max_abs = (px3d - px2d).abs().max().item()
+    assert max_abs < 5e-3, f"pixel max|Δ| = {max_abs:.3e}"
