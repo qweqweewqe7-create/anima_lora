@@ -25,63 +25,18 @@ import time
 from pathlib import Path
 
 import torch
-import torch.nn as nn
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from bench._common import make_run_dir, write_result  # noqa: E402
-from library.models.qwen_vae import (  # noqa: E402
-    AutoencoderKLQwenImage,
-    QwenImageCausalConv3d,
-    load_vae,
-)
+from library.models.qwen_vae import load_vae  # noqa: E402
 
 
-class Folded2DConv(nn.Module):
-    """2D-equivalent of a T=1 ``QwenImageCausalConv3d`` (zero-pad causal).
-
-    Keeps the 5D (B,C,1,H,W) plumbing intact: squeeze the singleton time
-    axis, run a Conv2d, unsqueeze back. Exact in real arithmetic.
-    """
-
-    def __init__(self, c3d: QwenImageCausalConv3d) -> None:
-        super().__init__()
-        # _padding = (pad_w, pad_w, pad_h, pad_h, 2*pad_t, 0); spatial pad is
-        # symmetric, so recover (pad_h, pad_w) directly.
-        pad_w = c3d._padding[0]
-        pad_h = c3d._padding[2]
-        self.conv = nn.Conv2d(
-            c3d.in_channels,
-            c3d.out_channels,
-            kernel_size=(c3d.kernel_size[1], c3d.kernel_size[2]),
-            stride=(c3d.stride[1], c3d.stride[2]),
-            padding=(pad_h, pad_w),
-            bias=c3d.bias is not None,
-        )
-        self.conv = self.conv.to(device=c3d.weight.device, dtype=c3d.weight.dtype)
-        with torch.no_grad():
-            # last temporal tap is the only one that sees the real frame
-            self.conv.weight.copy_(c3d.weight[:, :, -1, :, :])
-            if c3d.bias is not None:
-                self.conv.bias.copy_(c3d.bias)
-
-    def forward(self, x: torch.Tensor, cache_x=None) -> torch.Tensor:
-        x = x[:, :, 0]  # (B,C,1,H,W) -> (B,C,H,W)
-        x = self.conv(x)
-        return x[:, :, None]  # -> (B,C,1,H',W')
-
-
-def fold_to_2d(vae: AutoencoderKLQwenImage) -> int:
-    """Replace every QwenImageCausalConv3d in-place with a Folded2DConv."""
-    n = 0
-    for parent in vae.modules():
-        for name, child in list(parent.named_children()):
-            if isinstance(child, QwenImageCausalConv3d):
-                setattr(parent, name, Folded2DConv(child))
-                n += 1
-    return n
+def fold_to_2d(vae) -> int:
+    """Fold the VAE's causal Conv3d stack to 2D (shipped in the library)."""
+    return vae.convert_to_2d()
 
 
 def _load_image(path: str, res: int, device, dtype) -> torch.Tensor:
@@ -117,16 +72,24 @@ def _timed(fn, iters: int, device) -> tuple[float, int]:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--res", type=int, default=1024)
-    ap.add_argument("--batch", type=int, default=10)
+    ap.add_argument("--batch", type=int, default=4, help="production default is 4")
     ap.add_argument("--iters", type=int, default=5)
     ap.add_argument("--image", type=str, default=None, help="optional real image")
     ap.add_argument("--dtype", choices=["bf16", "fp32"], default="bf16")
+    ap.add_argument(
+        "--chunk_size",
+        type=int,
+        default=64,
+        help="spatial_chunk_size for the 3D baseline (production default 64; "
+        "0 disables). The 2D fold runs unchunked.",
+    )
     ap.add_argument("--label", type=str, default=None)
     args = ap.parse_args()
 
     assert torch.cuda.is_available(), "needs CUDA"
     device = torch.device("cuda:0")
     dtype = torch.bfloat16 if args.dtype == "bf16" else torch.float32
+    chunk = args.chunk_size or None
 
     import anima_lora
 
@@ -141,69 +104,123 @@ def main() -> None:
         gen = torch.Generator(device=device).manual_seed(0)
         pixels = (
             torch.rand(
-                args.batch, 3, args.res, args.res,
-                generator=gen, device=device, dtype=torch.float32,
+                args.batch,
+                3,
+                args.res,
+                args.res,
+                generator=gen,
+                device=device,
+                dtype=torch.float32,
             )
             * 2.0
             - 1.0
         ).to(dtype)
         src = "random[-1,1]"
 
-    # ============ EQUIVALENCE (fp32, exact algebra) ============
-    vae32 = load_vae(vae_path, device=device, dtype=torch.float32, eval=True)
-    px32 = pixels.float()
-    lat3d = vae32.encode_pixels_to_latents(px32)
+    # ============ EQUIVALENCE (fp32, exact algebra; res-independent) ============
+    # Run at a small res so the un-chunked fp32 3D path fits comfortably.
+    res_eq = min(args.res, 256)
+    if args.image:
+        px_eq = _load_image(args.image, res_eq, device, torch.float32)
+    else:
+        geq = torch.Generator(device=device).manual_seed(1)
+        px_eq = torch.rand(1, 3, res_eq, res_eq, generator=geq, device=device) * 2 - 1
+    vae32 = load_vae(
+        vae_path, device=device, dtype=torch.float32, eval=True, disable_cache=True
+    )
+    lat3d = vae32.encode_pixels_to_latents(px_eq)
     img3d = vae32.decode_to_pixels(lat3d)
 
     n_folded = fold_to_2d(vae32)
-    lat2d = vae32.encode_pixels_to_latents(px32)
+    lat2d = vae32.encode_pixels_to_latents(px_eq)
     img2d = vae32.decode_to_pixels(lat2d)
 
     enc_max = (lat3d - lat2d).abs().max().item()
     enc_rel = enc_max / (lat3d.abs().max().item() + 1e-12)
     dec_max = (img3d - img2d).abs().max().item()
-    del vae32, px32, lat3d, img3d, lat2d, img2d
+    del vae32, px_eq, lat3d, img3d, lat2d, img2d
     torch.cuda.empty_cache()
 
     # ============ TIMING + VRAM (production dtype) ============
     def run_block(fold: bool):
-        vae = load_vae(vae_path, device=device, dtype=dtype, eval=True)
+        # 3D baseline gets the production chunk size; the 2D fold runs unchunked.
+        vae = load_vae(
+            vae_path,
+            device=device,
+            dtype=dtype,
+            eval=True,
+            spatial_chunk_size=(None if fold else chunk),
+            disable_cache=True,
+        )
         if fold:
             fold_to_2d(vae)
-        lat = vae.encode_pixels_to_latents(pixels)
-        enc_ms, enc_peak = _timed(
-            lambda: vae.encode_pixels_to_latents(pixels), args.iters, device
-        )
-        dec_ms, dec_peak = _timed(
-            lambda: vae.decode_to_pixels(lat), args.iters, device
-        )
-        del vae, lat
+        try:
+            lat = vae.encode_pixels_to_latents(pixels)
+            enc_ms, enc_peak = _timed(
+                lambda: vae.encode_pixels_to_latents(pixels), args.iters, device
+            )
+            dec_ms, dec_peak = _timed(
+                lambda: vae.decode_to_pixels(lat), args.iters, device
+            )
+            out = {
+                "encode_ms": enc_ms,
+                "decode_ms": dec_ms,
+                "encode_peak_mb": enc_peak / 1e6,
+                "decode_peak_mb": dec_peak / 1e6,
+                "oom": False,
+            }
+        except torch.OutOfMemoryError:
+            out = {
+                "encode_ms": None,
+                "decode_ms": None,
+                "encode_peak_mb": None,
+                "decode_peak_mb": None,
+                "oom": True,
+            }
+        # vae/lat are run_block locals — freed on return; just reclaim the cache.
         torch.cuda.empty_cache()
-        return {
-            "encode_ms": enc_ms,
-            "decode_ms": dec_ms,
-            "encode_peak_mb": enc_peak / 1e6,
-            "decode_peak_mb": dec_peak / 1e6,
-        }
+        return out
 
     m3d = run_block(fold=False)
     m2d = run_block(fold=True)
 
-    # bf16/production-dtype numerical diff (accumulation-order only)
-    vaeP = load_vae(vae_path, device=device, dtype=dtype, eval=True)
-    latP_3d = vaeP.encode_pixels_to_latents(pixels)
+    # bf16/production-dtype numerical diff at small res (accumulation-order only)
+    if args.image:
+        px_p = _load_image(args.image, res_eq, device, dtype)
+    else:
+        gp = torch.Generator(device=device).manual_seed(1)
+        px_p = (
+            torch.rand(1, 3, res_eq, res_eq, generator=gp, device=device) * 2 - 1
+        ).to(dtype)
+    vaeP = load_vae(vae_path, device=device, dtype=dtype, eval=True, disable_cache=True)
+    latP_3d = vaeP.encode_pixels_to_latents(px_p)
     fold_to_2d(vaeP)
-    latP_2d = vaeP.encode_pixels_to_latents(pixels)
+    latP_2d = vaeP.encode_pixels_to_latents(px_p)
     enc_max_prod = (latP_3d.float() - latP_2d.float()).abs().max().item()
-    del vaeP, latP_3d, latP_2d
+    del vaeP, latP_3d, latP_2d, px_p
     torch.cuda.empty_cache()
 
+    def _ratio(a, b):
+        return (a / b) if (a is not None and b not in (None, 0)) else None
+
+    speedup = {
+        "encode_x": _ratio(m3d["encode_ms"], m2d["encode_ms"]),
+        "decode_x": _ratio(m3d["decode_ms"], m2d["decode_ms"]),
+        "encode_peak_ratio_2d_over_3d": _ratio(
+            m2d["encode_peak_mb"], m3d["encode_peak_mb"]
+        ),
+        "decode_peak_ratio_2d_over_3d": _ratio(
+            m2d["decode_peak_mb"], m3d["decode_peak_mb"]
+        ),
+    }
     metrics = {
         "config": {
             "res": args.res,
             "batch": args.batch,
             "iters": args.iters,
             "dtype": args.dtype,
+            "chunk_size_3d": chunk,
+            "res_equivalence": res_eq,
             "source": src,
             "n_conv3d_folded": n_folded,
         },
@@ -217,39 +234,49 @@ def main() -> None:
         },
         "vae_3d": m3d,
         "vae_2d": m2d,
-        "speedup": {
-            "encode_x": m3d["encode_ms"] / m2d["encode_ms"],
-            "decode_x": m3d["decode_ms"] / m2d["decode_ms"],
-            "encode_peak_ratio_2d_over_3d": m2d["encode_peak_mb"]
-            / m3d["encode_peak_mb"],
-            "decode_peak_ratio_2d_over_3d": m2d["decode_peak_mb"]
-            / m3d["decode_peak_mb"],
-        },
+        "speedup": speedup,
     }
 
     run_dir = make_run_dir("qwen_vae_2d", label=args.label)
     write_result(
-        run_dir, script=__file__, args=args, metrics=metrics,
-        label=args.label, device=device,
+        run_dir,
+        script=__file__,
+        args=args,
+        metrics=metrics,
+        label=args.label,
+        device=device,
     )
 
     # ---- console summary ----
-    print(f"\n=== Qwen VAE 2D-fold bench ({args.res}px x{args.batch}, {args.dtype}) ===")
+    def f(v, unit=""):
+        return "  OOM  " if v is None else f"{v:7.1f}{unit}"
+
+    def fx(v):
+        return "n/a" if v is None else f"{v:.2f}x"
+
+    print(
+        f"\n=== Qwen VAE 2D-fold bench ({args.res}px x{args.batch}, {args.dtype}, "
+        f"3D chunk={chunk}) ==="
+    )
     print(f"folded {n_folded} Conv3d -> Conv2d   source={src}")
-    print("\n[equivalence]")
+    print(f"\n[equivalence] (fp32 @ {res_eq}px, exact algebra)")
     print(f"  fp32  encode max|Δ| = {enc_max:.3e}  (rel {enc_rel:.2e})")
     print(f"  fp32  decode max|Δ| = {dec_max:.3e}")
     print(f"  {args.dtype}  encode max|Δ| = {enc_max_prod:.3e}  (accum-order only)")
     print("\n[encode]")
-    print(f"  3D: {m3d['encode_ms']:7.1f} ms  peak {m3d['encode_peak_mb']:7.0f} MB")
-    print(f"  2D: {m2d['encode_ms']:7.1f} ms  peak {m2d['encode_peak_mb']:7.0f} MB")
-    print(f"  -> {metrics['speedup']['encode_x']:.2f}x faster, "
-          f"{metrics['speedup']['encode_peak_ratio_2d_over_3d']:.2f}x peak mem")
+    print(f"  3D: {f(m3d['encode_ms'], ' ms')}  peak {f(m3d['encode_peak_mb'], ' MB')}")
+    print(f"  2D: {f(m2d['encode_ms'], ' ms')}  peak {f(m2d['encode_peak_mb'], ' MB')}")
+    print(
+        f"  -> {fx(speedup['encode_x'])} faster, "
+        f"{fx(speedup['encode_peak_ratio_2d_over_3d'])} peak mem"
+    )
     print("\n[decode]")
-    print(f"  3D: {m3d['decode_ms']:7.1f} ms  peak {m3d['decode_peak_mb']:7.0f} MB")
-    print(f"  2D: {m2d['decode_ms']:7.1f} ms  peak {m2d['decode_peak_mb']:7.0f} MB")
-    print(f"  -> {metrics['speedup']['decode_x']:.2f}x faster, "
-          f"{metrics['speedup']['decode_peak_ratio_2d_over_3d']:.2f}x peak mem")
+    print(f"  3D: {f(m3d['decode_ms'], ' ms')}  peak {f(m3d['decode_peak_mb'], ' MB')}")
+    print(f"  2D: {f(m2d['decode_ms'], ' ms')}  peak {f(m2d['decode_peak_mb'], ' MB')}")
+    print(
+        f"  -> {fx(speedup['decode_x'])} faster, "
+        f"{fx(speedup['decode_peak_ratio_2d_over_3d'])} peak mem"
+    )
     print(f"\nresult.json -> {run_dir}")
 
 

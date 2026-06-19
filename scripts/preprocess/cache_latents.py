@@ -40,6 +40,24 @@ def main() -> None:
         default=True,
         help="Disable VAE internal cache (default: True)",
     )
+    # 2D VAE fold is ON by default: image-only pipeline, ~2x faster encode at
+    # ~0.65-0.7x peak VRAM, latents equivalent within bf16 noise. See
+    # bench/qwen_vae_2d/. Opt out with --no_vae_2d for the stock 3D causal VAE.
+    parser.add_argument(
+        "--qwen_image_vae_2d",
+        "--vae_2d",
+        dest="vae_2d",
+        action="store_true",
+        default=True,
+        help="Fold the causal Conv3d VAE into 2D convs (image-only). Default ON.",
+    )
+    parser.add_argument(
+        "--no_vae_2d",
+        "--qwen_image_vae_3d",
+        dest="vae_2d",
+        action="store_false",
+        help="Use the stock 3D causal-Conv3d VAE instead of the 2D fold.",
+    )
     parser.add_argument(
         "--path_pattern",
         "--path-pattern",
@@ -81,6 +99,9 @@ def main() -> None:
         disable_cache=args.disable_cache,
     )
     vae.to(device, dtype=dtype)
+    if args.vae_2d:
+        n = vae.convert_to_2d()
+        print(f"Folded VAE to 2D (image-only): {n} Conv3d -> Conv2d")
     vae.requires_grad_(False)
     vae.eval()
 
