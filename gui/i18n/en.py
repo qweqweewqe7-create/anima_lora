@@ -451,6 +451,8 @@ STRINGS: dict[str, str] = {
     "caption_correct_visible_done": "Corrected {n} caption(s).",
     "caption_correct_visible_failed": "Corrected {n} caption(s).\n\nFailed:\n{err}",
     "caption_correct_no_change": "No caption changes to apply.",
+    "tag_kb_posts": "{n} posts",
+    "tag_kb_unknown": "{tag} — not in the tag knowledge base",
     "caption_correct_db_missing": (
         "danbooru_tags_classified.csv was not found.\n\n"
         "Download the Danbooru tag DB from the Models dialog, or place it here:\n{paths}"

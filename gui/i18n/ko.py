@@ -439,6 +439,8 @@ STRINGS: dict[str, str] = {
     "caption_correct_visible_done": "캡션 {n}개를 교정했습니다.",
     "caption_correct_visible_failed": "캡션 {n}개를 교정했습니다.\n\n실패:\n{err}",
     "caption_correct_no_change": "교정할 변경사항이 없습니다.",
+    "tag_kb_posts": "게시물 {n}개",
+    "tag_kb_unknown": "{tag} — 태그 지식베이스에 없음",
     "caption_correct_db_missing": (
         "danbooru_tags_classified.csv를 찾을 수 없습니다.\n\n"
         "모델 창에서 Danbooru 태그 DB를 다운로드하거나 다음 위치에 배치하세요:\n{paths}"

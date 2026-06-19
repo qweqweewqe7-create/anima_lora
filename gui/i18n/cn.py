@@ -386,6 +386,8 @@ STRINGS: dict[str, str] = {
     "caption_correct_visible_done": "已校正 {n} 个标注。",
     "caption_correct_visible_failed": "已校正 {n} 个标注。\n\n失败:\n{err}",
     "caption_correct_no_change": "没有需要校正的更改。",
+    "tag_kb_posts": "{n} 个帖子",
+    "tag_kb_unknown": "{tag} — 不在标签知识库中",
     "caption_correct_db_missing": (
         "找不到 danbooru_tags_classified.csv。\n\n"
         "请在模型窗口下载 Danbooru 标签 DB，或将它放到以下位置:\n{paths}"
