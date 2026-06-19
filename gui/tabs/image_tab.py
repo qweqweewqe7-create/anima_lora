@@ -87,7 +87,7 @@ from gui._paths import (
     DEFAULT_CAPTION_VALIDATE_ARTIST_TAGS,
 )
 from gui._job_mixin import DaemonJobMixin
-from gui.i18n import t
+from gui.i18n import current_language, t
 from gui.progress import TqdmProgressTracker, make_progress_bar
 from gui.theme import tok
 from gui.widgets import apply_variant
@@ -1433,7 +1433,15 @@ class ImageViewerTab(DaemonJobMixin, LazyTabMixin, QWidget):
         return self._caption_kb
 
     def _on_tag_clicked(self, tag: str) -> None:
-        """Show the clicked tag's KB entry as a rich tooltip at the cursor."""
+        """Show the clicked tag's KB entry as a rich tooltip at the cursor.
+
+        The tag KB (``danbooru_tags_classified.csv``) is Korean-only, so the
+        explanation view is gated to the Korean UI — in any other language the
+        tooltip would be untranslated Hangul. The autocomplete helper stays on
+        for every language (tag names / categories are language-neutral). When a
+        translated KB lands, widen this guard (see CONTRIBUTING.md §5)."""
+        if current_language() != "ko":
+            return
         kb = self._load_caption_kb(warn=False)
         info = kb.describe(tag) if kb is not None else None
         if info is None:
