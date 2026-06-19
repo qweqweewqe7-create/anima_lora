@@ -465,6 +465,12 @@ class _TagCompletionDelegate(QStyledItemDelegate):
     """Autocomplete popup row: tag name on the left, its KB category dimmed
     on the right (e.g. ``long hair            general``)."""
 
+    # Horizontal breathing room reserved between the tag name and its
+    # right-aligned category, plus the right-edge inset (kept in sync with the
+    # ``adjusted(0, 0, -_CATEGORY_INSET, 0)`` in ``paint``).
+    _CATEGORY_GAP = 24
+    _CATEGORY_INSET = 8
+
     def __init__(self, kind_lookup: dict[str, str], parent=None):
         super().__init__(parent)
         self._kind_lookup = kind_lookup
@@ -477,11 +483,23 @@ class _TagCompletionDelegate(QStyledItemDelegate):
         painter.save()
         painter.setPen(QColor("#9a9a9a"))
         painter.drawText(
-            option.rect.adjusted(0, 0, -8, 0),
+            option.rect.adjusted(0, 0, -self._CATEGORY_INSET, 0),
             Qt.AlignRight | Qt.AlignVCenter,
             kind,
         )
         painter.restore()
+
+    def sizeHint(self, option, index):  # noqa: N802 — Qt API
+        # Reserve width for the right-aligned category so it never crowds the
+        # tag name. ``sizeHintForColumn(0)`` (which sizes the popup) reads this.
+        hint = super().sizeHint(option, index)
+        kind = self._kind_lookup.get(index.data(Qt.DisplayRole) or "")
+        if kind:
+            extra = option.fontMetrics.horizontalAdvance(kind)
+            hint.setWidth(
+                hint.width() + extra + self._CATEGORY_GAP + self._CATEGORY_INSET
+            )
+        return hint
 
 
 class BoxedCaptionEdit(QTextEdit):
@@ -617,20 +635,50 @@ class BoxedCaptionEdit(QTextEdit):
 
     # --- Tag autocomplete ---------------------------------------------------
 
+    # Cap on how many contains-matches the popup offers. Since ``names`` is
+    # ordered by popularity, the first N matches are the N most popular.
+    _MAX_COMPLETIONS = 30
+
     def set_completion_data(self, names, kind_lookup) -> None:
         """Attach the autocomplete model (``names`` already ordered by
         popularity, ``kind_lookup`` = name → category). Called on the main
-        thread once the owning tab has built the data off-thread."""
-        comp = QCompleter(QStringListModel(names, self), self)
+        thread once the owning tab has built the data off-thread.
+
+        We filter to the top ``_MAX_COMPLETIONS`` matches ourselves (refilling
+        a small model on each keystroke) rather than handing the full ~114k-row
+        list to ``QCompleter`` and letting it scroll endlessly."""
+        self._completion_names = names
+        self._completion_names_lc = [n.lower() for n in names]
+        model = QStringListModel([], self)
+        comp = QCompleter(model, self)
         comp.setWidget(self)
         comp.setCaseSensitivity(Qt.CaseInsensitive)
-        comp.setModelSorting(QCompleter.UnsortedModel)  # keep post_count order
-        comp.setFilterMode(Qt.MatchContains)
         comp.setCompletionMode(QCompleter.PopupCompletion)
         comp.setMaxVisibleItems(12)
         comp.popup().setItemDelegate(_TagCompletionDelegate(kind_lookup, comp.popup()))
         comp.activated[str].connect(self._insert_completion)
         self._completer = comp
+        self._completion_model = model
+
+    def _top_matches(self, prefix: str) -> list[str]:
+        """Top ``_MAX_COMPLETIONS`` tags matching ``prefix``, prefix-matches
+        first then mid-word substring matches, each ranked by popularity.
+
+        So typing ``ye`` surfaces ``yellow eyes`` ahead of ``eye`` — a tag that
+        *starts* with what you typed is a stronger hit than one that merely
+        contains it."""
+        needle = prefix.lower()
+        prefix_hits: list[str] = []
+        contains_hits: list[str] = []
+        for name, name_lc in zip(self._completion_names, self._completion_names_lc):
+            if name_lc.startswith(needle):
+                prefix_hits.append(name)
+            elif needle in name_lc:
+                contains_hits.append(name)
+            if len(prefix_hits) >= self._MAX_COMPLETIONS:
+                # Already enough prefix matches; nothing later can outrank them.
+                return prefix_hits[: self._MAX_COMPLETIONS]
+        return (prefix_hits + contains_hits)[: self._MAX_COMPLETIONS]
 
     def _current_tag_prefix(self) -> tuple[str, bool]:
         """Return ``(prefix, in_tag_context)`` for the token under the cursor.
@@ -686,12 +734,15 @@ class BoxedCaptionEdit(QTextEdit):
         if not in_tag or len(prefix) < 2:
             comp.popup().hide()
             return
-        if prefix != comp.completionPrefix():
-            comp.setCompletionPrefix(prefix)
-            comp.popup().setCurrentIndex(comp.completionModel().index(0, 0))
-        if comp.completionCount() == 0:
+        matches = self._top_matches(prefix)
+        if not matches:
             comp.popup().hide()
             return
+        if matches != self._completion_model.stringList():
+            self._completion_model.setStringList(matches)
+            # Model already holds only the matches; an empty prefix shows them all.
+            comp.setCompletionPrefix("")
+            comp.popup().setCurrentIndex(comp.completionModel().index(0, 0))
         rect = self.cursorRect()
         rect.setWidth(
             comp.popup().sizeHintForColumn(0)
