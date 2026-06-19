@@ -31,13 +31,6 @@ _DANBOORU_NUMERIC_CATEGORIES = {
     "5": "meta",
 }
 
-_ANIMA_PERSON_TAGS = frozenset(
-    {
-        "solo",
-        "no humans",
-    }
-)
-
 
 @dataclass(frozen=True)
 class CaptionCorrectionOptions:
@@ -118,7 +111,9 @@ def load_tag_knowledge_base(path: str | Path) -> TagKnowledgeBase:
             raw_name = str(row.get("name") or "").strip()
             if not raw_name:
                 continue
-            category_path = _description_category_path(str(row.get("description") or ""))
+            category_path = _description_category_path(
+                str(row.get("description") or "")
+            )
             kind = _kind_from_category(category_path, str(row.get("category") or ""))
             tags[tag_key(raw_name)] = TagInfo(
                 name=normalize_tag(raw_name),
@@ -149,7 +144,12 @@ def correct_caption(
     options = options or CaptionCorrectionOptions()
     tags = _parse_tags(text)
     if not tags:
-        return CaptionCorrectionResult(text="", changed=bool(text.strip()), inserted_no_artist=False, unknown_tags=())
+        return CaptionCorrectionResult(
+            text="",
+            changed=bool(text.strip()),
+            inserted_no_artist=False,
+            unknown_tags=(),
+        )
 
     buckets: dict[str, list[str]] = {
         "meta": [],
@@ -211,7 +211,7 @@ def _classify_tag(
         return "general"
     if tag in CAPTION_RATINGS or _is_year_tag(tag):
         return "meta"
-    if is_count_tag(tag) or tag in _ANIMA_PERSON_TAGS:
+    if is_count_tag(tag):
         return "count"
     return kb.classify(tag)
 
@@ -254,4 +254,6 @@ def correct_many(
     *,
     options: CaptionCorrectionOptions | None = None,
 ) -> list[tuple[Path, CaptionCorrectionResult]]:
-    return [(path, correct_caption(text, kb, options=options)) for path, text in captions]
+    return [
+        (path, correct_caption(text, kb, options=options)) for path, text in captions
+    ]

@@ -50,7 +50,7 @@ def test_correct_caption_inserts_no_artist_at_artist_position(tmp_path):
     kb = load_tag_knowledge_base(_csv(tmp_path / "tags.csv"))
     result = correct_caption("long hair, vocaloid, hatsune miku, solo", kb)
 
-    assert result.text == "solo, hatsune miku, vocaloid, @no-artist, long hair"
+    assert result.text == "hatsune miku, vocaloid, @no-artist, long hair, solo"
     assert result.inserted_no_artist
 
 
@@ -65,9 +65,7 @@ def test_artist_validation_keeps_unknown_at_tag_in_general_tail(tmp_path):
         ),
     )
 
-    assert result.text == (
-        "1girl, hatsune miku, vocaloid, @no-artist, @trigger-word"
-    )
+    assert result.text == ("1girl, hatsune miku, vocaloid, @no-artist, @trigger-word")
 
 
 def test_artist_validation_does_not_reclassify_at_prefixed_character(tmp_path):
