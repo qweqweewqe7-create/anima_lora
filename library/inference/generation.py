@@ -3,6 +3,7 @@
 import argparse
 import logging
 import math
+import os
 import random
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,6 +24,7 @@ from library.inference.adapters import (
     set_step_expert_index,
 )
 from library.inference import sampling as inference_utils
+from library.inference.cfg_delta_probe import CfgDeltaProbe
 from library.inference.output import check_inputs
 from library.inference.text import prepare_text_inputs
 from library.inference.models import load_dit_model
@@ -506,6 +508,8 @@ def generate_body(
     device: torch.device,
     seed: Union[int, List[int]],
     latents: Optional[torch.Tensor] = None,
+    context_alt: Optional[Dict[str, Any]] = None,
+    tag_drop_sigma: Optional[float] = None,
 ) -> torch.Tensor:
     """Core denoising loop for Anima generation.
 
@@ -520,6 +524,17 @@ def generate_body(
             batch dimension is taken from this tensor and seed is ignored for
             noise creation.  This enables callers (e.g. batch mode) to construct
             multi-seed batched latents externally.
+        context_alt: Optional alternate *conditional* context (same shape as
+            ``context``). Used together with ``tag_drop_sigma`` to drive the
+            commitment-σ probe: above the cutoff the conditional pass uses
+            ``context``; at-or-below it swaps to ``context_alt``. This is the
+            tag-level generalization of the ``ANIMA_TEXT_KNOCKOUT_SIGMA`` hook
+            below (which swaps the guided prediction to *null* below a cutoff) —
+            here we swap the conditional *embedding* to an alternate caption
+            (e.g. the same caption with one tag dropped) so we can read *when*
+            in the schedule a single prompt feature commits. No-op when either
+            ``context_alt`` or ``tag_drop_sigma`` is None.
+        tag_drop_sigma: σ cutoff for the ``context_alt`` swap (see above).
 
     Returns:
         Denoised latent tensor (batch dimension preserved).
@@ -598,6 +613,17 @@ def generate_body(
 
     embed = embed.to(torch.bfloat16)
     negative_embed = negative_embed.to(torch.bfloat16)
+
+    # Commitment-σ probe: alternate conditional embedding swapped in below
+    # ``tag_drop_sigma`` (see generate_body docstring). Prepared with the same
+    # batch-expand + bf16 cast as ``embed``; text encoder outputs are max-padded
+    # so the alt caption shares the sequence length (the padding-sink invariant).
+    embed_alt = None
+    if context_alt is not None and tag_drop_sigma is not None:
+        embed_alt = context_alt["embed"][0].to(device, dtype=torch.bfloat16)
+        if embed_alt.shape[0] < bs:
+            embed_alt = embed_alt.expand(bs, -1, -1)
+        embed_alt = embed_alt.to(torch.bfloat16)
 
     timesteps, sigmas = inference_utils.get_timesteps_sigmas(
         args.infer_steps,
@@ -800,6 +826,13 @@ def generate_body(
             refresh_ratio=getattr(args, "spectrum_refresh_ratio", -1.0),
         )
     else:
+        cfg_delta_probe = CfgDeltaProbe.maybe_create()
+        # Capability probe (ANIMA_TEXT_KNOCKOUT_SIGMA=<cutoff>): below the cutoff
+        # sigma, continue unconditionally (noise_pred = uncond) so the prompt has
+        # zero effect there. Measures how much late-sigma text still steers the
+        # output. Off (None) => normal generation.
+        _knockout_env = os.environ.get("ANIMA_TEXT_KNOCKOUT_SIGMA")
+        text_knockout_sigma = float(_knockout_env) if _knockout_env else None
         try:
             with tqdm(total=len(timesteps), desc=f"Denoising steps ({bs}x)") as pbar:
                 for i, t in enumerate(timesteps):
@@ -839,11 +872,18 @@ def generate_body(
                         # for v6 fei_obs={replace,concat} artifacts. No-op for v5.
                         dcw_calibrator.record_latent_pre_forward(i, latents)
 
-                    set_hydra_content(anima, embed)
-                    set_hydra_crossattn(anima, embed)
+                    # Commitment-σ probe: below the cutoff, drive the
+                    # conditional pass with the alternate caption (e.g. tag
+                    # dropped). ``cond_embed`` is ``embed`` everywhere else.
+                    if embed_alt is not None and float(sigmas[i]) < tag_drop_sigma:
+                        cond_embed = embed_alt
+                    else:
+                        cond_embed = embed
+                    set_hydra_content(anima, cond_embed)
+                    set_hydra_crossattn(anima, cond_embed)
                     if soft_tokens_net is not None:
                         soft_tokens_net.append_postfix(
-                            embed, soft_tokens_embed_seqlens, timesteps=t_expand
+                            cond_embed, soft_tokens_embed_seqlens, timesteps=t_expand
                         )
                     with torch.no_grad():
                         _pos_kw = (
@@ -854,7 +894,7 @@ def generate_body(
                         noise_pred = anima(
                             latents,
                             t_expand,
-                            embed,
+                            cond_embed,
                             padding_mask=padding_mask,
                             **_pos_kw,
                         )
@@ -881,6 +921,13 @@ def generate_body(
                                 padding_mask=padding_mask,
                                 **_neg_kw,
                             )
+                        if cfg_delta_probe is not None:
+                            # Tier-0 cross-attn-drive probe: log the text-driven
+                            # velocity component before the combine overwrites
+                            # noise_pred (still the conditional prediction here).
+                            cfg_delta_probe.record(
+                                i, float(sigmas[i]), noise_pred, uncond_noise_pred
+                            )
                         if cfgpp_lambda is not None:
                             # CFG++ substrate as a σ-scheduled guidance reweight
                             # (App A.2): noise_pred = v^u + w_eff·(v^c − v^u). Pure
@@ -902,6 +949,14 @@ def generate_body(
                             noise_pred = uncond_noise_pred + args.guidance_scale * (
                                 noise_pred - uncond_noise_pred
                             )
+
+                        if (
+                            text_knockout_sigma is not None
+                            and float(sigmas[i]) < text_knockout_sigma
+                        ):
+                            # Text knocked out below the cutoff: drop the guided
+                            # prediction and continue on the unconditional path.
+                            noise_pred = uncond_noise_pred
 
                     denoised = latents.float() - sigmas[i] * noise_pred.float()
                     if er_sde is not None:
@@ -968,6 +1023,8 @@ def generate_body(
 
                     pbar.update()
         finally:
+            if cfg_delta_probe is not None:
+                cfg_delta_probe.flush()
             clear_hydra_sigma(anima)
             clear_hydra_fei(anima)
             # P-GRAFT: restore LoRA for next generation
