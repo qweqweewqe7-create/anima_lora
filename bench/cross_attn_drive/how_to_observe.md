@@ -64,6 +64,10 @@ its own measured set.
 - **0b** PASS = the flagged tags **commit late** — `commitment_sigma ∈ [0.6, 0.8]`
   (`result.json → phase0b`). That co-location (used ∧ late ∧ unstable ∧ common) is
   the green light for Phase-1.
+- **0c** PASS = boosting a tag's cross-attn drive below the cutoff adds **localized
+  structure** for ≥1 tag (`result.json → phase0c`). KILL = every tag's boost is a
+  diffuse tone shift / incoherent — the magnitude-rescale trap the front-loaded
+  finding predicts at low σ, so a "sustain attention at later σ" LoRA wouldn't help.
 
 ### commitment-σ (0b)
 
@@ -74,6 +78,28 @@ already reproduces the full caption (the tag locked early); `rel→1` means it
 hadn't committed yet. `commitment_sigma` = the largest cutoff still at `rel ≤
 --commit-thresh` (default 0.2) — the σ at which the tag locks. Late = it keeps
 needing the [0.6, 0.8] band.
+
+### boost probe (0c) — the no-train falsification gate
+
+`run_phase0c` is the cheap test of the *"train a LoRA to keep cross-attn driving at
+later σ"* idea **before building it**. For each tag it amplifies that tag's
+embedding-space delta `embed_alt + scale·(embed − embed_alt)` **below** `--boost-cutoff`
+(default σ 0.85 — the front-loaded collinear threshold where text supposedly has no
+authority) and reads `boost.csv` per (tag, scale):
+
+- **delta_local** — does cranking the scale move the tag's region at all (rising = the
+  lever bites).
+- **concentration** — region/whole-frame ratio of the boost's effect. **High (≥
+  `--concentration-min`, default 1.5) = localized structure**; ~1 = a diffuse,
+  whole-image shift (the magnitude-rescale tone trap).
+- **instability_rel vs base_instability_rel** — boosted seed-wobble vs the
+  full-caption baseline in the region. Climbing past baseline·(1+`--instab-tol`) =
+  off-manifold incoherence, not new structure.
+
+A tag is `structure: true` when the top scale is **rising ∧ localized ∧ coherent**.
+PASS (any tag) green-lights the LoRA on that lever; KILL says don't build it. Read
+`boost_montages/<tag>.png` (`full | boosted@top-scale | boost-diff heatmap`) — a
+sharpened in-region feature = structure; a washed/tinted whole frame = tone.
 
 ## How to read the montage images
 

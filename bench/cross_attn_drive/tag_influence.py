@@ -301,7 +301,9 @@ class Generator:
         # unique per (tag, caption) and never reused).
         self._cache: dict[tuple[str, int], torch.Tensor] = {}
         # ~12 MB/img at 1024px → cap ≈ a couple tags' worth of baselines (<1 GB).
-        self._cache_cap = max(32, 2 * getattr(args, "seeds", 4) * getattr(args, "captions_per_tag", 6))
+        self._cache_cap = max(
+            32, 2 * getattr(args, "seeds", 4) * getattr(args, "captions_per_tag", 6)
+        )
 
     def _context(self, prompt: str):
         return prepare_text_inputs(
@@ -319,7 +321,9 @@ class Generator:
         if cached is not None:
             return cached
         ctx, ctx_null = self._context(prompt)
-        latent = generate_body(self.gen_args, self.anima, ctx, ctx_null, self.device, seed)
+        latent = generate_body(
+            self.gen_args, self.anima, ctx, ctx_null, self.device, seed
+        )
         img = decode_latent(self.vae, latent, self.device)
         clean_memory_on_device(self.device)
         if cache:
@@ -344,6 +348,35 @@ class Generator:
             seed,
             context_alt=ctx_alt,
             tag_drop_sigma=cutoff,
+        )
+        img = decode_latent(self.vae, latent, self.device)
+        clean_memory_on_device(self.device)
+        return img
+
+    @torch.no_grad()
+    def image_boost(
+        self,
+        prompt_full: str,
+        prompt_drop: str,
+        seed: int,
+        cutoff: float,
+        scale: float,
+    ) -> torch.Tensor:
+        """Boost-probe image: caption C above ``cutoff``; below it the tag's
+        embedding-space contribution is amplified by ``scale`` (C∖T as the
+        baseline the delta extrapolates from). ``scale=1`` == full caption."""
+        ctx, ctx_null = self._context(prompt_full)
+        ctx_alt, _ = self._context(prompt_drop)
+        latent = generate_body(
+            self.gen_args,
+            self.anima,
+            ctx,
+            ctx_null,
+            self.device,
+            seed,
+            context_alt=ctx_alt,
+            tag_drop_sigma=cutoff,
+            tag_boost_scale=scale,
         )
         img = decode_latent(self.vae, latent, self.device)
         clean_memory_on_device(self.device)
@@ -381,7 +414,9 @@ def run_phase0a(gen: Generator, corpus, suspect_tags, danbooru, args, run_dir):
 
     # training frequency = #captions in corpus carrying the tag
     train_freq = {
-        tag: sum(1 for c in corpus if tag.lower() in {t.lower() for t in _split_tags(c)})
+        tag: sum(
+            1 for c in corpus if tag.lower() in {t.lower() for t in _split_tags(c)}
+        )
         for tag in tag_caps
     }
 
@@ -406,7 +441,7 @@ def run_phase0a(gen: Generator, corpus, suspect_tags, danbooru, args, run_dir):
             sig = caption_signals(full, drop, args.region_frac)
             per_caption_rows.append({"tag": tag, "caption_idx": ci, **sig["row"]})
             png = montage_dir / f"{safe}__cap{ci}.png"
-            _write_montage(png, full, drop[0], sig["mean_diff"])
+            _write_montage(png, full, drop[0], sig["mean_diff"], thumb=args.montage_px)
             montage_paths.append((tag, png))
             del full, drop, sig
 
@@ -425,7 +460,8 @@ def run_phase0a(gen: Generator, corpus, suspect_tags, danbooru, args, run_dir):
                 "influence_local": sum(r["influence_local"] for r in rows) / len(rows),
                 "influence_bulk": sum(r["influence_bulk"] for r in rows) / len(rows),
                 "concentration": sum(r["concentration"] for r in rows) / len(rows),
-                "instability_local": sum(r["instability_local"] for r in rows) / len(rows),
+                "instability_local": sum(r["instability_local"] for r in rows)
+                / len(rows),
                 "instability_rel": sum(r["instability_rel"] for r in rows) / len(rows),
                 "train_freq": train_freq[tag],
                 "danbooru_category": cat,
@@ -586,6 +622,236 @@ def _commitment_sigma(curve: dict[float, float], thresh: float) -> Optional[floa
 
 
 # ---------------------------------------------------------------------------
+# Phase 0c — cross-attn-drive BOOST probe (the no-train falsification gate).
+# ---------------------------------------------------------------------------
+def boost_signals(
+    full: list[torch.Tensor],
+    drop: list[torch.Tensor],
+    boosted: list[torch.Tensor],
+    region_frac: float,
+) -> dict:
+    """Discriminator for "did boosting the tag below the cutoff add localized
+    structure, or just rescale magnitude?".
+
+    Inputs are length-S per-seed lists of [-1,1] CHW tensors (same seeds):
+    ``full`` = full caption, ``drop`` = tag dropped (defines the tag's region),
+    ``boosted`` = tag's embedding delta amplified below the cutoff.
+
+    The region is "where dropping the tag moves the image" (same mask as 0a). We
+    then ask whether the BOOST's effect lands inside that region:
+
+      * **delta_local** — mean L2(boosted, full) inside the region. Rising with
+        scale = the boost is doing *something* on the tag's feature.
+      * **concentration** — region-mean / whole-image-mean of L2(boosted, full).
+        HIGH = the boost is localized to the tag (structure); ~1 = a diffuse,
+        whole-image shift (the magnitude-rescale / tone trap the front-loaded
+        finding predicts at low σ).
+      * **instability_rel** — seed-variance of the BOOSTED image in the region /
+        its bulk variance. Climbing above the full-caption baseline = the boost
+        is incoherent across seeds (off-manifold extrapolation), not new
+        structure. (Caller compares against the 0a-style baseline below.)
+    """
+    # Region from the drop diff (the tag's footprint), exactly as Phase 0a.
+    drop_diffs = torch.stack([diff_map(f, d) for f, d in zip(full, drop)], dim=0)
+    mask = region_mask(drop_diffs.mean(dim=0), region_frac)
+
+    bdiffs = torch.stack(
+        [diff_map(b, f) for b, f in zip(boosted, full)], dim=0
+    )  # [S,H,W]
+    mean_bdiff = bdiffs.mean(dim=0)
+    delta_local = float(bdiffs[:, mask].mean())
+    delta_bulk = float(bdiffs.mean())
+    concentration = float(mean_bdiff[mask].mean() / (mean_bdiff.mean() + EPS))
+
+    bstack = torch.stack(boosted, dim=0).float()  # [S,3,H,W]
+    bvar = bstack.var(dim=0, unbiased=False).mean(dim=0)  # [H,W]
+    instability_rel = float(bvar[mask].mean() / (bvar.mean() + EPS))
+
+    # Full-caption baseline instability in the SAME region (the bar the boost
+    # must not exceed — climbing past it = incoherence, not structure).
+    fstack = torch.stack(full, dim=0).float()
+    fvar = fstack.var(dim=0, unbiased=False).mean(dim=0)
+    base_instability_rel = float(fvar[mask].mean() / (fvar.mean() + EPS))
+
+    return {
+        "delta_local": delta_local,
+        "delta_bulk": delta_bulk,
+        "concentration": concentration,
+        "instability_rel": instability_rel,
+        "base_instability_rel": base_instability_rel,
+        "mean_bdiff": mean_bdiff,
+        "mask": mask,
+    }
+
+
+def run_phase0c(gen: Generator, corpus, target_tags, args, run_dir):
+    """Boost-probe: for each tag, crank its cross-attn drive below the cutoff at
+    a sweep of scales and ask whether the effect is localized + seed-stable
+    (real structure → green-light a LoRA on that lever) or diffuse/incoherent
+    (the magnitude-rescale trap → don't build it)."""
+    seeds = list(range(args.seed, args.seed + args.seeds_0c))
+    scales = sorted(args.boost_scales)
+    cutoff = args.boost_cutoff
+
+    rows: list[dict] = []
+    per_tag: list[dict] = []
+    montage_dir = run_dir / "boost_montages"
+
+    for tag in target_tags:
+        tl = tag.lower()
+        caps = [c for c in corpus if tl in {t.lower() for t in _split_tags(c)}]
+        caps = caps[: args.captions_0c]
+        if not caps:
+            continue
+        print(
+            f"[0c] {tag!r}: {len(caps)} captions x {len(scales)} scales @ cutoff {cutoff}"
+        )
+
+        # Aggregate the discriminator across captions for each scale.
+        agg: dict[float, dict[str, list[float]]] = {
+            s: defaultdict(list) for s in scales
+        }
+        # Caption-0 / seed-0 panels at EVERY scale for the montage: the eye reads
+        # left→right to see *where* the boost stops adding structure and starts
+        # breaking the frame (a consistent collapse can pass the metric gate).
+        m_full = None
+        m_boosted: list[torch.Tensor] = []
+        m_topdiff = None
+        for ci, cap in enumerate(caps):
+            cap_drop = drop_tag(cap, tag)
+            full = [gen.image(cap, s, cache=True) for s in seeds]
+            drop = [gen.image(cap_drop, s) for s in seeds]
+            for sc in scales:
+                boosted = [gen.image_boost(cap, cap_drop, s, cutoff, sc) for s in seeds]
+                sig = boost_signals(full, drop, boosted, args.region_frac)
+                for k in (
+                    "delta_local",
+                    "delta_bulk",
+                    "concentration",
+                    "instability_rel",
+                    "base_instability_rel",
+                ):
+                    agg[sc][k].append(sig[k])
+                rows.append(
+                    {
+                        "tag": tag,
+                        "caption_idx": ci,
+                        "scale": sc,
+                        "cutoff": cutoff,
+                        "delta_local": round(sig["delta_local"], 5),
+                        "delta_bulk": round(sig["delta_bulk"], 5),
+                        "concentration": round(sig["concentration"], 4),
+                        "instability_rel": round(sig["instability_rel"], 4),
+                        "base_instability_rel": round(sig["base_instability_rel"], 4),
+                    }
+                )
+                if ci == 0:
+                    m_full = full[0]
+                    m_boosted.append(boosted[0])
+                    if sc == scales[-1]:
+                        m_topdiff = sig["mean_bdiff"]
+
+        if m_full is not None:
+            montage_dir.mkdir(parents=True, exist_ok=True)
+            _write_boost_montage(
+                montage_dir / f"{_danbooru_key(tag)}.png",
+                m_full,
+                m_boosted,
+                scales,
+                m_topdiff,
+                thumb=args.montage_px,
+            )
+
+        # Per-scale medians + verdict. Structure if at the top scale the boost is
+        # localized (concentration high) AND didn't blow up seed instability past
+        # the full-caption baseline, with delta_local actually rising over scale.
+        scale_summary = []
+        for sc in scales:
+            scale_summary.append(
+                {
+                    "scale": sc,
+                    "delta_local": round(_median(agg[sc]["delta_local"]), 5),
+                    "concentration": round(_median(agg[sc]["concentration"]), 4),
+                    "instability_rel": round(_median(agg[sc]["instability_rel"]), 4),
+                    "base_instability_rel": round(
+                        _median(agg[sc]["base_instability_rel"]), 4
+                    ),
+                }
+            )
+        top = scale_summary[-1]
+        rising = top["delta_local"] >= scale_summary[0]["delta_local"]
+        localized = top["concentration"] >= args.concentration_min
+        coherent = top["instability_rel"] <= top["base_instability_rel"] * (
+            1.0 + args.instab_tol
+        )
+        structure = bool(rising and localized and coherent)
+        per_tag.append(
+            {
+                "tag": tag,
+                "structure": structure,
+                "reason": {
+                    "rising": rising,
+                    "localized": localized,
+                    "coherent": coherent,
+                },
+                "by_scale": scale_summary,
+            }
+        )
+
+    _write_csv(run_dir / "boost.csv", rows)
+
+    structure_tags = [t["tag"] for t in per_tag if t["structure"]]
+    summary = {
+        "verdict": "PASS" if structure_tags else "KILL",
+        "structure_tags": structure_tags,
+        "cutoff": cutoff,
+        "scales": scales,
+        "concentration_min": args.concentration_min,
+        "instab_tol": args.instab_tol,
+        "per_tag": per_tag,
+    }
+    return summary
+
+
+def _panel_resize(pil, thumb: int):
+    """Resize a montage panel to ``thumb``×``thumb``, or keep native res when
+    ``thumb <= 0`` (full-detail montages — text/glyph legibility needs it)."""
+    from PIL import Image
+
+    return pil if thumb <= 0 else pil.resize((thumb, thumb), Image.BILINEAR)
+
+
+def _write_boost_montage(
+    path: Path,
+    full0: torch.Tensor,
+    boosted0: list[torch.Tensor],
+    scales: list[float],
+    mean_bdiff: torch.Tensor,
+    thumb: int = 0,
+) -> None:
+    """full@seed0 | boosted@scale… | boost-diff heatmap. Read left→right: does
+    the boost sharpen the tag's feature (structure) or wash the whole frame
+    (tone)? The heatmap localizes where the boost landed. ``thumb<=0`` = native
+    full-res (default), so fine detail survives."""
+    from PIL import Image
+
+    panels = [_panel_resize(pixels_to_pil(full0), thumb)]
+    panels += [_panel_resize(pixels_to_pil(b), thumb) for b in boosted0]
+    d = (mean_bdiff - mean_bdiff.min()) / (mean_bdiff.max() - mean_bdiff.min() + EPS)
+    panels.append(
+        _panel_resize(
+            Image.fromarray((d * 255).to(torch.uint8).cpu().numpy()).convert("RGB"),
+            thumb,
+        )
+    )
+    cw, ch = panels[0].size
+    canvas = Image.new("RGB", (cw * len(panels), ch), (40, 40, 40))
+    for i, p in enumerate(panels):
+        canvas.paste(p, (i * cw, 0))
+    canvas.save(path)
+
+
+# ---------------------------------------------------------------------------
 # Artifacts.
 # ---------------------------------------------------------------------------
 def _write_csv(path: Path, rows: list[dict]) -> None:
@@ -605,39 +871,38 @@ def _write_montage(
     full: list[torch.Tensor],
     drop0: torch.Tensor,
     mean_diff: torch.Tensor,
-    thumb: int = 320,
+    thumb: int = 0,
 ) -> None:
-    """Write one montage PNG for a (tag, caption), thumbnailed to keep it small.
+    """Write one montage PNG for a (tag, caption).
 
     Layout (left→right): the **full caption at every seed** (the instability
     strip — read across these: do they agree on the tag's feature, or does it
     wobble?), a divider, then **drop@seed0** and the **diff heatmap** (influence
     — where dropping the tag changed the image). Called inline during 0a so the
-    seed images don't accumulate in RAM. See ``how_to_observe.md``.
+    seed images don't accumulate in RAM. ``thumb<=0`` = native full-res
+    (default) so fine detail (glyphs, small accessories) is legible. See
+    ``how_to_observe.md``.
     """
     from PIL import Image
 
-    def _thumb(pil: Image.Image) -> Image.Image:
-        return pil.resize((thumb, thumb), Image.BILINEAR)
-
-    seed_thumbs = [_thumb(pixels_to_pil(f)) for f in full]
-    drop_thumb = _thumb(pixels_to_pil(drop0))
+    seed_imgs = [_panel_resize(pixels_to_pil(f), thumb) for f in full]
+    drop_img = _panel_resize(pixels_to_pil(drop0), thumb)
     d = (mean_diff - mean_diff.min()) / (mean_diff.max() - mean_diff.min() + EPS)
-    diff_thumb = _thumb(
-        Image.fromarray((d * 255).to(torch.uint8).cpu().numpy()).convert("RGB")
+    diff_img = _panel_resize(
+        Image.fromarray((d * 255).to(torch.uint8).cpu().numpy()).convert("RGB"), thumb
     )
 
+    cw, ch = seed_imgs[0].size
     sep = 6  # divider between the instability strip and the influence panels
-    panels = seed_thumbs + [drop_thumb, diff_thumb]
-    width = thumb * len(panels) + sep
-    canvas = Image.new("RGB", (width, thumb), (40, 40, 40))
+    panels = seed_imgs + [drop_img, diff_img]
+    canvas = Image.new("RGB", (cw * len(panels) + sep, ch), (40, 40, 40))
     x = 0
-    for i, p in enumerate(seed_thumbs):
+    for p in seed_imgs:
         canvas.paste(p, (x, 0))
-        x += thumb
+        x += cw
     x += sep  # gap marks "full seeds | drop, diff"
-    canvas.paste(drop_thumb, (x, 0))
-    canvas.paste(diff_thumb, (x + thumb, 0))
+    canvas.paste(drop_img, (x, 0))
+    canvas.paste(diff_img, (x + cw, 0))
     canvas.save(path)
 
 
@@ -664,11 +929,15 @@ def build_parser() -> argparse.ArgumentParser:
     # --compile maps to the blessed block-compile path (see Generator); at our
     # fixed square --size every gen is one token family, so it's one graph.
     add_common_args(p)
-    p.add_argument("--lora-weight", default=None, help="Optional adapter (default: base DiT).")
+    p.add_argument(
+        "--lora-weight", default=None, help="Optional adapter (default: base DiT)."
+    )
     p.add_argument("--lora-multiplier", type=float, default=1.0)
 
-    p.add_argument("--phase", choices=["0a", "0b", "both"], default="both")
-    p.add_argument("--prompts", default=None, help="Caption file (overrides caption index).")
+    p.add_argument("--phase", choices=["0a", "0b", "0c", "both"], default="both")
+    p.add_argument(
+        "--prompts", default=None, help="Caption file (overrides caption index)."
+    )
     p.add_argument(
         "--caption-index",
         default="post_image_dataset/captions/caption_index.json",
@@ -694,8 +963,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seeds", type=int, default=4, help="Seeds per caption (0a).")
     p.add_argument("--captions-per-tag", type=int, default=6)
     p.add_argument("--min-captions", type=int, default=3)
-    p.add_argument("--region-frac", type=float, default=0.05, help="Top-frac region mask.")
-    p.add_argument("--shortlist-n", type=int, default=8, help="Tags to save montages for.")
+    p.add_argument(
+        "--region-frac", type=float, default=0.05, help="Top-frac region mask."
+    )
+    p.add_argument(
+        "--shortlist-n", type=int, default=8, help="Tags to save montages for."
+    )
+    p.add_argument(
+        "--montage-px",
+        type=int,
+        default=0,
+        help="Per-panel montage resolution (px). 0 = native full-res (default; "
+        "needed to read glyphs/fine detail); set e.g. 320 to shrink big sweeps.",
+    )
 
     # 0b knobs
     p.add_argument("--seeds-0b", type=int, default=2)
@@ -711,7 +991,39 @@ def build_parser() -> argparse.ArgumentParser:
         "--tags",
         nargs="*",
         default=None,
-        help="0b: explicit tag list (default: 0a-flagged set, or suspect set if --phase 0b).",
+        help="0b/0c: explicit tag list (default: 0a-flagged set, or suspect set if --phase 0b/0c).",
+    )
+
+    # 0c knobs (cross-attn-drive boost probe).
+    p.add_argument("--seeds-0c", type=int, default=3)
+    p.add_argument("--captions-0c", type=int, default=3)
+    p.add_argument(
+        "--boost-scales",
+        type=float,
+        nargs="*",
+        default=[1.5, 2.0, 3.0],
+        help="0c: tag embedding-delta amplification factors below the cutoff.",
+    )
+    p.add_argument(
+        "--boost-cutoff",
+        type=float,
+        default=0.85,
+        help="0c: σ below which the boost applies (default 0.85 = the front-loaded "
+        "collinear threshold — the regime where text 'has no authority').",
+    )
+    p.add_argument(
+        "--concentration-min",
+        type=float,
+        default=1.5,
+        help="0c: min region/whole concentration of the boost effect to call it "
+        "localized 'structure' rather than a diffuse tone shift.",
+    )
+    p.add_argument(
+        "--instab-tol",
+        type=float,
+        default=0.25,
+        help="0c: allowed fractional rise of boosted seed-instability over the "
+        "full-caption baseline before the boost is judged incoherent.",
     )
     return p
 
@@ -728,13 +1040,15 @@ def main() -> None:
     gen = Generator(args)
 
     metrics: dict = {"corpus_size": len(corpus), "suspect_tags": suspect}
-    artifacts = ["per_caption.csv", "per_tag.csv", "commitment.csv"]
+    artifacts = ["per_caption.csv", "per_tag.csv", "commitment.csv", "boost.csv"]
 
     flagged_for_0b: list[str] = args.tags or []
     if args.phase in ("0a", "both"):
         summary0a, per_tag = run_phase0a(gen, corpus, suspect, danbooru, args, run_dir)
         metrics["phase0a"] = summary0a
-        print(f"\n[0a] verdict={summary0a['verdict']}  flagged={summary0a['flagged_tags']}")
+        print(
+            f"\n[0a] verdict={summary0a['verdict']}  flagged={summary0a['flagged_tags']}"
+        )
         if not flagged_for_0b:
             # prefer the strictly-flagged set; fall back to trying-failing tags
             flagged_for_0b = (
@@ -750,6 +1064,20 @@ def main() -> None:
         print(
             f"\n[0b] verdict={summary0b['verdict']}  "
             f"late-committing={summary0b['late_committing_tags']}"
+        )
+
+    if args.phase == "0c":
+        target_0c = flagged_for_0b
+        if not target_0c:
+            target_0c = suspect[: args.shortlist_n]
+            print(
+                f"[0c] no explicit/flagged tags — falling back to suspect set: {target_0c}"
+            )
+        summary0c = run_phase0c(gen, corpus, target_0c, args, run_dir)
+        metrics["phase0c"] = summary0c
+        print(
+            f"\n[0c] verdict={summary0c['verdict']}  "
+            f"structure-tags={summary0c['structure_tags']}"
         )
 
     write_result(

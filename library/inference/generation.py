@@ -510,6 +510,7 @@ def generate_body(
     latents: Optional[torch.Tensor] = None,
     context_alt: Optional[Dict[str, Any]] = None,
     tag_drop_sigma: Optional[float] = None,
+    tag_boost_scale: Optional[float] = None,
 ) -> torch.Tensor:
     """Core denoising loop for Anima generation.
 
@@ -534,7 +535,22 @@ def generate_body(
             (e.g. the same caption with one tag dropped) so we can read *when*
             in the schedule a single prompt feature commits. No-op when either
             ``context_alt`` or ``tag_drop_sigma`` is None.
-        tag_drop_sigma: σ cutoff for the ``context_alt`` swap (see above).
+        tag_drop_sigma: σ cutoff for the ``context_alt``/``tag_boost_scale``
+            swap (see above). Below it the conditional pass uses the alternate
+            (dropped or boosted) embedding; at or above it, the full caption.
+        tag_boost_scale: Optional cross-attn-drive BOOST probe. When set (with
+            ``context_alt`` = the tag-dropped caption), below ``tag_drop_sigma``
+            the conditional embedding is extrapolated to
+            ``embed_alt + scale·(embed − embed_alt)`` — i.e. ``(embed − embed_alt)``
+            is the tag's embedding-space delta, ``scale>1`` amplifies just that
+            tag's contribution in the low-σ regime (``scale=1`` is the full
+            caption; ``scale=0`` reduces to the plain drop). This is the no-train
+            falsification of the "sustain cross-attn at later σ" lever: it tests
+            whether MORE text drive for one tag below the front-loaded cutoff adds
+            localized structure or just rescales magnitude (a global tone shift).
+            Extrapolation can push the embedding off-manifold at large scale —
+            that's intentional; the harness reads it via region concentration +
+            seed instability. No-op when ``context_alt``/``tag_drop_sigma`` None.
 
     Returns:
         Denoised latent tensor (batch dimension preserved).
@@ -619,11 +635,21 @@ def generate_body(
     # batch-expand + bf16 cast as ``embed``; text encoder outputs are max-padded
     # so the alt caption shares the sequence length (the padding-sink invariant).
     embed_alt = None
+    embed_boost = None
     if context_alt is not None and tag_drop_sigma is not None:
         embed_alt = context_alt["embed"][0].to(device, dtype=torch.bfloat16)
         if embed_alt.shape[0] < bs:
             embed_alt = embed_alt.expand(bs, -1, -1)
         embed_alt = embed_alt.to(torch.bfloat16)
+        if tag_boost_scale is not None:
+            # Boost probe: amplify the tag's embedding-space contribution below
+            # the cutoff instead of dropping it. ``embed_alt`` is the tag-dropped
+            # caption, so ``(embed − embed_alt)`` is the tag's delta; extrapolate
+            # in fp32 (scale>1 amplifies, so minimize rounding) then cast back.
+            embed_boost = (
+                embed_alt.float()
+                + float(tag_boost_scale) * (embed.float() - embed_alt.float())
+            ).to(torch.bfloat16)
 
     timesteps, sigmas = inference_utils.get_timesteps_sigmas(
         args.infer_steps,
@@ -833,6 +859,17 @@ def generate_body(
         # output. Off (None) => normal generation.
         _knockout_env = os.environ.get("ANIMA_TEXT_KNOCKOUT_SIGMA")
         text_knockout_sigma = float(_knockout_env) if _knockout_env else None
+        # Guidance-direction freeze (ANIMA_FREEZE_GUIDANCE_SIGMA=<cutoff>): the
+        # faithful "keep pushing the same direction" probe. Below the cutoff we
+        # keep the per-step guidance MAGNITUDE (which naturally decays with σ)
+        # but lock its DIRECTION to the unit delta captured at the first
+        # sub-cutoff step — removing only the per-step seed-dependent re-rotation
+        # of the text-driven component, while leaving the base (uncond) path to
+        # refine. Tests whether late cross-attn *re-tweaking* (not its presence)
+        # is what injects the tag-region wangle. Off (None) => normal CFG.
+        _freeze_env = os.environ.get("ANIMA_FREEZE_GUIDANCE_SIGMA")
+        freeze_guidance_sigma = float(_freeze_env) if _freeze_env else None
+        _frozen_guidance_dir = None  # unit delta, captured once below the cutoff
         try:
             with tqdm(total=len(timesteps), desc=f"Denoising steps ({bs}x)") as pbar:
                 for i, t in enumerate(timesteps):
@@ -872,11 +909,14 @@ def generate_body(
                         # for v6 fei_obs={replace,concat} artifacts. No-op for v5.
                         dcw_calibrator.record_latent_pre_forward(i, latents)
 
-                    # Commitment-σ probe: below the cutoff, drive the
-                    # conditional pass with the alternate caption (e.g. tag
-                    # dropped). ``cond_embed`` is ``embed`` everywhere else.
+                    # Commitment-σ / boost probe: below the cutoff, drive the
+                    # conditional pass with the alternate embedding — the boosted
+                    # one when ``tag_boost_scale`` is set (amplified tag delta),
+                    # else the plain dropped caption. ``embed`` everywhere else.
                     if embed_alt is not None and float(sigmas[i]) < tag_drop_sigma:
-                        cond_embed = embed_alt
+                        cond_embed = (
+                            embed_boost if embed_boost is not None else embed_alt
+                        )
                     else:
                         cond_embed = embed
                     set_hydra_content(anima, cond_embed)
@@ -946,9 +986,25 @@ def generate_body(
                                 noise_pred, uncond_noise_pred, args.guidance_scale
                             )
                         else:
-                            noise_pred = uncond_noise_pred + args.guidance_scale * (
-                                noise_pred - uncond_noise_pred
-                            )
+                            delta = noise_pred - uncond_noise_pred
+                            if (
+                                freeze_guidance_sigma is not None
+                                and float(sigmas[i]) < freeze_guidance_sigma
+                            ):
+                                # Keep the per-step magnitude, lock the direction.
+                                # Per-sample L2 over all non-batch dims (5D latent).
+                                flat = delta.float().reshape(delta.shape[0], -1)
+                                mag = flat.norm(dim=1).clamp_min(1e-12)
+                                unit = (flat / mag[:, None]).reshape(delta.shape)
+                                if _frozen_guidance_dir is None:
+                                    # Capture the unit delta once at the first
+                                    # sub-cutoff step (identity on that step).
+                                    _frozen_guidance_dir = unit
+                                mag_shape = (delta.shape[0],) + (1,) * (delta.dim() - 1)
+                                delta = _frozen_guidance_dir.to(
+                                    delta.dtype
+                                ) * mag.reshape(mag_shape).to(delta.dtype)
+                            noise_pred = uncond_noise_pred + args.guidance_scale * delta
 
                         if (
                             text_knockout_sigma is not None
