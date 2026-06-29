@@ -12,9 +12,9 @@
 > (math), and the migration record `_archive/proposals/dpdmd.md`. Prior review of
 > this paper: [[project_scfm_paper_verdict]].
 
-Status: **Phase 1 BUILT + first 1.5k run done (2026-06-29) — the "clean Arm-2"
-trade, Term B inert. Decision pending: train longer / lr↑ vs a Term-B redesign.**
-The full progress log is §9 (read it first); the short version:
+Status: **Phase 1 BUILT; lr↑ to 5e-5 is a clear win (2026-06-29) — sharpness
+recovered toward Arm-3 *and* diversity/text kept; Term B still inert.** The full
+progress log is §9 (read it first); the short version:
 
 - **Phase 0 (probes, no training):** image gate read NO-GO — a naive 4-step
   teacher (Arm 2 = SCFM's predicted ceiling) renders washed-out, *below* the
@@ -27,16 +27,18 @@ The full progress log is §9 (read it first); the short version:
   and the structural objection was withdrawn; no cheaper probe remained →
   settling it needed the training run.
 - **Phase 1 (built, §3/§4):** selectable `base_loss="scfm"` implemented (files in
-  §9). A 1.5k-step student (`anima_turbo_scfm`, rank 64, ~25 min) trains clean.
-- **First result:** renders are **coherent, with real pose variety + legible-ish
-  speech bubbles** (the two axes DP-DMD *loses*) but **soft / hazy / low-contrast
-  — squarely Arm-2 territory, below the DP-DMD student on sharpness.** Training
-  telemetry explains it: `scfm_consistency_residual` stayed **flat ~0.05** for the
-  whole run → **Term B did no straightening work** (inert), so Term A dominates
-  and pulls the student toward the teacher's instantaneous field whose 4-step
-  rollout *is* Arm-2. `1500 > 750` by eye, so it is still **under-trained, not yet
-  at its asymptote** — the open question is whether that asymptote is clean Arm-2
-  (ceiling) or climbs further.
+  §9). A 1.5k-step student (rank 64, ~25 min) trains clean.
+- **First result (`student_lr=1e-5`):** coherent, real pose variety + legible-ish
+  speech bubbles (the axes DP-DMD loses) but **soft / washed-out = Arm-2** —
+  because `scfm_consistency_residual` stayed flat ~0.05 (**Term B inert**), so Term
+  A pulls the student toward the teacher's instantaneous field whose 4-step rollout
+  *is* Arm-2. `1500 > 750` ⇒ under-trained, not ceiling-bound.
+- **lr↑ to 5e-5 (the win, §9.3):** same 1.5k, **sharp + saturated** renders (off the
+  washout, toward Arm-3) while **keeping** diversity/text; `div_ac_sim` 0.34→0.30
+  (more diverse too). Stable bar one transient at the step-1000 EMA restart that
+  recovers. Term B still inert — the gain is Term A converging harder. **Most
+  promising the line has looked.** Next = seed-matched montage vs `anima_turbo_R_4500`
+  + teacher (the GO gate), then train longer.
 
 **Run it:** `make turbo` with `base_loss="scfm"` (already set in the toml), or
 `--base_loss scfm`. Infer at **`--cfg 1.0`** (CFG=4 is baked into Term A's teacher
@@ -470,26 +472,48 @@ specifies (on-manifold renoised-real points, *finer* sub-steps), operates where
 the field is already straight and so adds nothing. Neither term constrains the
 **off-manifold points the 4-step rollout actually visits** — that is the gap.
 
-### 9.3 Open decision (next)
+### 9.3 lr↑ to 5e-5 — validated win (2026-06-29)
 
-Cheapest-first, against the "still-improving but Term-B-inert" diagnosis:
+`anima_turbo_scfm_highlr` = same config, `student_lr` 1e-5 → **5e-5** (5×),
+1.5k iters, rendered turbo2 seeds at 4-step cfg=1:
 
-1. **Train to 3–4k on the current config** (cheap, decisive): does it keep
-   sharpening toward Arm 3, or plateau at clean Arm 2? Can't tune against an
-   under-trained target.
-2. **`student_lr`↑ (1e-5 → 2e-5/3e-5) A/B.** The turbo lr-instability threshold
-   ([[project_turbo_lr_instability_threshold]]) is attributed to **GAN/adversarial
-   oscillation**, which SCFM does not have — so the threshold likely doesn't bind
-   and a higher lr should just converge faster. Unverified for SCFM.
-3. **If it plateaus soft → the structural lever: redesign Term B to roll the EMA
-   student on its own *coarse student grid* from noise** (DMD2-style
-   train-on-your-own-trajectory) and enforce 1-big-step = 2-grid-steps *there*.
-   This is the only thing that targets the off-manifold washout (9.1
-   reconciliation). Worth building as a toggle to A/B against the on-manifold
-   variant. **Bigger lever than dual_ema.**
-4. **`dual_ema`: defer.** It is a convergence *accelerator* (fast 0.99 + slow
-   0.999, no manual restart) — it reaches the same place faster, it does **not**
-   raise the ceiling. Given training is cheap and single-EMA is stable, revisit
-   only if single-EMA plateaus below target or shows instability.
-5. **`k_ratio` is a near-dead dial while Term B is inert** (more A = more washout,
-   more B = nothing); don't spend a sweep on it until Term B does real work.
+- **Renders are sharp + saturated** (blue skies, colored bikinis, clean speech
+  bubbles) — a large step off the 1e-5 washout toward Arm-3, while **keeping** the
+  pose variety + text legibility.
+- **Diversity also improved:** `val/div_ac_sim` 0.34→**0.30** (vs 1e-5's 0.39→0.34;
+  lower = more diverse), `div_xpred_ac_sim` 0.95→**0.90**. So 5e-5 won on *both*
+  quality and diversity.
+- **Stable, not broken:** one transient `loss_a` spike (~0.29 at step ~1000) that
+  **fully recovers** by ~1490 (back to ~0.005) — unlike the DP-DMD GAN case which
+  broke *permanently* within ~1k steps. Confirms the SCFM (non-adversarial)
+  objective tolerates the high lr; the [[project_turbo_lr_instability_threshold]]
+  GAN-oscillation threshold does **not** bind here.
+- **Caveat:** that spike sits right on the **EMA restart at step 1000** (`θ⁻←θ`) —
+  under high lr the restart discontinuity is the likely cause. Watch it; consider
+  `ema_restart=0` or dual_ema if it recurs / lands a bad checkpoint.
+- **Term B is *still* inert** (`consistency_residual` flat ~0.05 regardless of lr)
+  — the gain came from **Term A converging harder**, not from straightening. The
+  structural Term-B lever (9.4 item 3) remains untouched and available.
+
+### 9.4 Open decision (next)
+
+With lr 5e-5 as the new baseline:
+
+1. **Seed-matched gate vs the incumbent.** Render the 5e-5 SCFM student, the
+   DP-DMD student (`anima_turbo_R_4500`), and the 28-step teacher on the **same**
+   turbo2 seeds → one montage (the §4 Phase-1 gate). The qualitative read is
+   "competitive with DP-DMD on sharpness, ahead on diversity/text," but confirm it
+   side-by-side before declaring GO.
+2. **Train the 5e-5 config to 3–4k** (cheap): does it keep climbing or plateau?
+3. **lr fine-tune:** 3e-5 as a steadier middle ground if the step-~1000 spike
+   worries (nearly as fast, less edge-of-stability); or keep 5e-5 + set
+   `ema_restart=0` to remove the restart discontinuity.
+4. **If quality plateaus soft → the structural lever: redesign Term B to roll the
+   EMA student on its own *coarse student grid* from noise** (DMD2-style
+   train-on-your-own-trajectory), enforcing 1-big-step = 2-grid-steps *there* —
+   the only thing that targets the off-manifold washout (9.1 reconciliation).
+   Toggle to A/B against the on-manifold variant. **Bigger lever than dual_ema.**
+5. **`dual_ema`: still deferred,** but it now has a concrete secondary motivation
+   (smooth the high-lr restart transient by dropping the manual restart). Revisit
+   only after the seed-matched gate.
+6. **`k_ratio` is a near-dead dial while Term B is inert.**

@@ -43,6 +43,17 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--output_name", type=str, default=None)
     parser.add_argument("--iterations", type=int, default=-1)
     parser.add_argument("--batch_size", type=int, default=-1)
+    parser.add_argument(
+        "--gradient_accumulation_steps",
+        type=int,
+        default=-1,
+        help="Accumulate this many micro-step gradients before each optimizer "
+        "step (SCFM only). Effective batch = batch_size * this. At batch_size=1 "
+        "the per-step Bernoulli(k_ratio) role draw mixes Term A / Term B WITHIN "
+        "the window, so every optimizer step sees both terms (the paper's batched "
+        "k/N mix) instead of a pure-A-or-pure-B coin flip. Default: TOML "
+        "(optim.gradient_accumulation_steps, else 1).",
+    )
     parser.add_argument("--seed", type=int, default=-1)
     parser.add_argument(
         "--validate_every_n_steps",
@@ -544,6 +555,7 @@ class TurboConfig:
     # Run shape
     iterations: int
     batch_size: int
+    gradient_accumulation_steps: int
     seed: int
     sample_ratio: float
     single_prompt_idx: int | None
@@ -697,6 +709,17 @@ def resolve_config(args: argparse.Namespace, cfg: dict) -> TurboConfig:
     # Run shape
     iterations = int(_pick(args.iterations, cfg, "iterations", 20000))
     batch_size = int(_pick(args.batch_size, cfg, "batch_size", 1))
+    gradient_accumulation_steps = max(
+        1,
+        int(
+            _pick(
+                args.gradient_accumulation_steps,
+                cfg,
+                "optim.gradient_accumulation_steps",
+                1,
+            )
+        ),
+    )
     seed = int(_pick(args.seed, cfg, "seed", 42))
 
     # LoRA stacks
@@ -993,8 +1016,18 @@ def resolve_config(args: argparse.Namespace, cfg: dict) -> TurboConfig:
             f"SCFM (velocity-space self-distillation): k_ratio={scfm_k_ratio}, "
             f"ema_mu={scfm_ema_mu}, ema_restart={scfm_ema_restart}, "
             f"n_consistency_grid={scfm_n_consistency_grid}, student N="
-            f"{student_steps} @ flow_shift={flow_shift}, teacher_cfg={teacher_cfg}. "
+            f"{student_steps} @ flow_shift={flow_shift}, teacher_cfg={teacher_cfg}, "
+            f"grad_accum={gradient_accumulation_steps} (effective batch "
+            f"{batch_size * gradient_accumulation_steps}). "
             "Fake stack repurposed as EMA student θ⁻; GAN/REPA/soft-rank inert."
+        )
+    elif gradient_accumulation_steps > 1:
+        # The dpdmd/dmd loops don't honor grad accumulation yet — fail loud rather
+        # than silently run at the wrong effective batch.
+        raise ValueError(
+            f"gradient_accumulation_steps={gradient_accumulation_steps} is only "
+            f"wired for base_loss='scfm' (got {base_loss!r}). The DP-DMD/DMD loops "
+            "step the optimizer every micro-step; set it to 1 for those."
         )
     if use_anchor and student_steps < 2:
         raise ValueError(
@@ -1291,6 +1324,7 @@ def resolve_config(args: argparse.Namespace, cfg: dict) -> TurboConfig:
         val_prompt_idx=val_prompt_idx,
         iterations=iterations,
         batch_size=batch_size,
+        gradient_accumulation_steps=gradient_accumulation_steps,
         seed=seed,
         sample_ratio=float(args.sample_ratio),
         single_prompt_idx=args.single_prompt_idx,
@@ -1428,6 +1462,7 @@ _TB_KEYS = (
     "fake_steps_per_student_step",
     "iterations",
     "batch_size",
+    "gradient_accumulation_steps",
     "t_distribution",
     "mean_var_weight",
     "use_masked_loss",

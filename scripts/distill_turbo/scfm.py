@@ -139,140 +139,165 @@ def run_scfm(
 
     data_iter = iter(dataloader)
     use_masked = cfg.use_masked_loss
+    accum = cfg.gradient_accumulation_steps
+    logger.info(
+        f"SCFM grad accumulation: {accum} micro-step(s)/optimizer step "
+        f"(effective batch {cfg.batch_size * accum}). "
+        + (
+            "Term A / Term B mix WITHIN each optimizer window."
+            if accum > 1
+            else "single micro-step (pure-A-or-B per step)."
+        )
+    )
     progress = tqdm(range(cfg.iterations), desc="turbo-scfm")
 
     for step in progress:
-        try:
-            batch = next(data_iter)
-        except StopIteration:
-            data_iter = iter(dataloader)
-            batch = next(data_iter)
+        # One optimizer step = `accum` micro-steps accumulated. Zero once up front;
+        # each micro-step's loss is scaled by 1/accum so the summed grad is the
+        # MEAN over the effective batch (LR is accum-invariant). At batch_size=1
+        # the per-micro Bernoulli role draw mixes Term A / Term B across the window
+        # → the optimizer step sees both terms (the paper's batched k/N mix).
+        student_opt.zero_grad(set_to_none=True)
 
-        latents = batch["latents"].to(device, dtype=dtype, non_blocking=True)
-        crossattn_emb = batch["crossattn_emb"].to(
-            device, dtype=dtype, non_blocking=True
-        )
-        B = latents.shape[0]
-        if use_masked:
-            mask = batch["mask"].to(device, dtype=torch.float32, non_blocking=True)
-        else:
-            mask = None
+        for _micro in range(accum):
+            try:
+                batch = next(data_iter)
+            except StopIteration:
+                data_iter = iter(dataloader)
+                batch = next(data_iter)
 
-        c_null = uncond_for_batch(uncond_base, crossattn_emb)
-
-        torch.compiler.cudagraph_mark_step_begin()
-
-        # --- per-sample role: Bernoulli(k_ratio). At B=1 this is a per-STEP coin
-        # flip (deterministic threshold int(round(k_ratio*B)) would be 0 at B=1
-        # → never Term A; Bernoulli generalizes the "k/N of a batch" ratio to any
-        # B, expected Term-A fraction = k_ratio). Drawn on CPU (no GPU sync).
-        is_termA_cpu = torch.rand(B, generator=cpu_gen) < cfg.scfm_k_ratio  # [B] bool
-        is_termA = is_termA_cpu.to(device)
-        any_A = bool(is_termA_cpu.any())
-        any_B = bool((~is_termA_cpu).any())
-        is_termA_b = is_termA.view(B, *([1] * (latents.dim() - 1)))  # broadcast
-
-        # --- per-sample evaluation level t_samp ---------------------------------
-        # Term A: a random renoise level t_a (renoised real latent → teacher
-        #         rectification target).
-        # Term B: the grid level t_i of a sampled adjacent triple.
-        t_a = sample_t(
-            B,
-            distribution=cfg.t_distribution,
-            sigmoid_scale=cfg.sigmoid_scale,
-            device=device,
-            dtype=dtype,
-        )
-        # Triple-start indices on CPU; Term-A samples get a dummy index 0 (their
-        # Term-B target is computed-then-discarded only when any_B forces the EMA
-        # forward — at B=1 the inactive branch is skipped entirely).
-        idx = torch.randint(0, max(1, n_grid - 1), (B,), generator=cpu_gen)
-        t_i = grid_dev[idx].to(device)
-        t_ip1 = grid_dev[idx + 1].to(device)
-        t_ip2 = grid_dev[idx + 2].to(device)
-        d_i = (t_i - t_ip1).view(B, *([1] * (latents.dim() - 1)))
-        d_ip1 = (t_ip1 - t_ip2).view(B, *([1] * (latents.dim() - 1)))
-
-        t_samp = torch.where(is_termA, t_a, t_i)  # [B]
-
-        # Single renoise per sample at t_samp (shared by teacher / EMA / student).
-        eps = torch.randn_like(latents)
-        x_t = renoise(latents, t_samp, eps)
-
-        # --- Term A target: CFG-guided teacher velocity (no grad) ---------------
-        v_tea = None
-        if any_A:
-            v_tea = teacher_cfg_velocity_fn(x_t, t_samp, crossattn_emb, c_null).to(
-                dtype
+            latents = batch["latents"].to(device, dtype=dtype, non_blocking=True)
+            crossattn_emb = batch["crossattn_emb"].to(
+                device, dtype=dtype, non_blocking=True
             )
+            B = latents.shape[0]
+            if use_masked:
+                mask = batch["mask"].to(device, dtype=torch.float32, non_blocking=True)
+            else:
+                mask = None
 
-        # --- Term B target: two EMA sub-steps on the stop-grad student θ⁻ -------
-        v_target_B = None
-        resid_B = None
-        if any_B:
-            v1 = forward_fn("fake", x_t, t_samp, crossattn_emb, no_grad=True).squeeze(2)
-            x_next = x_t - d_i * v1  # Euler sub-step i → i+1
-            v2 = forward_fn("fake", x_next, t_ip1, crossattn_emb, no_grad=True).squeeze(
-                2
+            c_null = uncond_for_batch(uncond_base, crossattn_emb)
+
+            torch.compiler.cudagraph_mark_step_begin()
+
+            # --- per-sample role: Bernoulli(k_ratio). At B=1 this is a per-MICRO
+            # coin flip (deterministic threshold int(round(k_ratio*B)) would be 0
+            # at B=1 → never Term A; Bernoulli generalizes the "k/N of a batch"
+            # ratio to any B, expected Term-A fraction = k_ratio). Drawn on CPU
+            # (no GPU sync). Over `accum` micro-steps the window mixes both roles.
+            is_termA_cpu = torch.rand(B, generator=cpu_gen) < cfg.scfm_k_ratio  # bool
+            is_termA = is_termA_cpu.to(device)
+            any_A = bool(is_termA_cpu.any())
+            any_B = bool((~is_termA_cpu).any())
+            is_termA_b = is_termA.view(B, *([1] * (latents.dim() - 1)))  # broadcast
+
+            # --- per-sample evaluation level t_samp -----------------------------
+            # Term A: a random renoise level t_a (renoised real latent → teacher
+            #         rectification target).
+            # Term B: the grid level t_i of a sampled adjacent triple.
+            t_a = sample_t(
+                B,
+                distribution=cfg.t_distribution,
+                sigmoid_scale=cfg.sigmoid_scale,
+                device=device,
+                dtype=dtype,
             )
-            denom = (d_i + d_ip1).clamp_min(1e-8)
-            v_target_B = ((d_i * v1 + d_ip1 * v2) / denom).detach()
-            # Straightening headroom: how far the coarse one-step velocity v1 is
-            # from the two-sub-step composition (relative). Near 0 ⇒ field already
-            # straight at this scale (Term B near-saturated); large ⇒ room to fix.
-            resid_B = (
-                (v1 - v_target_B).float().norm() / (v_target_B.float().norm() + 1e-8)
-            ).detach()
+            # Triple-start indices on CPU; Term-A samples get a dummy index 0
+            # (their Term-B target is computed-then-discarded only when any_B
+            # forces the EMA forward — at B=1 the inactive branch is skipped).
+            idx = torch.randint(0, max(1, n_grid - 1), (B,), generator=cpu_gen)
+            t_i = grid_dev[idx].to(device)
+            t_ip1 = grid_dev[idx + 1].to(device)
+            t_ip2 = grid_dev[idx + 2].to(device)
+            d_i = (t_i - t_ip1).view(B, *([1] * (latents.dim() - 1)))
+            d_ip1 = (t_ip1 - t_ip2).view(B, *([1] * (latents.dim() - 1)))
 
-        # Combine per-sample targets. Where only one branch ran, fill the other
-        # side with that same tensor so torch.where has a valid operand (the
-        # filled side is masked out by is_termA_b anyway).
-        if v_tea is None:
-            v_tea = v_target_B
-        if v_target_B is None:
-            v_target_B = v_tea
-        target = torch.where(is_termA_b, v_tea, v_target_B).detach()
+            t_samp = torch.where(is_termA, t_a, t_i)  # [B]
 
-        # --- student grad forward at the SAME (x_t, t_samp) ---------------------
-        x_t.requires_grad_()  # grad-ckpt safety; harmless when ckpt off
-        turbo.set_student_step(0)  # no-op (single-head student)
-        v_stu = forward_fn(
-            "student", x_t, t_samp, crossattn_emb, no_grad=False
-        ).squeeze(2)
-        loss = _velocity_mse(v_stu, target, mask)
+            # Single renoise per sample at t_samp (shared by teacher/EMA/student).
+            eps = torch.randn_like(latents)
+            x_t = renoise(latents, t_samp, eps)
 
-        loss.backward()
+            # --- Term A target: CFG-guided teacher velocity (no grad) -----------
+            v_tea = None
+            if any_A:
+                v_tea = teacher_cfg_velocity_fn(x_t, t_samp, crossattn_emb, c_null).to(
+                    dtype
+                )
+
+            # --- Term B target: two EMA sub-steps on the stop-grad student θ⁻ ---
+            v_target_B = None
+            resid_B = None
+            if any_B:
+                v1 = forward_fn(
+                    "fake", x_t, t_samp, crossattn_emb, no_grad=True
+                ).squeeze(2)
+                x_next = x_t - d_i * v1  # Euler sub-step i → i+1
+                v2 = forward_fn(
+                    "fake", x_next, t_ip1, crossattn_emb, no_grad=True
+                ).squeeze(2)
+                denom = (d_i + d_ip1).clamp_min(1e-8)
+                v_target_B = ((d_i * v1 + d_ip1 * v2) / denom).detach()
+                # Straightening headroom: how far the coarse one-step velocity v1
+                # is from the two-sub-step composition (relative). Near 0 ⇒ field
+                # already straight at this scale (Term B saturated); large ⇒ room.
+                resid_B = (
+                    (v1 - v_target_B).float().norm()
+                    / (v_target_B.float().norm() + 1e-8)
+                ).detach()
+
+            # Combine per-sample targets. Where only one branch ran, fill the
+            # other side with that same tensor so torch.where has a valid operand
+            # (the filled side is masked out by is_termA_b anyway).
+            if v_tea is None:
+                v_tea = v_target_B
+            if v_target_B is None:
+                v_target_B = v_tea
+            target = torch.where(is_termA_b, v_tea, v_target_B).detach()
+
+            # --- student grad forward at the SAME (x_t, t_samp) -----------------
+            x_t.requires_grad_()  # grad-ckpt safety; harmless when ckpt off
+            turbo.set_student_step(0)  # no-op (single-head student)
+            v_stu = forward_fn(
+                "student", x_t, t_samp, crossattn_emb, no_grad=False
+            ).squeeze(2)
+            loss = _velocity_mse(v_stu, target, mask)
+
+            # Scale so accumulated grad = mean over the `accum`-micro-step window.
+            (loss / accum).backward()
+
+            # --- metrics (UNSCALED micro loss; flush at log_interval) -----------
+            loss_sum = loss_sum + loss.detach()
+            nlog += 1
+            nA_micro = int(is_termA_cpu.sum())
+            nB_micro = B - nA_micro
+            if nA_micro and nB_micro == 0:
+                # Pure Term-A micro-step (the only A case at B=1): loss IS A's.
+                lossA_sum = lossA_sum + loss.detach()
+                nA += 1
+            if nB_micro and nA_micro == 0:
+                # Pure Term-B micro-step (the only B case at B=1): loss IS B's and
+                # resid_B stays in lockstep with the nB counter.
+                lossB_sum = lossB_sum + loss.detach()
+                if resid_B is not None:
+                    residB_sum = residB_sum + resid_B
+                nB += 1
+
+        # --- optimizer step (once per `accum` micro-steps) ---------------------
         if cfg.grad_clip > 0:
             torch.nn.utils.clip_grad_norm_(
                 turbo.student_params(), max_norm=cfg.grad_clip
             )
         student_opt.step()
-        student_opt.zero_grad(set_to_none=True)
         student_sched.step()
 
         # --- EMA update θ⁻ ← μθ⁻ + (1−μ)θ (Eq. 14) + cyclic restart -------------
+        # Per OPTIMIZER step: θ⁻ is held fixed across the micro-step window so all
+        # Term-B targets in a window share one stop-grad teacher (restart counts
+        # optimizer steps, matching ema_restart's intent).
         turbo.update_ema(cfg.scfm_ema_mu)
         if cfg.scfm_ema_restart and (step + 1) % cfg.scfm_ema_restart == 0:
             turbo.reset_ema()
-
-        # --- metrics (GPU-side accumulation; flush at log_interval) -------------
-        loss_sum = loss_sum + loss.detach()
-        nlog += 1
-        nA_step = int(is_termA_cpu.sum())
-        nB_step = B - nA_step
-        if nA_step:
-            # Term-A-only contribution to the loss is the masked MSE over those
-            # samples; at B=1 the whole step is one role, so loss IS that role's.
-            if nB_step == 0:
-                lossA_sum = lossA_sum + loss.detach()
-                nA += 1
-        if nB_step and nA_step == 0:
-            # Pure Term-B step (the only case at the default B=1): loss IS the
-            # Term-B loss, and resid_B stays in lockstep with the nB counter.
-            lossB_sum = lossB_sum + loss.detach()
-            if resid_B is not None:
-                residB_sum = residB_sum + resid_B
-            nB += 1
 
         if (step + 1) % cfg.log_interval == 0:
             scalars = {

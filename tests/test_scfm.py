@@ -65,6 +65,31 @@ def test_scfm_toml_and_cli_precedence():
     assert c.scfm_ema_mu == 0.9
 
 
+def test_grad_accum_defaults_to_one():
+    assert _resolve().gradient_accumulation_steps == 1
+
+
+def test_grad_accum_toml_and_cli_under_scfm():
+    c = _resolve(
+        ["--base_loss", "scfm"], toml={"optim": {"gradient_accumulation_steps": 4}}
+    )
+    assert c.gradient_accumulation_steps == 4
+    # CLI sentinel wins over TOML.
+    c = _resolve(
+        ["--base_loss", "scfm", "--gradient_accumulation_steps", "8"],
+        toml={"optim": {"gradient_accumulation_steps": 4}},
+    )
+    assert c.gradient_accumulation_steps == 8
+
+
+def test_grad_accum_rejected_for_dpdmd():
+    # Only the scfm loop honors accumulation; dpdmd/dmd must fail loud.
+    with pytest.raises(ValueError, match="only.*scfm"):
+        _resolve(["--base_loss", "dpdmd", "--gradient_accumulation_steps", "4"])
+    with pytest.raises(ValueError, match="only.*scfm"):
+        _resolve(["--base_loss", "dmd", "--gradient_accumulation_steps", "2"])
+
+
 def test_scfm_forces_other_objectives_inert():
     # The shipped turbo.toml carries gan/f_div for the dpdmd default; under scfm
     # they must be force-inert (warned), not error.
