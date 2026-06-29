@@ -307,10 +307,55 @@ def build_argparser() -> argparse.ArgumentParser:
         "--base_loss",
         type=str,
         default=None,
-        choices=("dpdmd", "dmd"),
-        help="Diversity mechanism: 'dpdmd' (first-step teacher anchor, default) "
-        "or 'dmd' (plain DMD2 — no anchor, allows student_steps=1). Default: TOML "
+        choices=("dpdmd", "dmd", "scfm"),
+        help="Objective: 'dpdmd' (first-step teacher anchor, default), 'dmd' "
+        "(plain DMD2 — no anchor, allows student_steps=1), or 'scfm' "
+        "(velocity-space self-distillation — Term-A teacher rectification + "
+        "Term-B consistency, EMA student, no critic/GAN). Default: TOML "
         "(base_loss, default 'dpdmd').",
+    )
+
+    # SCFM (Shortcutting Pre-trained Flow Matching, NeurIPS 2025) — selectable
+    # base_loss="scfm" objective. docs/proposal/turbo_scfm.md. Off-path unless
+    # base_loss=scfm; every knob is read only on that path.
+    parser.add_argument(
+        "--scfm_k_ratio",
+        type=float,
+        default=-1.0,
+        help="SCFM: per-sample fraction routed to Term A (teacher rectification); "
+        "the rest carry Term B (velocity self-consistency). At batch_size=1 it is "
+        "the per-step Bernoulli probability of a Term-A step. Default: TOML "
+        "(scfm.k_ratio, default 0.4).",
+    )
+    parser.add_argument(
+        "--scfm_ema_mu",
+        type=float,
+        default=-1.0,
+        help="SCFM: decay μ of the stop-grad EMA student θ⁻ "
+        "(θ⁻ ← μθ⁻ + (1−μ)θ, Eq. 14). Default: TOML (scfm.ema_mu, default 0.999).",
+    )
+    parser.add_argument(
+        "--scfm_ema_restart",
+        type=int,
+        default=-1,
+        help="SCFM: cyclic restart θ⁻←θ every N student steps (0 = never). "
+        "Default: TOML (scfm.ema_restart, default 1000).",
+    )
+    parser.add_argument(
+        "--scfm_dual_ema",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="SCFM: Phase-2 dual-EMA accelerator (fast 0.99 + slow 0.999, no "
+        "manual restart). Not implemented in the Phase-1 minimal port — set true "
+        "only once it lands. Default: TOML (scfm.dual_ema, default false).",
+    )
+    parser.add_argument(
+        "--scfm_n_consistency_grid",
+        type=int,
+        default=-1,
+        help="SCFM: finer sub-step grid Term B samples adjacent (t_i, t_i+1, "
+        "t_i+2) triples from; must be >= student_steps. Default: TOML "
+        "(scfm.n_consistency_grid, default 8).",
     )
 
     # DMD2 teacher-feature GAN (FastGen idea 1; off by default).
@@ -552,6 +597,14 @@ class TurboConfig:
     # Base objective selector
     base_loss: str
 
+    # SCFM (velocity-space self-distillation; turbo_scfm.md). All inert unless
+    # base_loss == "scfm".
+    scfm_k_ratio: float
+    scfm_ema_mu: float
+    scfm_ema_restart: int
+    scfm_dual_ema: bool
+    scfm_n_consistency_grid: int
+
     # DMD2 teacher-feature GAN (idea 1) + f-distill reweighting (idea 2)
     gan_loss_weight_gen: float
     gan_feature_block_idx: int  # -1 → middle block (resolved in distill.py)
@@ -707,6 +760,18 @@ def resolve_config(args: argparse.Namespace, cfg: dict) -> TurboConfig:
 
     base_loss = _pick(args.base_loss, cfg, "base_loss", "dpdmd")
 
+    # SCFM knobs (read unconditionally; only used under base_loss="scfm").
+    scfm_k_ratio = float(_pick(args.scfm_k_ratio, cfg, "scfm.k_ratio", 0.4))
+    scfm_ema_mu = float(_pick(args.scfm_ema_mu, cfg, "scfm.ema_mu", 0.999))
+    scfm_ema_restart = int(_pick(args.scfm_ema_restart, cfg, "scfm.ema_restart", 1000))
+    if args.scfm_dual_ema is None:
+        scfm_dual_ema = bool(_flatten(cfg, "scfm.dual_ema", False))
+    else:
+        scfm_dual_ema = bool(args.scfm_dual_ema)
+    scfm_n_consistency_grid = int(
+        _pick(args.scfm_n_consistency_grid, cfg, "scfm.n_consistency_grid", 8)
+    )
+
     # weight_gen=0 keeps the whole GAN/disc path off → byte-identical DP-DMD.
     # feature_block_idx sentinel is -2 (not -1) because -1 means middle block.
     gan_loss_weight_gen = float(
@@ -832,9 +897,105 @@ def resolve_config(args: argparse.Namespace, cfg: dict) -> TurboConfig:
     t_distribution = _flatten(cfg, "sampling.t_distribution", "uniform")
     sigmoid_scale = float(_flatten(cfg, "sampling.sigmoid_scale", 1.0))
 
-    if base_loss not in ("dpdmd", "dmd"):
-        raise ValueError(f"base_loss={base_loss!r}: expected 'dpdmd' or 'dmd'")
+    if base_loss not in ("dpdmd", "dmd", "scfm"):
+        raise ValueError(f"base_loss={base_loss!r}: expected 'dpdmd', 'dmd', or 'scfm'")
     use_anchor = base_loss == "dpdmd"
+
+    if base_loss == "scfm":
+        # The EMA student θ⁻ is the fake stack, so it MUST mirror the student
+        # exactly (same rank/variant) — otherwise update_ema can't pair params.
+        if fake_rank != student_rank:
+            raise ValueError(
+                f"base_loss='scfm' requires network.fake_rank == "
+                f"network.student_rank (got fake={fake_rank}, "
+                f"student={student_rank}) — the fake stack is repurposed as the "
+                "EMA student copy θ⁻ and must match it shape-for-shape."
+            )
+        if student_ortho_init or fake_ortho_init:
+            raise ValueError(
+                "base_loss='scfm' Phase-1 requires plain-LoRA stacks "
+                "(student/fake_ortho_init=false): the EMA copy averages "
+                "lora_down/lora_up directly. OrthoInit is out of scope for the "
+                "minimal port."
+            )
+        if per_step_expert:
+            raise ValueError(
+                "base_loss='scfm' is incompatible with network.per_step_expert: "
+                "SCFM trains a single velocity field (no per-step heads)."
+            )
+        if not (0.0 < scfm_k_ratio < 1.0):
+            raise ValueError(
+                f"scfm.k_ratio={scfm_k_ratio}: must be in (0, 1) — 0 drops the "
+                "teacher anchor (collapses to plain self-consistency), 1 drops "
+                "the consistency term (plain per-step flow distillation)."
+            )
+        if not (0.0 < scfm_ema_mu < 1.0):
+            raise ValueError(f"scfm.ema_mu={scfm_ema_mu}: must be in (0, 1).")
+        if scfm_ema_restart < 0:
+            raise ValueError(
+                f"scfm.ema_restart={scfm_ema_restart}: must be >= 0 (0 = never)."
+            )
+        if scfm_n_consistency_grid < student_steps:
+            raise ValueError(
+                f"scfm.n_consistency_grid={scfm_n_consistency_grid} must be >= "
+                f"dmd.student_steps={student_steps}: Term B straightens down to "
+                "the inference grid, so the finer grid must at least cover it."
+            )
+        if scfm_n_consistency_grid < 2:
+            raise ValueError(
+                f"scfm.n_consistency_grid={scfm_n_consistency_grid}: must be >= 2 "
+                "(Term B needs adjacent (t_i, t_i+1, t_i+2) triples)."
+            )
+        if scfm_dual_ema:
+            raise ValueError(
+                "scfm.dual_ema=true is Phase 2 (not implemented in the minimal "
+                "port). Use the single EMA + scfm.ema_restart cyclic restart."
+            )
+        # These objectives aren't wired into the scfm loop. The shipped
+        # turbo.toml carries gan.weight_gen=0.03 for the dpdmd default, so a
+        # bare `--base_loss scfm` would trip an error — instead force them inert
+        # and warn (the proposal's "bypass / keep-inert" contract). The scfm
+        # loop never reads these; main() also gates the GAN build on base_loss.
+        for name, val in (
+            ("gan.weight_gen", gan_loss_weight_gen),
+            ("repa.weight", repa_weight),
+            ("softrank.weight", softrank_weight),
+            ("mean_var.weight", mean_var_weight),
+        ):
+            if val > 0.0:
+                logger.warning(
+                    "base_loss='scfm': %s=%s is IGNORED (SCFM is a standalone "
+                    "fidelity objective — no GAN/REPA/soft-rank/mean-var). Set "
+                    "it to 0 to silence this warning.",
+                    name,
+                    val,
+                )
+        gan_loss_weight_gen = 0.0
+        repa_weight = 0.0
+        softrank_weight = 0.0
+        mean_var_weight = 0.0
+        # f-distill reweighting reads the (now-absent) GAN disc logits; the
+        # shipped turbo.toml sets a non-rkl f_div for the dpdmd default, so reset
+        # it to the no-op or the f_distill guard below would fire.
+        f_div = "rkl"
+        if int(args.blocks_to_swap) > 0:
+            # SCFM runs up to 2 teacher + 2 EMA + 1 student forwards per step —
+            # the multi-forward offloader-desync class
+            # ([[project_blockswap_extra_forwards_gradcache]]) is unaudited for
+            # this loop. Phase 1 keeps the DiT resident (turbo default).
+            logger.warning(
+                "base_loss='scfm' with blocks_to_swap=%d: the multi-forward "
+                "offloader path is unaudited for SCFM (Phase 1 prescribes "
+                "blocks_to_swap=0). Proceed only if you know the swap holds.",
+                int(args.blocks_to_swap),
+            )
+        logger.info(
+            f"SCFM (velocity-space self-distillation): k_ratio={scfm_k_ratio}, "
+            f"ema_mu={scfm_ema_mu}, ema_restart={scfm_ema_restart}, "
+            f"n_consistency_grid={scfm_n_consistency_grid}, student N="
+            f"{student_steps} @ flow_shift={flow_shift}, teacher_cfg={teacher_cfg}. "
+            "Fake stack repurposed as EMA student θ⁻; GAN/REPA/soft-rank inert."
+        )
     if use_anchor and student_steps < 2:
         raise ValueError(
             f"DP-DMD requires dmd.student_steps >= 2 (got {student_steps}): step 1 "
@@ -1159,6 +1320,11 @@ def resolve_config(args: argparse.Namespace, cfg: dict) -> TurboConfig:
         norm_floor=norm_floor,
         dmd_grad_step=dmd_grad_step,
         base_loss=base_loss,
+        scfm_k_ratio=scfm_k_ratio,
+        scfm_ema_mu=scfm_ema_mu,
+        scfm_ema_restart=scfm_ema_restart,
+        scfm_dual_ema=scfm_dual_ema,
+        scfm_n_consistency_grid=scfm_n_consistency_grid,
         gan_loss_weight_gen=gan_loss_weight_gen,
         gan_feature_block_idx=gan_feature_block_idx,
         gan_disc_lr=gan_disc_lr,

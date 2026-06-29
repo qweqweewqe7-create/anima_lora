@@ -11,12 +11,12 @@
 # standard inference path with --infer_steps 2 --cfg 1.0 (CFG is baked into the
 # student during distillation).
 
-output_name = "anima_turbo_R"
+output_name = "anima_turbo_scfm_highlr"
 dit_path = "models/diffusion_models/anima-base-v1.0.safetensors"
 data_dir = "post_image_dataset/lora"
 output_dir = "output/ckpt"
 
-iterations = 6000
+iterations = 1500
 batch_size = 1
 seed = 42
 use_masked_loss = true
@@ -40,13 +40,13 @@ activation_memory_budget = 0.99
 # Diversity mechanism. "dpdmd" (default) runs the first-step teacher anchor below;
 # "dmd" is plain DMD2 — no anchor, so student_steps may be 1 (a true single-step
 # student, which dpdmd structurally can't produce).
-base_loss = "dpdmd"
+base_loss = "scfm"
 
 [network]
-student_rank = 96
-student_alpha = 224
-fake_rank = 96
-fake_alpha = 224
+student_rank = 64
+student_alpha = 180
+fake_rank = 64
+fake_alpha = 180
 attn_mode = "flash"
 # Per-step expert: split the student into K = student_steps up-heads off a
 # shared down-proj, head k serving denoise step k. Removes the diversity↔quality
@@ -89,7 +89,7 @@ grad_step = "random"
 
 # Optimization.
 [optim]
-student_lr = 1e-5
+student_lr = 5e-5
 fake_lr = 2e-5
 fake_steps_per_student_step = 5
 fake_warmup_steps = 50
@@ -105,6 +105,27 @@ k_anchor = 6                    # teacher steps rolled to the diversity anchor (
 teacher_anchor_steps = 12        # teacher σ-grid the K is counted against
 div_weight = 0.05               # λ on the first-step diversity MSE
 detach_after_first = true       # load-bearing stop-grad after step 1 (A/B only)
+
+# SCFM — velocity-space self-distillation (base_loss = "scfm"). An ALTERNATIVE
+# objective to dpdmd/dmd: no critic, no GAN, no diversity anchor. Term A pins a
+# renoised real latent's velocity to the CFG-guided teacher (quality ceiling);
+# Term B enforces one coarse Euler step == two finer sub-steps on a stop-grad EMA
+# copy of the student (θ⁻ = the repurposed fake stack) → the trajectory
+# straightens so few-step Euler works. Output is a plain LoRA (infer with
+# --infer_steps <student_steps> --cfg 1.0, exactly like the dpdmd student).
+#
+# Select with `base_loss = "scfm"` above (or --base_loss scfm). When scfm is
+# active the GAN/REPA/soft-rank/mean-var weights are force-inert (warned), and
+# [scfm] knobs below take effect; teacher_cfg/student_steps/flow_shift are reused
+# from [dmd]/[sampling]. Requires network.fake_rank == network.student_rank (the
+# fake stack mirrors the student as θ⁻). Phase 1: blocks_to_swap=0, single EMA +
+# cyclic restart. Design + gates: docs/proposal/turbo_scfm.md.
+[scfm]
+k_ratio = 0.4                   # per-sample fraction on Term A (teacher); rest Term B (at B=1, the per-step Bernoulli prob)
+ema_mu = 0.999                  # θ⁻ ← μθ⁻ + (1−μ)θ decay (Eq. 14)
+ema_restart = 1000              # cyclic restart θ⁻←θ every N steps (0 = never)
+dual_ema = false                # Phase-2 fast+slow accelerator (not implemented in the minimal port)
+n_consistency_grid = 8          # finer sub-step grid Term B samples adjacent triples from (>= dmd.student_steps)
 
 # τ sampling distribution for the fake/critic update (+ fake warmup).
 [sampling]
