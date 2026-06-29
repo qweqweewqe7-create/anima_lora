@@ -9,7 +9,12 @@ at the turbo default ``batch_size=1``):
   velocity is pinned to the CFG-guided teacher field (the quality ceiling).
 - **Term B — velocity self-consistency.** One coarse Euler step on a stop-grad
   EMA copy of the student (θ⁻) must equal two finer sub-steps → the trajectory
-  straightens, which is what makes few-step Euler work.
+  straightens, which is what makes few-step Euler work. ``term_b_point`` picks
+  where the consistency point comes from: ``"renoise"`` (paper-faithful) uses an
+  on-manifold renoised real latent — where Anima's field is already straight, so
+  Term B measures ~0 and does nothing; ``"rollout"`` rolls θ⁻ from noise on its
+  own coarse student grid to the OFF-manifold states the few-step Euler rollout
+  actually visits (the washout source), where the consistency is non-trivial.
 
 The fake/critic stack is repurposed as θ⁻ (``set_view("fake")``); it carries no
 optimizer and is updated by parameter EMA (Eq. 14) with a cyclic restart. No
@@ -121,6 +126,22 @@ def run_scfm(
         f"σ={['%.3f' % s for s in student_sigmas]}"
     )
 
+    # term_b_point="rollout": Term B's consistency point is rolled along the COARSE
+    # student grid (the inference σ-grid) from noise on θ⁻, landing on the
+    # off-manifold states the few-step Euler rollout actually visits — where the
+    # washout lives and where the on-manifold renoise variant has nothing to
+    # straighten (turbo_scfm.md §9.1/§9.4). Each coarse step is sub-divided once at
+    # its midpoint for the "1 big step == 2 half-steps" target.
+    rollout_mode = cfg.scfm_term_b_point == "rollout"
+    student_sig_dev = torch.tensor(student_sigmas, device=device, dtype=dtype)
+    n_stu = len(student_sigmas) - 1  # number of coarse Euler steps (= student_steps)
+    if rollout_mode:
+        logger.info(
+            f"SCFM Term B = OFF-trajectory rollout on the {n_stu}-step student grid "
+            "(θ⁻ from noise → coarse-step midpoint consistency); n_consistency_grid "
+            "is renoise-mode-only and unused."
+        )
+
     # CPU RNG for the per-step role draw + grid-index draw — keeps both off the
     # GPU sync path (mirrors the DMD loop's grad_step='random' g draw), seeded
     # for reproducibility alongside the global torch.manual_seed(cfg.seed).
@@ -136,6 +157,10 @@ def run_scfm(
     lossB_sum = torch.zeros((), device=device)
     residB_sum = torch.zeros((), device=device)  # Term-B straightening headroom
     nA = nB = nlog = 0
+    # Last non-empty per-term values for the tqdm postfix. At high k_ratio a whole
+    # log window can be all-Term-A (nB=0), so the live bar would flicker to nan;
+    # carry the most recent real value instead (TB curves stay gated below).
+    last_a = last_b = float("nan")
 
     data_iter = iter(dataloader)
     use_masked = cfg.use_masked_loss
@@ -191,10 +216,17 @@ def run_scfm(
             any_B = bool((~is_termA_cpu).any())
             is_termA_b = is_termA.view(B, *([1] * (latents.dim() - 1)))  # broadcast
 
-            # --- per-sample evaluation level t_samp -----------------------------
-            # Term A: a random renoise level t_a (renoised real latent → teacher
-            #         rectification target).
-            # Term B: the grid level t_i of a sampled adjacent triple.
+            # --- consistency grid (t_lo, t_mid, t_hi) + Term-B point x_t --------
+            # Term A always renoises a real latent at a random level t_a (→ teacher
+            # rectification target, on-manifold). Term B enforces the "1 step over
+            # [t_lo, t_hi] == 2 sub-steps via t_mid" velocity consistency at its
+            # point. The two modes differ only in where that point and grid come
+            # from:
+            #   renoise : t_lo/t_mid/t_hi = an adjacent triple of the fine
+            #             consistency grid; Term-B point = renoise(real, t_lo).
+            #   rollout : t_lo/t_mid/t_hi = one COARSE student step sub-divided at
+            #             its midpoint; Term-B point = θ⁻ rolled from noise to t_lo
+            #             (off-manifold — the states the rollout actually visits).
             t_a = sample_t(
                 B,
                 distribution=cfg.t_distribution,
@@ -202,21 +234,51 @@ def run_scfm(
                 device=device,
                 dtype=dtype,
             )
-            # Triple-start indices on CPU; Term-A samples get a dummy index 0
-            # (their Term-B target is computed-then-discarded only when any_B
-            # forces the EMA forward — at B=1 the inactive branch is skipped).
-            idx = torch.randint(0, max(1, n_grid - 1), (B,), generator=cpu_gen)
-            t_i = grid_dev[idx].to(device)
-            t_ip1 = grid_dev[idx + 1].to(device)
-            t_ip2 = grid_dev[idx + 2].to(device)
-            d_i = (t_i - t_ip1).view(B, *([1] * (latents.dim() - 1)))
-            d_ip1 = (t_ip1 - t_ip2).view(B, *([1] * (latents.dim() - 1)))
+            view_b = (B, *([1] * (latents.dim() - 1)))
+            x_rollout = None
+            if rollout_mode:
+                # One coarse interval per micro-step, shared across the batch.
+                j = int(torch.randint(0, n_stu, (1,), generator=cpu_gen).item())
+                s_lo = student_sig_dev[j]
+                s_hi = student_sig_dev[j + 1]
+                s_mid = 0.5 * (s_lo + s_hi)
+                t_lo = s_lo.expand(B)
+                t_mid = s_mid.expand(B)
+                t_hi = s_hi.expand(B)
+                # Roll θ⁻ from noise to σ_j (j Euler steps, all no-grad) → the
+                # off-manifold visited state. j=0 ⇒ the pure-noise start (σ=1).
+                if any_B:
+                    x_rollout = torch.randn_like(latents)
+                    for kk in range(j):
+                        sk = student_sig_dev[kk]
+                        sk1 = student_sig_dev[kk + 1]
+                        vk = forward_fn(
+                            "fake",
+                            x_rollout,
+                            sk.expand(B),
+                            crossattn_emb,
+                            no_grad=True,
+                        ).squeeze(2)
+                        x_rollout = (x_rollout - (sk - sk1) * vk).detach()
+            else:
+                # Adjacent triple of the fine consistency grid (per-sample index).
+                idx = torch.randint(0, max(1, n_grid - 1), (B,), generator=cpu_gen)
+                t_lo = grid_dev[idx]
+                t_mid = grid_dev[idx + 1]
+                t_hi = grid_dev[idx + 2]
+            d_i = (t_lo - t_mid).view(view_b)
+            d_ip1 = (t_mid - t_hi).view(view_b)
 
-            t_samp = torch.where(is_termA, t_a, t_i)  # [B]
+            # Student/teacher evaluation level: t_a for Term A, t_lo for Term B.
+            t_samp = torch.where(is_termA, t_a, t_lo)  # [B]
 
-            # Single renoise per sample at t_samp (shared by teacher/EMA/student).
+            # Renoise real at t_samp (Term-A point, and the renoise-mode Term-B
+            # point). In rollout mode the Term-B positions are then overwritten
+            # with the off-manifold rollout state.
             eps = torch.randn_like(latents)
             x_t = renoise(latents, t_samp, eps)
+            if rollout_mode and x_rollout is not None:
+                x_t = torch.where(is_termA_b, x_t, x_rollout)
 
             # --- Term A target: CFG-guided teacher velocity (no grad) -----------
             v_tea = None
@@ -232,15 +294,17 @@ def run_scfm(
                 v1 = forward_fn(
                     "fake", x_t, t_samp, crossattn_emb, no_grad=True
                 ).squeeze(2)
-                x_next = x_t - d_i * v1  # Euler sub-step i → i+1
+                x_next = x_t - d_i * v1  # Euler sub-step lo → mid
                 v2 = forward_fn(
-                    "fake", x_next, t_ip1, crossattn_emb, no_grad=True
+                    "fake", x_next, t_mid, crossattn_emb, no_grad=True
                 ).squeeze(2)
                 denom = (d_i + d_ip1).clamp_min(1e-8)
                 v_target_B = ((d_i * v1 + d_ip1 * v2) / denom).detach()
                 # Straightening headroom: how far the coarse one-step velocity v1
                 # is from the two-sub-step composition (relative). Near 0 ⇒ field
-                # already straight at this scale (Term B saturated); large ⇒ room.
+                # already straight at this point (Term B saturated); large ⇒ room.
+                # In rollout mode this is measured at the OFF-manifold visited
+                # state, so a non-trivial value here is the signal Term B now bites.
                 resid_B = (
                     (v1 - v_target_B).float().norm()
                     / (v_target_B.float().norm() + 1e-8)
@@ -307,16 +371,18 @@ def run_scfm(
             }
             if nA:
                 scalars["train/scfm_loss_a"] = (lossA_sum / nA).item()
+                last_a = scalars["train/scfm_loss_a"]
             if nB:
                 scalars["train/scfm_loss_b"] = (lossB_sum / nB).item()
                 scalars["train/scfm_consistency_residual"] = (residB_sum / nB).item()
+                last_b = scalars["train/scfm_loss_b"]
             if writer is not None:
                 for k, v in scalars.items():
                     writer.add_scalar(k, v, step + 1)
             progress.set_postfix(
                 loss=f"{scalars['train/scfm_loss']:.4f}",
-                a=f"{scalars.get('train/scfm_loss_a', float('nan')):.4f}",
-                b=f"{scalars.get('train/scfm_loss_b', float('nan')):.4f}",
+                a=f"{last_a:.4f}",
+                b=f"{last_b:.4f}",
             )
             loss_sum = torch.zeros((), device=device)
             lossA_sum = torch.zeros((), device=device)

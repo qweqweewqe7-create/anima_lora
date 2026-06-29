@@ -366,7 +366,20 @@ def build_argparser() -> argparse.ArgumentParser:
         default=-1,
         help="SCFM: finer sub-step grid Term B samples adjacent (t_i, t_i+1, "
         "t_i+2) triples from; must be >= student_steps. Default: TOML "
-        "(scfm.n_consistency_grid, default 8).",
+        "(scfm.n_consistency_grid, default 8). renoise mode only.",
+    )
+    parser.add_argument(
+        "--scfm_term_b_point",
+        type=str,
+        default=None,
+        choices=("renoise", "rollout"),
+        help="SCFM: where Term B's self-consistency point comes from. 'renoise' "
+        "(paper-faithful) renoises a real latent → ON-manifold, where Anima's "
+        "field is already straight so Term B is inert. 'rollout' rolls the EMA "
+        "student θ⁻ from noise on its own coarse student grid → the OFF-manifold "
+        "points the few-step Euler rollout actually visits (the washout source); "
+        "the consistency there is non-trivial. Default: TOML "
+        "(scfm.term_b_point, default 'renoise').",
     )
 
     # DMD2 teacher-feature GAN (FastGen idea 1; off by default).
@@ -616,6 +629,7 @@ class TurboConfig:
     scfm_ema_restart: int
     scfm_dual_ema: bool
     scfm_n_consistency_grid: int
+    scfm_term_b_point: str  # "renoise" (on-manifold) | "rollout" (off-trajectory)
 
     # DMD2 teacher-feature GAN (idea 1) + f-distill reweighting (idea 2)
     gan_loss_weight_gen: float
@@ -794,6 +808,9 @@ def resolve_config(args: argparse.Namespace, cfg: dict) -> TurboConfig:
     scfm_n_consistency_grid = int(
         _pick(args.scfm_n_consistency_grid, cfg, "scfm.n_consistency_grid", 8)
     )
+    scfm_term_b_point = str(
+        _pick(args.scfm_term_b_point, cfg, "scfm.term_b_point", "renoise")
+    )
 
     # weight_gen=0 keeps the whole GAN/disc path off → byte-identical DP-DMD.
     # feature_block_idx sentinel is -2 (not -1) because -1 means middle block.
@@ -969,6 +986,12 @@ def resolve_config(args: argparse.Namespace, cfg: dict) -> TurboConfig:
                 f"scfm.n_consistency_grid={scfm_n_consistency_grid}: must be >= 2 "
                 "(Term B needs adjacent (t_i, t_i+1, t_i+2) triples)."
             )
+        if scfm_term_b_point not in ("renoise", "rollout"):
+            raise ValueError(
+                f"scfm.term_b_point={scfm_term_b_point!r}: expected 'renoise' "
+                "(on-manifold renoised real) or 'rollout' (off-trajectory EMA "
+                "rollout from noise)."
+            )
         if scfm_dual_ema:
             raise ValueError(
                 "scfm.dual_ema=true is Phase 2 (not implemented in the minimal "
@@ -1017,6 +1040,7 @@ def resolve_config(args: argparse.Namespace, cfg: dict) -> TurboConfig:
             f"ema_mu={scfm_ema_mu}, ema_restart={scfm_ema_restart}, "
             f"n_consistency_grid={scfm_n_consistency_grid}, student N="
             f"{student_steps} @ flow_shift={flow_shift}, teacher_cfg={teacher_cfg}, "
+            f"term_b_point={scfm_term_b_point}, "
             f"grad_accum={gradient_accumulation_steps} (effective batch "
             f"{batch_size * gradient_accumulation_steps}). "
             "Fake stack repurposed as EMA student θ⁻; GAN/REPA/soft-rank inert."
@@ -1052,6 +1076,7 @@ def resolve_config(args: argparse.Namespace, cfg: dict) -> TurboConfig:
         )
     if (
         not use_anchor
+        and base_loss != "scfm"
         and student_steps > 1
         and not bool(args.grad_ckpt)
         and dmd_grad_step == "all"
@@ -1290,7 +1315,8 @@ def resolve_config(args: argparse.Namespace, cfg: dict) -> TurboConfig:
             f"student N={student_steps} @ flow_shift={flow_shift}, "
             f"teacher_cfg={teacher_cfg}."
         )
-    else:
+    elif base_loss != "scfm":
+        # SCFM already logged its own banner; it is not "plain DMD2".
         logger.info(
             f"plain DMD2 (no diversity anchor): student N={student_steps} @ "
             f"flow_shift={flow_shift}, teacher_cfg={teacher_cfg}."
@@ -1359,6 +1385,7 @@ def resolve_config(args: argparse.Namespace, cfg: dict) -> TurboConfig:
         scfm_ema_restart=scfm_ema_restart,
         scfm_dual_ema=scfm_dual_ema,
         scfm_n_consistency_grid=scfm_n_consistency_grid,
+        scfm_term_b_point=scfm_term_b_point,
         gan_loss_weight_gen=gan_loss_weight_gen,
         gan_feature_block_idx=gan_feature_block_idx,
         gan_disc_lr=gan_disc_lr,

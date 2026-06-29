@@ -18,7 +18,7 @@
 #   make scfm                                  # same, via the task runner
 #   make scfm ARGS="--iterations 4000"         # CLI flags override TOML values
 
-output_name = "anima_scfm_accum"
+output_name = "anima_scfm2"
 dit_path = "models/diffusion_models/anima-base-v1.0.safetensors"
 data_dir = "post_image_dataset/lora"
 output_dir = "output/ckpt"
@@ -77,18 +77,26 @@ grad_clip = 1.0                 # student grad-norm cap
 # (N−k) Term-B samples so EVERY step sees both terms; at batch_size=1 a single
 # micro-step is a pure-A-OR-B coin flip, throttling Term-A duty cycle to k_ratio.
 # Accumulating ≥4 micro-steps mixes both roles within the window (P(≥1 A) at
-# k_ratio=0.4, accum=4 ≈ 0.87) → recovers the mixed gradient at B=1 memory.
+# k_ratio=0.4, accum=2 ≈ 0.64) → recovers the mixed gradient at B=1 memory.
 # LR is accum-invariant (each micro-loss scaled by 1/accum). Cost: accum×
 # forwards per optimizer step. SCFM-only (the dpdmd/dmd loops reject accum>1).
-gradient_accumulation_steps = 4
+gradient_accumulation_steps = 1
 
 # SCFM knobs (read only under base_loss="scfm").
 [scfm]
-k_ratio = 0.4                   # per-sample fraction on Term A (teacher); rest Term B
+k_ratio = 0.9                   # per-sample fraction on Term A (teacher); rest Term B
 ema_mu = 0.999                  # θ⁻ ← μθ⁻ + (1−μ)θ decay (Eq. 14)
 ema_restart = 1000              # cyclic restart θ⁻←θ every N steps (0 = never)
 dual_ema = false                # Phase-2 fast+slow accelerator (not implemented in the minimal port)
-n_consistency_grid = 8          # finer sub-step grid Term B samples adjacent triples from (>= dmd.student_steps)
+n_consistency_grid = 8          # renoise mode only: finer sub-step grid for adjacent triples (>= dmd.student_steps)
+# Term B's self-consistency point. "renoise" (paper-faithful) renoises a real
+# latent → ON-manifold, where Anima's teacher field is already ~95% straight so
+# Term B is INERT (consistency_residual flat ~0.05; confirmed across lr + grad-
+# accum runs). "rollout" rolls θ⁻ from noise on its own coarse student grid →
+# the OFF-manifold points the few-step Euler rollout actually visits (the washout
+# source, turbo_scfm.md §9.1/§9.4). Watch train/scfm_consistency_residual: it
+# should climb off the ~0.05 floor if the redesign gives Term B real work.
+term_b_point = "renoise"
 
 # τ sampling + σ-schedule shift (flow_shift is reused by the SCFM Euler grids).
 [sampling]

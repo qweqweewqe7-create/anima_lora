@@ -517,3 +517,38 @@ With lr 5e-5 as the new baseline:
    (smooth the high-lr restart transient by dropping the manual restart). Revisit
    only after the seed-matched gate.
 6. **`k_ratio` is a near-dead dial while Term B is inert.**
+
+### 9.5 Grad-accum + off-trajectory Term B built (2026-06-29)
+
+Two builds on the clean `configs/methods/scfm.toml` (the `make scfm` sibling of
+`make turbo`, both driven by the same `scripts/distill_turbo/` loop):
+
+- **Gradient accumulation (`optim.gradient_accumulation_steps`, SCFM-only).** The
+  paper's Eq. 13 splits a batch of N into k Term-A + (N−k) Term-B so every
+  optimizer step sees both terms; at `batch_size=1` a micro-step is a pure-A-OR-B
+  coin flip, throttling Term-A duty cycle to `k_ratio`. Accumulation mixes both
+  roles within the window (each micro-loss scaled `1/accum`, so LR is
+  accum-invariant). The dpdmd/dmd loops reject `accum>1` (they step every
+  micro-step). **`anima_scfm_accum` run (accum 4, lr 5e-5): confirmed grad-accum
+  is NOT the Term-B fix** — `consistency_residual` stayed flat 0.037–0.054
+  (mean ~0.045), identical to the highlr run. Expected: accum addresses Term-A
+  throughput, not Term-B inertness (which is the on-manifold straightness of
+  §9.1). Settled on **accum 2** as the speed/mixing trade (accum 4 too slow;
+  P(≥1 A) at k_ratio 0.4, accum 2 ≈ 0.64).
+
+- **Off-trajectory Term B (item-4 redesign), `scfm.term_b_point`.** New toggle:
+  `"renoise"` (default, paper-faithful — on-manifold renoised real, inert here)
+  vs `"rollout"` (rolls θ⁻ from noise on the **coarse student grid** to the
+  off-manifold states the few-step Euler rollout visits, then enforces the
+  "1 coarse step == 2 half-steps via the midpoint" velocity consistency *there*).
+  Grad flows only through the student forward at the visited state; the rollout +
+  both EMA sub-steps are stop-grad θ⁻ (DMD2-style train-on-your-own-trajectory).
+  Trivial-straight-line collapse (§6 risk 3) is guarded by Term A still pinning
+  the on-manifold field to the teacher (`k_ratio>0`). Cost: +~N/2 no-grad θ⁻
+  forwards per Term-B micro-step. **`scfm.toml` now ships `term_b_point="rollout"`
+  + accum 2.** Code + smoke (rollout/renoise × accum) + config tests landed
+  (`tests/test_scfm.py`, 22 pass). **The gate is `train/scfm_consistency_residual`
+  climbing off the ~0.05 floor** — if it stays flat in rollout mode too, the
+  washout is not a velocity-inconsistency the student can fix and the line is
+  closed; if it climbs and the seed-matched montage sharpens vs `anima_turbo_R`,
+  rollout becomes the SCFM default.

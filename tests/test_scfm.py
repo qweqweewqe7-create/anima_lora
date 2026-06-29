@@ -90,6 +90,25 @@ def test_grad_accum_rejected_for_dpdmd():
         _resolve(["--base_loss", "dmd", "--gradient_accumulation_steps", "2"])
 
 
+def test_term_b_point_default_and_override():
+    assert _resolve().scfm_term_b_point == "renoise"  # paper-faithful default
+    c = _resolve(["--base_loss", "scfm"], toml={"scfm": {"term_b_point": "rollout"}})
+    assert c.scfm_term_b_point == "rollout"
+    # CLI wins over TOML.
+    c = _resolve(
+        ["--base_loss", "scfm", "--scfm_term_b_point", "renoise"],
+        toml={"scfm": {"term_b_point": "rollout"}},
+    )
+    assert c.scfm_term_b_point == "renoise"
+
+
+def test_term_b_point_invalid_via_toml_raises():
+    # argparse `choices` guards the CLI; route a bad value through TOML to hit the
+    # resolve_config guard.
+    with pytest.raises(ValueError, match="term_b_point"):
+        _resolve(["--base_loss", "scfm"], toml={"scfm": {"term_b_point": "wat"}})
+
+
 def test_scfm_forces_other_objectives_inert():
     # The shipped turbo.toml carries gan/f_div for the dpdmd default; under scfm
     # they must be force-inert (warned), not error.
