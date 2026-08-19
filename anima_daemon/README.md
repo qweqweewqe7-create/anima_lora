@@ -34,7 +34,7 @@ curl -s 127.0.0.1:8765/health     # {"ok":true,"pid":…,"active_job":…,"pause
 any Python:
 
 ```bash
-python tasks.py daemon-run project/directedit_ec/bench/run_bench.py --n 5   # attach + stream
+python tasks.py daemon-run bench/memorization/probe.py --n 5        # attach + stream
 python tasks.py daemon-run --stall-timeout 0 my_quiet_loop.py       # quiet loop, no watchdog
 python tasks.py daemon-run --queue long_sweep.py                    # detach instead
 JOB=<id> python tasks.py daemon-wait          # block; print record + result envelope

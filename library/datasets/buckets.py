@@ -141,7 +141,7 @@ def widen_bands(bands, extra: int) -> "list[tuple[int, int]]":
 
 # The single measured-safe σ-demote route (1024→896). Other candidate routes
 # (896→768, 1280→1024) failed/differ per their own gradient probe — do not add
-# routes without one (project/sigma_lowres/bench/run_sigma_probe.py).
+# routes without one (_archive/sigma_lowres/bench/run_sigma_probe.py).
 SIGMA_DEMOTE_ROUTE: Tuple[int, int] = (1024, 896)
 
 

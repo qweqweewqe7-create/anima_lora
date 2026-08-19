@@ -4,13 +4,13 @@
 > same day: `--deterministic` (train.py) produces **bit-identical checkpoints**
 > across runs, twin-validated over full compiled 1200-step runs. Memory:
 > [[project_deterministic_flag_chaos_floor]]. Data:
-> `project/sigma_lowres/bench/report.md` §"Twin controls".
+> `_archive/sigma_lowres/bench/report.md` §"Twin controls".
 
 ## The trap
 
 The sigma_lowres Phase-1b in-vivo A/B compared paired training arms
 (`--seed 42 --paired_step_rng`, CRN: identical init, data order, σ sequence,
-noise) by ΔW cosine (`project/sigma_lowres/bench/compare_ckpt_dw.py`, rank-space
+noise) by ΔW cosine (`_archive/sigma_lowres/bench/compare_ckpt_dw.py`, rank-space
 `(UaᵀUb)⊙(DaDbᵀ)`). CRN lockstep was *witnessed* — arms bit-exact at step 2,
 tracking to 3–4 decimals through step 10 — so it was tempting to read the
 endpoint cosines as treatment magnitude: base↔σ>0.5 = 0.320 "big effect",

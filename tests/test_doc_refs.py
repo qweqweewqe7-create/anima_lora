@@ -61,7 +61,7 @@ def test_check_path_flags_missing_and_accepts_real():
     assert _check_path("output/tests/foo.png", top) is None
 
 
-def test_check_path_resolves_relative_to_the_referencing_doc():
+def test_check_path_resolves_relative_to_the_referencing_doc(tmp_path):
     """Self-contained doc trees cite siblings relatively.
 
     Every ``project/<line>/`` digest writes ``bench/report.md`` meaning *that
@@ -69,7 +69,9 @@ def test_check_path_resolves_relative_to_the_referencing_doc():
     those as broken because ``bench/`` is also a real top-level dir.
     """
     top = tracked_top_level()
-    line_home = REPO_ROOT / "project" / "sigma_lowres"
+    line_home = tmp_path / "some_line"
+    (line_home / "bench").mkdir(parents=True)
+    (line_home / "bench" / "report.md").write_text("stub")
     # Broken from the root, correct from the doc's own directory.
     assert _check_path("bench/report.md", top) == "bench/report.md"
     assert _check_path("bench/report.md", top, base=line_home) is None

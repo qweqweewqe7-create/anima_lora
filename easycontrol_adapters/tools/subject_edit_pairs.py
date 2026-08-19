@@ -1,6 +1,6 @@
 """Delta-caption edit-pair miner for the EasyControl *subject_edit* descriptor.
 
-Phase 2.5 of the directedit_ec line (project/directedit_ec/roadmap.md): same
+Phase 2.5 of the directedit_ec line (archived: _archive/directedit_ec/roadmap.md): same
 mined cross-image pairs as the subject descriptor (cond = image A of a
 character, target = image B of the SAME character), but the prompt is the
 **tag delta** between the two captions instead of B's full caption:

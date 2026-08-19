@@ -1,6 +1,6 @@
 """Cross-image subject-pair miner for the EasyControl *subject* descriptor.
 
-Phase 2 of the directedit_ec line (project/directedit_ec/initial_proposal.md):
+Phase 2 of the directedit_ec line (archived: _archive/directedit_ec/initial_proposal.md):
 mine (cond = image A of a character, target = image B of the SAME character)
 pairs from the typed caption index, so the adapter is forced to learn
 content-based (associative) retrieval — positional copying cannot satisfy a

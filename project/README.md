@@ -15,21 +15,24 @@ Canonical sources these digest (never duplicated wholesale):
 the line's proposal(s) (frozen designs) and its bench (`report.md` = raw
 verdicts + full tables, `results/` = run envelopes). A promoted line may
 adopt these into its home — `project/<line>/bench/` for the bench and e.g.
-`initial_proposal.md` for the founding proposal (directedit_ec and
-sigma_lowres do both); lines that haven't keep them in `bench/<line>/`
-and `docs/proposal/<line>*.md`.
+`initial_proposal.md` for the founding proposal (the archived directedit_ec
+and sigma_lowres lines did both); lines that haven't keep them in
+`bench/<line>/` and `docs/proposal/<line>*.md`.
+
+Retired lines move to the gitignored `_archive/` tree (local + preserved in
+the private mirror), keeping this dir strictly the *active* set:
+
+- `sigma_lowres` — archived 2026-08-19 → `_archive/sigma_lowres/`. The research
+  branches + paper drafts were already mirrored to the private repo
+  (2026-08-15) and deleted from public origin; the shipped `--sigma_lowres`
+  feature stays live (`docs/optimizations/sigma_lowres.md`).
+- `directedit_ec` — archived 2026-08-19 → `_archive/directedit_ec/`. Private
+  mirroring still pending; the state is snapshot in the mirror's `main` and
+  in origin history. EasyEdit ship proposal + paper prep remain the owed
+  write-ups if the line reopens.
 
 Active projects:
 
-- [`sigma_lowres/`](sigma_lowres/) — σ-conditional low-res gradient routing.
-  Spectral mechanism refuted; one measured-safe route (1024→896 @ σ>0.5);
-  discriminating probe (1280→1024) pending.
-- [`directedit_ec/`](directedit_ec/) — EasyControl cond stream as a learned
-  preservation prior for DirectEdit. Phases 0–1b passed zero-training;
-  Phase 2.5 (delta-caption instruction editor) probe PASSED at the trained
-  point → EasyEdit ship proposal + paper prep are the owed write-ups
-  (neither the line's `outcomes.md` nor an `easyedit_comfy_node` proposal
-  exists yet).
 - [`cjk_aware_anima/`](cjk_aware_anima/) — native JA/CJK prompt conditioning
   via an extended T5-side vocab distilled against the EN-translation teacher.
   Probe + zero-shot ext vocab measured (`bench/cjk_adapter/`); the Phase 2a
