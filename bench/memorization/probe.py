@@ -482,9 +482,25 @@ def real_real_floor(ref_pool: torch.Tensor) -> dict:
 def _load_image_tensor(path: str, tile: int) -> torch.Tensor:
     from PIL import Image  # noqa: PLC0415
 
-    img = Image.open(path).convert("RGB").resize((tile, tile), Image.BICUBIC)
+    img = Image.open(path).convert("RGB")
     t = torch.from_numpy(_to_array(img)).permute(2, 0, 1).float() / 255.0
-    return t  # [3,tile,tile] in [0,1]
+    return _fit_tile(t, tile)  # [3,tile,tile] in [0,1]
+
+
+def _fit_tile(t: torch.Tensor, tile: int) -> torch.Tensor:
+    """Fit [3,H,W] into a tile×tile box preserving aspect ratio (gray letterbox
+    pad) — a square squash distorts exactly the composition detail the sheet
+    exists to compare."""
+    _, h, w = t.shape
+    scale = tile / max(h, w)
+    nh, nw = max(1, round(h * scale)), max(1, round(w * scale))
+    t = torch.nn.functional.interpolate(
+        t.unsqueeze(0), size=(nh, nw), mode="bilinear", align_corners=False
+    ).squeeze(0)
+    out = torch.full((3, tile, tile), 0.15)
+    y, x = (tile - nh) // 2, (tile - nw) // 2
+    out[:, y : y + nh, x : x + nw] = t
+    return out
 
 
 def _to_array(img):
@@ -502,7 +518,7 @@ def save_contact_sheet(
     rows: list[dict],
     sim_argmax_other,  # callable m -> ref index of nearest other
     top: int = 8,
-    tile: int = 256,
+    tile: int = 512,
 ) -> bool:
     """Rows = most self-locked / highest-contrast gen items; each row is
     [generated, its source train image, its nearest *other* train image]."""
@@ -520,13 +536,7 @@ def save_contact_sheet(
         cells: list[torch.Tensor] = []
         for m in order:
             gi = gen_idx[m]
-            gen = (gen_pixels[m].float().clamp(-1, 1) + 1) / 2
-            gen = torch.nn.functional.interpolate(
-                gen.unsqueeze(0),
-                size=(tile, tile),
-                mode="bilinear",
-                align_corners=False,
-            ).squeeze(0)
+            gen = _fit_tile((gen_pixels[m].float().clamp(-1, 1) + 1) / 2, tile)
             src_img = _load_image_tensor(items[gi][0].absolute_path, tile)
             other_idx = sim_argmax_other(m)
             other_img = _load_image_tensor(items[other_idx][0].absolute_path, tile)
@@ -615,6 +625,18 @@ def main():
         help="torch.compile DiT blocks with dynamic-seq (default on).",
     )
     ap.add_argument("--no-compile", dest="compile", action="store_false")
+    ap.add_argument(
+        "--sheet_top",
+        type=int,
+        default=8,
+        help="rows on the memorized.png contact sheet (most-locked first).",
+    )
+    ap.add_argument(
+        "--sheet_tile",
+        type=int,
+        default=512,
+        help="contact-sheet tile edge in px (aspect-preserving letterbox).",
+    )
     ap.add_argument("--label", default=None)
     args_cli = ap.parse_args()
 
@@ -786,6 +808,8 @@ def main():
         gen_idx=gen_idx,
         rows=rows,
         sim_argmax_other=lambda m: nearest_other[m],
+        top=args_cli.sheet_top,
+        tile=args_cli.sheet_tile,
     ):
         artifacts.append("memorized.png")
 

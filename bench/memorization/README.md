@@ -103,3 +103,25 @@ python bench/memorization/loss_gap.py \
 Headline: `auc_member_vs_same` (~0.5 generalizing, >0.65 + small perm-p =
 member-specific overfit) with a per-sigma breakdown; `delta` elevated on
 holdout with AUC≈0.5 is the healthy "fits the artist, not the frames" shape.
+
+## demote_mia.py — does σ-demoted training regularize memorization?
+
+Paired driver: per seed, trains the calibrated sincos-half plain-LoRA overfit
+recipe (report.md operating point, July anchor AUC 0.82) once per arm —
+native vs combo (`--sigma_lowres`, spans cleared) vs optionally half896
+(`--sigma_lowres`, span cleared, route2 cleared — the certified 1024→896 on
+σ>0.5 half-line only) — then runs `loss_gap.py` on each and aggregates.
+**Headline is the clean-σ composite AUC (σ≤0.5)**: the demote arms trained
+σ>0.5 at demoted resolution while the probe scores native-res latents, so
+high-σ AUC changes are resolution-confounded and reported under a †, not
+interpreted. When both combo and half896 run, the summary also reports each
+partial arm's interpolation `t` on the native(0)→combo(1) clean-σ AUC axis.
+Confirm any regularizing verdict generation-side with `probe.py`.
+
+Existing checkpoints and probe run dirs are reused (probe noise is
+stem-seeded, so reuse is exact) — `--force_retrain` / `--force_probe` to
+redo them.
+
+```bash
+make daemon-run ARGS="bench/memorization/demote_mia.py --seeds 1001 1002 --arms native combo half896"
+```
