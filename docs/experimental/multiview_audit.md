@@ -1,10 +1,11 @@
 # Multi-view audit — untagged `multiple views` in the caption master
 
-Status: **tool built, smoke-tested on one artist dir; full sweep not run.** The
-root-cause fix graduated to a full proposal —
-[`docs/proposal/dedupe_mask_quality.md`](../proposal/dedupe_mask_quality.md)
-(fill-ratio survivor swap in shared `dedupe_detections` + gated degenerate
-guard) — **not yet implemented**; §5 below is the evidence it rests on.
+Status: **tool built, full sweep run (3008 images, 122 findings); root-cause fix
+shipped.** The fill-ratio survivor swap landed in shared `dedupe_detections`
+(`597d7894`, knob `--dedupe_fill_ratio`, default **2.0**) — §5 below is the
+evidence it rests on and §5.4 is the corpus measurement that fixed the default.
+The companion degenerate-proposal guard was measured and **refuted** (§5.4) and
+does not ship.
 
 Written up before implementing because the first two explanations of the
 5847152 failure were both wrong (§4), and both were wrong in the same way —
@@ -176,7 +177,7 @@ longer votes on identity (`reliable=False`), though it still counts as a body. O
 rather than recovering the good one, and it silences *every* retry-recovered box,
 including the ones whose masks are fine.
 
-## 5. Proposed fix — mask quality in the duplicate decision
+## 5. The fix (shipped) — mask quality in the duplicate decision
 
 When NMS has already judged two proposals to be **the same object**, choose the
 survivor by mask quality rather than by score alone. Here that is 0.077 vs 0.560 —
@@ -185,21 +186,22 @@ a 7× gap, no absolute threshold required.
 **This is not the settled negative.** `position_captions.md:463` rejects an
 **absolute** gate on mask fill, and rejects it on measured grounds: a clean
 0.87-score figure sits at fill 0.267, the same as bad ones, so no cut-point
-separates them. The proposal here is a **relative comparison inside a pair NMS
+separates them. What shipped is a **relative comparison inside a pair NMS
 has already matched** — it never needs a cut-point, and it cannot drop an
 instance, only swap which of two duplicates represents it.
 
-Open decisions, deliberately not taken yet:
+How the three open decisions resolved:
 
-- **Where.** Fixing `dedupe_detections` fixes `caption-position` too, which is the
-  honest fix but changes shared behaviour and needs a regression pass on the clause
-  corpus. Keeping it audit-local is safe and leaves the bug live upstream.
-- **Form.** Swap-on-tie (only when scores are within some margin) vs rank on a
-  combined score. Swap-on-tie is narrower; the margin needs measuring, since 0.035
-  is the only data point we have.
-- **Metric.** Fill-within-own-box is what separated this case. `position_captions.md`
-  found fill useless as an absolute cut, which says nothing either way about it as
-  a relative one. Measured in §5.1.
+- **Where.** Shared `dedupe_detections`, so `caption-position` is fixed too.
+  Regression-checked on the clause corpus (`position_swapdiff_{on,off}`) and on
+  the audit smoke (`multiview_audit_smoke_swap`).
+- **Form.** Swap-on-ratio, no score-margin term: §5.1 measured margin as a
+  non-discriminator (the 0.035 pathological margin is matched exactly by a
+  benign pair).
+- **Metric.** Fill-within-own-box (`mask_box_fill`), compared as a ratio inside
+  the matched pair. `position_captions.md` found fill useless as an *absolute*
+  cut, which said nothing either way about it as a relative one — §5.1/§5.4
+  measured it and it separates cleanly.
 
 ### 5.1 Measurement — every NMS-suppressed pair on `ama_mitsuki`
 

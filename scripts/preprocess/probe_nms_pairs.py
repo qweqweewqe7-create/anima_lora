@@ -10,11 +10,12 @@ Read-only. Prints the distribution needed to answer three things: how often
 suppression fires at all, how often the survivor is the *worse* mask, and what
 score margin those inversions sit at.
 
-Phase 0 of `docs/proposal/dedupe_mask_quality.md` adds two requirements, both
-served by one grounding pass per image: the NMS replay runs at every floor in
-``--floors`` (the score gate is a pure re-filter on top of the shared proposal
-set, so extra floors are free), and every proposal's box fill + area fraction
-is recorded for the shape-B degenerate-guard gate.
+Two requirements are served by one grounding pass per image: the NMS replay
+runs at every floor in ``--floors`` (the score gate is a pure re-filter on top
+of the shared proposal set, so extra floors are free), and every proposal's box
+fill + area fraction is recorded. Both were consumed by the corpus measurement
+that fixed the shipped ratio at 2.0 and refuted the degenerate-proposal guard
+(`docs/experimental/multiview_audit.md` §5.4).
 """
 
 from __future__ import annotations

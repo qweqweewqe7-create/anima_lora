@@ -137,7 +137,7 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=2.0,
         help="Mask-quality tie-break inside an NMS-matched pair; 0 = off "
-        "(score-only survivor). See docs/proposal/dedupe_mask_quality.md.",
+        "(score-only survivor). See docs/experimental/multiview_audit.md §5.",
     )
     g.add_argument("--min_area_frac", type=float, default=0.005)
     g.add_argument("--pad", type=float, default=0.06)
