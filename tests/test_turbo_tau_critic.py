@@ -47,7 +47,7 @@ class _SelfAttn(nn.Module):
 
 
 # Class name must be exactly "Block" — LoRANetwork.ANIMA_TARGET_REPLACE_MODULE
-# matches on __class__.__name__ (same stub as tests/test_atlas_pack.py).
+# matches on __class__.__name__.
 class Block(nn.Module):
     def __init__(self) -> None:
         super().__init__()
