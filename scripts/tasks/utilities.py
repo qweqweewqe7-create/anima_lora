@@ -57,7 +57,7 @@ def cmd_comfy_batch(extra):
     if images_dir and "--images_dir" not in remaining:
         remaining = ["--images_dir", images_dir, *remaining]
 
-    run([PY, "scripts/comfy_batch.py", workflow, *remaining])
+    run([PY, "scripts/toolkits/comfy_batch.py", workflow, *remaining])
 
 
 def cmd_distill_prep(extra):
@@ -152,7 +152,7 @@ def cmd_export_logs(extra):
     (the "where is this run at" digest — see also ``make run-status``).
     """
     run_path = os.environ.get("RUN", "output/logs")
-    cmd = [PY, "scripts/export_logs_json.py", run_path]
+    cmd = [PY, "scripts/toolkits/export_logs_json.py", run_path]
     if os.environ.get("ALL"):
         cmd.append("--all")
     if os.environ.get("JSONL"):

@@ -309,6 +309,7 @@ def edit_forward(
     t_inj_blocks: Optional[Iterable[int]] = None,
     z_inv: Optional[List[torch.Tensor]] = None,
     mask: Optional[torch.Tensor] = None,  # Eq. 12 anchor mask (1 = edit region)
+    anchor_scale: float = 1.0,
     step_callback: Optional[Callable[[int, int], None]] = None,
     smc_cfg_state: Optional[SMCCFGState] = None,
 ) -> torch.Tensor:
@@ -346,6 +347,11 @@ def edit_forward(
         source, so a global anchor would suppress the edit even where other
         preservation mechanisms released the region). The full background-lock
         latent BLEND remains future work.
+      anchor_scale: global multiplier λ on the Δz residuals (1.0 = full
+        anchor, 0.0 = unanchored generation from the inverted init). The
+        continuous composition↔edit dial for whole-image edits with no region
+        mask — a global anchor at λ=1 suppresses them. Composes with ``mask``
+        (regional release applies on top of the scaled residual).
 
     Note: the src row always runs at CFG=1 (no neg_src in the batch) — Paper
     Algorithm 1 doesn't CFG the src branch, and a CFG-mixed V would conflate
@@ -377,6 +383,14 @@ def edit_forward(
         raise ValueError(
             f"z_inv has length {len(z_inv)} but sigmas implies T+1={T + 1} states "
             "- inversion and editing must use the same sigma schedule."
+        )
+    if anchor_scale < 0.0:
+        raise ValueError(f"anchor_scale must be >= 0, got {anchor_scale}.")
+    if anchor_scale != 1.0:
+        logger.info(
+            "DirectEdit anchor scale: Δz × %.3f (global; 0 = unanchored "
+            "generation from the inverted init).",
+            anchor_scale,
         )
     anchor_keep: Optional[torch.Tensor] = None
     if mask is not None:
@@ -414,6 +428,8 @@ def edit_forward(
         iterator = tqdm(range(T), desc="DirectEdit editing", total=T)
         for i in iterator:
             d = delta_z[i].to(device).float()
+            if anchor_scale != 1.0:
+                d = d * anchor_scale
             if anchor_keep is not None:
                 d = d * anchor_keep
             z_hat_tar = (z_tar.float() + d).to(torch.bfloat16)

@@ -1,9 +1,9 @@
 """Export TensorBoard scalar logs from a training run to JSON.
 
 Usage:
-    python scripts/export_logs_json.py output/logs/ip_adapter_default_20260424-1611
-    python scripts/export_logs_json.py --all output/logs
-    python scripts/export_logs_json.py output/logs/<run> --out metrics.json --jsonl
+    python scripts/toolkits/export_logs_json.py output/logs/ip_adapter_default_20260424-1611
+    python scripts/toolkits/export_logs_json.py --all output/logs
+    python scripts/toolkits/export_logs_json.py output/logs/<run> --out metrics.json --jsonl
 
 Reads every ``events.out.tfevents.*`` file under the given run directory and
 dumps all scalar tags. Default output is one ``metrics.json`` per run written

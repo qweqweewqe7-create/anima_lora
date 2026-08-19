@@ -237,7 +237,7 @@ trampoline .exe files. To fix:
 
 if ($Backend -eq 'rocm') {
   Say 'verifying the ROCm PyTorch runtime'
-  uv run --extra rocm-windows python scripts/rocm_smoke_test.py
+  uv run --extra rocm-windows python tests/rocm_smoke_test.py
   if ($LASTEXITCODE -ne 0) { Die 'ROCm PyTorch smoke test failed' }
 }
 

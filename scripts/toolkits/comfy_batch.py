@@ -17,11 +17,11 @@ Two modes, auto-selected by the workflow's contents:
   prompt × artist × chara pairs are queued.
 
 Usage:
-    python scripts/comfy_batch.py workflows/colorize.json \
+    python scripts/toolkits/comfy_batch.py workflows/colorize.json \
         --images_dir ../comfy/input/to_colorize
-    python scripts/comfy_batch.py workflows/lora-batch.json \
+    python scripts/toolkits/comfy_batch.py workflows/lora-batch.json \
         --artist workflows/artist.txt --chara workflows/chara.txt
-    python scripts/comfy_batch.py workflows/modhydra.json \
+    python scripts/toolkits/comfy_batch.py workflows/modhydra.json \
         --prompts workflows/preferred.txt
 """
 

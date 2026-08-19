@@ -131,7 +131,7 @@ A manual ROCm installation can run the same post-install check used by the
 installer:
 
 ```powershell
-uv run --extra rocm-windows python scripts/rocm_smoke_test.py
+uv run --extra rocm-windows python tests/rocm_smoke_test.py
 ```
 
 A successful run verifies the key training path rather than only checking that
@@ -144,7 +144,7 @@ A successful run verifies the key training path rather than only checking that
 The current locked device set is `gfx1200` / `gfx1201`. Other Radeon
 architectures are not yet declared verified by this project. If you want to add
 an RDNA 3 target, use the appropriate ROCm device package and run
-`scripts/rocm_smoke_test.py` on real hardware before treating it as supported.
+`tests/rocm_smoke_test.py` on real hardware before treating it as supported.
 
 ### `ROCm detected: using PyTorch SDPA instead of CUDA Flash Attention`
 
