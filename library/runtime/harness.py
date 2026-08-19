@@ -361,18 +361,24 @@ def compile_signature(
     dynamic_seq: bool,
     backend: str = "inductor",
     mode: Optional[str] = None,
+    seq_bands: Optional[list] = None,
 ) -> str:
     """Canonical signature string for ``maybe_clear_stale_compile_cache``.
 
     Every compile entry point must build the marker through this one
     formatter so equivalent configs serialize identically. ``mode`` is
     normalized so ``None`` and ``""`` ("inductor default") don't read as a
-    signature change.
+    signature change. ``seq_bands`` (per-band dynamic-seq) is appended only
+    when set, so pre-existing union-range signatures — and their persistent
+    cache dirs — stay byte-identical.
     """
-    return (
+    sig = (
         f"families={n_token_families};seq_range={seq_range};"
         f"dynamic_seq={dynamic_seq};backend={backend};mode={mode or None}"
     )
+    if seq_bands:
+        sig += f";seq_bands={sorted(tuple(b) for b in seq_bands)}"
+    return sig
 
 
 # captured on the first isolate_compile_cache call so later calls in the same
@@ -538,6 +544,7 @@ def compile_blocks_for_training(
     mode: Optional[str] = None,
     n_token_families: Optional[int] = None,
     seq_range: Optional[tuple] = None,
+    seq_bands: Optional[list] = None,
     dynamic_seq: bool = False,
     activation_memory_budget: float = 1.0,
     partitioner_recompute_views: bool = False,
@@ -577,6 +584,7 @@ def compile_blocks_for_training(
             dynamic_seq=dynamic_seq,
             backend=backend,
             mode=mode,
+            seq_bands=seq_bands,
         )
     )
     unet.compile_blocks(
@@ -585,7 +593,11 @@ def compile_blocks_for_training(
         n_token_families=n_token_families,
         dynamic_seq=dynamic_seq,
         seq_range=seq_range,
+        seq_bands=seq_bands,
     )
+    # NB: compile_cond_stream (EasyControl) stays on the union range —
+    # the cond stream runs at the same seq as the target stream, but its
+    # compile surface is separate; per-band there is a follow-up, not Phase 0.
     if hasattr(network, "compile_cond_stream"):
         network.compile_cond_stream(
             backend,
