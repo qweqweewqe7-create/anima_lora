@@ -18,6 +18,20 @@ import logging
 import os
 from pathlib import Path
 
+from library.runtime.allocator import default_expandable_segments
+
+# Mirror of train.py's allocator default (project_daemon_wiring_pattern —
+# bespoke loops never see train.py infra): must run before the first CUDA
+# allocation. The 2026-08-19 anima_turbo_v2_1 run died at step 887 on a
+# 66 MiB alloc with 143 MiB free — fragmentation this flag exists to absorb.
+# print, not logging — no handler exists this early (basicConfig runs below).
+if default_expandable_segments():
+    print(
+        "PYTORCH_CUDA_ALLOC_CONF defaulted to expandable_segments:True "
+        "(opt out: ANIMA_EXPANDABLE_SEGMENTS=0)",
+        flush=True,
+    )
+
 import torch
 import torch.nn as nn
 from tqdm import tqdm

@@ -37,6 +37,12 @@ import math
 import os
 import random
 
+from library.runtime.allocator import default_expandable_segments
+
+# Mirror of train.py's allocator default (project_daemon_wiring_pattern) —
+# must run before the first CUDA allocation; freefit's varying seq_len
+# fragments the reserved pool over a long run without it.
+default_expandable_segments()
 
 import torch  # noqa: E402
 import torch.nn as nn  # noqa: E402
