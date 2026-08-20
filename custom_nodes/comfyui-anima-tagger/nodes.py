@@ -55,11 +55,12 @@ _OPTIONAL_FILES = ("thresholds.safetensors", "groups.yaml")
 
 # The tagger is dual-encoder only (PE-Core + PE-Spatial, hard-routed). The
 # pre-dual single-encoder ``v1`` checkpoint no longer loads. The live
-# checkpoint (v3-refit — spatial-head headroom Phase-1) sits under the ``v3/``
-# subfolder of ``sorryhyun/anima-tagger``; the repo root keeps the legacy v2
+# checkpoint (v5 — curated-caption labels, 4-class rating, white-stroke
+# augmentation) sits under the ``v5/`` subfolder of ``sorryhyun/anima-tagger``;
+# ``v3/`` keeps the previous 3-class checkpoint, the repo root the legacy v2
 # files.
-_HF_SUBFOLDER = "v3"
-_DEFAULT_TAGGER_DIR = "models/captioners/anima-tagger-v3-refit"
+_HF_SUBFOLDER = "v5"
+_DEFAULT_TAGGER_DIR = "models/captioners/anima-tagger-v5"
 
 # Default vision-encoder checkpoints (auto-fetched if absent). Listed as the
 # first dropdown row so a fresh install resolves to the auto-download target
