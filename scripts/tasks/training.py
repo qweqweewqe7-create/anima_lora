@@ -8,6 +8,7 @@ wired up under ``make exp-*`` in ``tasks.py``.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -828,6 +829,237 @@ def _subject_edit_preprocess(adapter: str, cfg: dict, base: str, extra) -> None:
     )
 
 
+def _phash_edit_preprocess(adapter: str, cfg: dict, base: str, extra) -> None:
+    """Resize + VAE/TE caching for the phash-mined edit-pair pool.
+
+    Differs from :func:`_near_twins_preprocess` in what gets *encoded*. There a
+    pair tree is staged per pair, so a member that joins several pairs (and both
+    directions of each) is resized and VAE-encoded once per view — 7,424 encodes
+    over 2,722 distinct images at the shipped phash_edit knobs. Here the miner
+    stages a deduplicated ``pool/`` instead, and the pair views are symlinks:
+
+      1. purge the derived pair links (so the VAE pass only ever sees the pool)
+      2. resize ``pool/`` → ``resized/``            [distinct images]
+      3. VAE-cache ``resized/`` → ``cache/``        [distinct images]
+      4. link the pair views: ``resized/{pair}_no_tags.<ext>`` + its delta
+         caption, the target latent under the pair stem, the cond latent under
+         the same stem in ``cond/``
+      5. TE-encode ``--path_pattern '*_no_tags.*'`` [delta captions only]
+
+    A latent depends only on the image, so step 3 is the whole saving; the only
+    pair-specific artifact is the caption, which step 5 encodes exactly once per
+    directed pair. Step 1 matters on re-runs: a stale link left in ``resized/``
+    would otherwise be handed to the VAE pass as if it were a pool member.
+    """
+    pp = cfg.get("preprocess") or {}
+    pool = pp.get("pool_dir", f"{base}/pool")
+    resized = pp.get("resized_dir", f"{base}/resized")
+    cache = pp.get("cache_dir", f"{base}/cache")
+    cond = pp.get("cond_dir", f"{base}/cond")
+    manifest = ROOT / pp.get("manifest", f"{base}/pairs.json")
+    recursive = ["--recursive"] if pp.get("recursive", True) else []
+
+    if not manifest.is_file():
+        raise SystemExit(
+            f"{manifest} not found — run `make easycontrol-staging "
+            f"EASYADAPTER={adapter}` first to mine the pair pool."
+        )
+
+    target_res = pp.get("target_res")
+    if target_res is None:
+        from ._common import _path_overrides
+
+        target_res = _path_overrides().get("target_res", [1024])
+    if not isinstance(target_res, (list, tuple)):
+        target_res = [target_res]
+    target_res_flag = (
+        ["--target_res", *[str(e) for e in target_res]] if target_res else []
+    )
+
+    _phash_edit_purge_links(resized, cond)
+    run(
+        [
+            PY,
+            "scripts/preprocess/resize_images.py",
+            "--src",
+            pool,
+            "--dst",
+            resized,
+            "--min_pixels",
+            str(pp.get("min_pixels", 0)),
+            *target_res_flag,
+            *recursive,
+        ]
+    )
+    run(
+        [
+            PY,
+            "scripts/preprocess/cache_latents.py",
+            "--dir",
+            resized,
+            "--cache_dir",
+            cache,
+            "--vae",
+            pp.get("vae", "models/vae/qwen_image_vae.safetensors"),
+            "--batch_size",
+            str(pp.get("batch_size", 4)),
+            "--chunk_size",
+            str(pp.get("chunk_size", 64)),
+            *recursive,
+        ]
+    )
+    pe_encoder = pp.get("pe_encoder")
+    if pe_encoder:
+        run(
+            [
+                PY,
+                "scripts/preprocess/cache_pe_encoder.py",
+                "--dir",
+                resized,
+                "--cache_dir",
+                cache,
+                "--encoder",
+                str(pe_encoder),
+                *recursive,
+            ]
+        )
+    _phash_edit_build_links(manifest, resized, cache, cond)
+    run(
+        [
+            PY,
+            "scripts/preprocess/cache_text_embeddings.py",
+            "--dir",
+            resized,
+            "--cache_dir",
+            cache,
+            "--path_pattern",
+            "*_no_tags.*",  # pool members are never targets and carry no caption
+            "--qwen3",
+            pp.get("qwen3", "models/text_encoders/qwen_3_06b_base.safetensors"),
+            "--dit",
+            pp.get("dit", "models/diffusion_models/anima-base-v1.0.safetensors"),
+            "--caption_shuffle_variants",
+            str(pp.get("caption_shuffle_variants", 4)),
+            "--caption_tag_dropout_rate",
+            str(pp.get("caption_tag_dropout_rate", 0.0)),
+            *recursive,
+        ]
+    )
+
+
+def _phash_edit_purge_links(resized: str, cond: str) -> None:
+    """Drop every derived pair view, leaving the resized pool itself intact."""
+    resized_dir, cond_dir = ROOT / resized, ROOT / cond
+    if cond_dir.exists():
+        shutil.rmtree(cond_dir)
+    n = 0
+    if resized_dir.is_dir():
+        for p in resized_dir.rglob("*_no_tags.*"):
+            p.unlink()
+            n += 1
+    if n:
+        print(f"[phash_edit] purged {n} stale pair views from {resized}")
+
+
+def _phash_edit_build_links(
+    manifest: Path, resized: str, cache: str, cond: str
+) -> None:
+    """Materialize each directed pair as symlinks over the encoded pool.
+
+    Per pair: the target's resized image and latent under the ``{pair}_no_tags``
+    stem, its delta caption as a real ``.txt``, and the cond's latent filed under
+    the *target* stem inside ``cond/`` — at the cond's own bucket, which under
+    free-fit need not match the target's (cond≠target shapes are supported;
+    ``cond_diff_loss`` self-skips on a mismatch).
+    """
+    resized_dir, cache_dir, cond_dir = ROOT / resized, ROOT / cache, ROOT / cond
+    pairs = json.loads(manifest.read_text(encoding="utf-8"))["pairs"]
+
+    def _latents(key: str) -> list[Path]:
+        d = cache_dir / Path(key).parent
+        stem = Path(key).name
+        return sorted(d.glob(f"{stem}_*_anima.npz"))
+
+    # Image extensions only: resized/ also holds the .txt captions this step
+    # writes, and a bare "{stem}.*" glob would happily return one of those.
+    _IMG_EXTS = (".png", ".webp", ".jpg", ".jpeg")
+
+    def _image(key: str) -> Path | None:
+        d = resized_dir / Path(key).parent
+        if not d.is_dir():
+            return None
+        stem = Path(key).name
+        return next((p for e in _IMG_EXTS if (p := d / f"{stem}{e}").exists()), None)
+
+    linked = skipped = 0
+    for p in pairs:
+        tgt_img, tgt_npz, cond_npz = (
+            _image(p["target"]),
+            _latents(p["target"]),
+            _latents(p["cond"]),
+        )
+        if tgt_img is None or not tgt_npz or not cond_npz:
+            missing = (
+                "target image"
+                if tgt_img is None
+                else "target latent"
+                if not tgt_npz
+                else "cond latent"
+            )
+            print(
+                f"  [phash_edit] {p['pair_id']}: no {missing} — skipping pair.",
+                file=sys.stderr,
+            )
+            skipped += 1
+            continue
+        stem = f"{p['pair_id']}_no_tags"
+        img_link = resized_dir / p["artist"] / f"{stem}{tgt_img.suffix}"
+        img_link.parent.mkdir(parents=True, exist_ok=True)
+        img_link.symlink_to(tgt_img.resolve())
+        img_link.with_suffix(".txt").write_text(p["delta_caption"], encoding="utf-8")
+
+        bucket = re.search(r"_(\d+x\d+)_anima\.npz$", tgt_npz[0].name)[1]
+        link = cache_dir / p["artist"] / f"{stem}_{bucket}_anima.npz"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if not link.exists():
+            link.symlink_to(tgt_npz[0].resolve())
+
+        cond_bucket = re.search(r"_(\d+x\d+)_anima\.npz$", cond_npz[0].name)[1]
+        clink = cond_dir / p["artist"] / f"{stem}_{cond_bucket}_anima.npz"
+        clink.parent.mkdir(parents=True, exist_ok=True)
+        clink.symlink_to(cond_npz[0].resolve())
+        linked += 1
+    print(
+        f"[phash_edit] linked {linked} pair views ({resized}/…_no_tags + {cond})"
+        + (f" ({skipped} skipped)" if skipped else "")
+    )
+
+
+def _phash_edit_stage(adapter: str, cfg: dict, base: str, extra) -> None:
+    """Mine aligned instruction-edit pairs out of the raw crawl pool by phash.
+
+    Pairs come from ``$CAPTION_CORPUS_DIR/retrieved`` via gelcrawl's cached
+    256-bit ``imagehash.phash`` (Hamming threshold, CPU-only, seconds); each
+    pair's caption is the tag delta between its members, i.e. an edit
+    instruction. Emits the ``_tags``/``_no_tags`` tree so the near_twins
+    preprocess pass applies verbatim. The tool self-reads its ``[staging]``
+    table and rewrites the blueprint tail.
+    """
+    cfg_path = str(_easy_cfg_path(adapter))
+    run(
+        [
+            PY,
+            "-m",
+            "easycontrol_adapters.tools.phash_edit_pairs",
+            "--config",
+            cfg_path,
+            "--config-out",
+            cfg_path,
+            *extra,
+        ]
+    )
+
+
 def _twin_edit_stage(adapter: str, cfg: dict, base: str, extra) -> None:
     """Stage the aligned-pair instruction-edit tree from the Phase-0 census
     manifest (direction-doubled delta-caption pairs + empty-instruction
@@ -865,7 +1097,14 @@ _EASY_ADAPTERS = {
     },
     # Aligned-pair instruction editor: bespoke staging over the census manifest,
     # then the near_twins preprocess pass verbatim (same _tags/_no_tags shape).
+    # NB the twin_edit tool + descriptor were removed with the directedit_ec
+    # archive (2026-08-19); this entry is dead until they are restored.
     "twin_edit": {"stage": _twin_edit_stage, "preprocess": _near_twins_preprocess},
+    # phash-mined aligned instruction editor: the twin_edit objective on pairs
+    # found by perceptual hash over the RAW crawl pool instead of by tag delta
+    # over the curated one. Bespoke preprocess: the miner stages a deduplicated
+    # pool and the pair views are symlinks, so each image is encoded ONCE.
+    "phash_edit": {"stage": _phash_edit_stage, "preprocess": _phash_edit_preprocess},
 }
 
 
