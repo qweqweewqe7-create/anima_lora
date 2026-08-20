@@ -27,6 +27,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
+from library.captioning import position_clauses as pc
 from library.captioning import tag_groups as tg
 from library.captioning import tag_rules as tr
 from library.captioning.anima_tagger import (
@@ -56,19 +57,22 @@ def find_caption_files(roots: Sequence[Path]) -> List[Path]:
     """Discover all ``.txt`` caption files under the given roots.
 
     Skips dotfiles and the ``tag_cache``/``hash_cache`` JSON sidecars.
-    Returns a deduplicated list (by absolute path); a stem appearing under
-    multiple roots is *not* deduped here — that's the caller's job (see
-    :func:`build_caption_index`).
+    Returns files in **root order** (sorted within each root for determinism);
+    a stem appearing under multiple roots is *not* deduped here — that's the
+    caller's job (see :func:`build_caption_index`, where earlier wins).
     """
     out: List[Path] = []
     for root in roots:
         if not root.exists():
             logger.warning("caption root %s does not exist — skipping", root)
             continue
-        for p in root.rglob("*.txt"):
-            if any(part.startswith(".") for part in p.parts):
-                continue
-            out.append(p)
+        out.extend(
+            sorted(
+                p
+                for p in root.rglob("*.txt")
+                if not any(part.startswith(".") for part in p.parts)
+            )
+        )
     return out
 
 
@@ -78,14 +82,18 @@ def build_caption_index(
 ) -> Dict[str, Tuple[Path, Optional[Path], List[str]]]:
     """Map ``stem → (caption_path, image_path | None, parsed_tags)``.
 
-    When a stem appears in multiple caption sources, the *first* path wins
-    (caller controls precedence via root order). Stems whose sibling image
+    When a stem appears in multiple caption sources, the *first* path wins —
+    ``paths`` is consumed in the order given, so the caller controls precedence
+    via root order (see :func:`find_caption_files`). Stems whose sibling image
     file can't be found are still indexed (caption-only entries) so the
     coverage scan reflects what's *captioned*, not what's *trainable*; the
     image-required filter happens at manifest-build time.
+
+    Position clauses are dropped: only the flat tag bag feeds tag training,
+    so clause-bound tags (``On the left, …``) never enter the label space.
     """
     index: Dict[str, Tuple[Path, Optional[Path], List[str]]] = {}
-    for path in sorted(paths):
+    for path in paths:
         stem = path.stem
         if stem in index:
             continue
@@ -94,6 +102,9 @@ def build_caption_index(
         except UnicodeDecodeError:
             logger.warning("non-utf8 caption %s — skipped", path)
             continue
+        parsed = pc.parse_caption(content.strip())
+        if parsed.has_clauses:
+            content = ", ".join(parsed.flat_tags)
         tags = tr.parse_caption(content, rules)
         if not tags:
             continue

@@ -128,11 +128,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--caption_roots",
         nargs="+",
-        default=[d for d in (raw_default, curated_default, "image_dataset") if d],
+        default=[d for d in (curated_default, raw_default, "image_dataset") if d],
         help="Directories to scan recursively for *.txt caption files. "
-        "First-match-wins by stem when a duplicate appears across roots. "
-        "Defaults: $CAPTION_CORPUS_DIR/retrieved + "
-        "$CAPTION_CORPUS_DIR/selected + image_dataset/.",
+        "First-match-wins by stem when a duplicate appears across roots, so "
+        "list curated roots before raw ones. Defaults: "
+        "$CAPTION_CORPUS_DIR/selected + $CAPTION_CORPUS_DIR/retrieved + "
+        "image_dataset/.",
     )
     p.add_argument(
         "--tag_cache",
