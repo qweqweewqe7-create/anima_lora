@@ -1,3 +1,4 @@
+import subprocess
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
@@ -167,3 +168,28 @@ def test_windows_backend_dependencies_are_isolated():
     assert "cuda-windows" in project["tool"]["uv"]["default-groups"]
     extras = project["project"]["optional-dependencies"]
     assert extras["cuda-windows"] == [] and extras["rocm-windows"] == []
+
+
+def test_flagless_sync_resolves_cuda_torch_on_windows():
+    """GH #92 lock-level guard: the default (no-flag) resolution must give every
+    platform except macOS the +cu132 torch — v1.16.1's lock resolved flagless
+    win32 syncs to the ROCm torch, silently demoting NVIDIA users to CPU."""
+    result = subprocess.run(
+        ["uv", "export", "--frozen", "--no-hashes", "--no-emit-project"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    torch_lines = [
+        line for line in result.stdout.splitlines() if line.startswith("torch==")
+    ]
+    assert torch_lines, "no torch pin in the default export"
+    non_darwin = [line for line in torch_lines if "== 'darwin'" not in line]
+    assert non_darwin and all("+cu132" in line for line in non_darwin), torch_lines
+    flash_win = [
+        line
+        for line in result.stdout.splitlines()
+        if line.startswith("flash-attn") and "win_amd64" in line
+    ]
+    assert flash_win, "the default export must ship the Windows flash-attn wheel"
