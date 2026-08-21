@@ -5,11 +5,19 @@ exactly the format Anima's training-time T5 saw. Used as the case-1 ψ_src
 provider for DirectEdit, and as a standalone captioner for LoRA dataset
 prep / prompt scaffolding via the `comfyui-anima-tagger` ComfyUI node.
 
-Status: **shipped**. A trained checkpoint lives at
-`models/captioners/anima-tagger-v1/` (4,937-tag vocab, residual macro-F1
-~0.192 on val with softmax groups argmax-only). End-to-end PE-LoRA training
-path, typed tag-group routing, and a curator-side role-marker scanner are
-all wired.
+Status: **shipped**. The live checkpoint is **v5** —
+`models/captioners/anima-tagger-v5/` (2,532-tag vocab, 4-class rating
+`safe/sensitive/nsfw/explicit`, val macro-F1 ~0.236 / spatial-AP ~0.275),
+auto-fetched from the `v5/` subfolder of
+[`sorryhyun/anima-tagger`](https://huggingface.co/sorryhyun/anima-tagger) when
+missing. `DEFAULT_TAGGER_DIR` / `TAGGER_HF_SUBFOLDER` in
+`library/captioning/anima_tagger.py` are the single source of truth for both;
+the ComfyUI node and `make download-tagger` track them.
+
+> **Doc drift.** Sections below still describe the pre-v3 single-encoder +
+> PE-LoRA stack, which no longer loads — the tagger is dual-encoder
+> (PE-Core + PE-Spatial) and hard-routed. Treat the training-flag prose as
+> historical; the config/paths above are current.
 
 ## Why this exists
 
@@ -175,10 +183,10 @@ python -m scripts.anima_tagger.cli --mode scan_role_markers --out_yaml stub.yaml
 ```
 
 All artifacts go to `--out_dir` (default
-`models/captioners/anima-tagger-v1/`):
+`models/captioners/anima-tagger-v5/`):
 
 ```
-models/captioners/anima-tagger-v1/
+models/captioners/anima-tagger-v5/
 ├── vocab.json              # tag list + category + median emit pos + groups
 ├── rules.yaml              # snapshot of tag_rules.yaml at vocab-build time
 ├── groups.yaml             # snapshot of tag_groups.yaml (optional)
@@ -281,7 +289,7 @@ in the checkpoint dir are mutated.
 from library.captioning import AnimaTagger
 from PIL import Image
 
-tagger = AnimaTagger("models/captioners/anima-tagger-v1")
+tagger = AnimaTagger("models/captioners/anima-tagger-v5")
 caption = tagger.predict_caption(Image.open("foo.png"))
 # → "sensitive, 1girl, hatsune miku, vocaloid, @some_artist, blue eyes, ..."
 
@@ -333,7 +341,7 @@ Anima Tagger on the source image to seed `--prompt_src`:
 make exp-test-directedit PROMPT='glasses'
 ```
 
-Requires `models/captioners/anima-tagger-v1/model.safetensors`. The
+Requires `models/captioners/anima-tagger-v5/model.safetensors`. The
 driver exits with a clear error if the checkpoint is missing — train it
 via `python -m scripts.anima_tagger.cli`.
 

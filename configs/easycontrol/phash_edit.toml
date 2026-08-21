@@ -27,6 +27,14 @@ instruction_format = "prefix"   # "prefix": `glasses, -hat`  |  "word": `add gla
 removal_prefix = "-"
 ar_max_log2 = 0.0           # off: same artist = same canvas, so AR divergence is ~0 and gates nothing
 
+# --- synthetic arms, sized as a share of the FINAL directed set --------------
+# Both ride the same pool: the target latent is one the edit arm already
+# encoded, so an arm record costs at most one extra *cond* encode.
+identity_frac = 0.02        # no-op records: cond IS the target latent, caption empty
+colorize_frac = 0.20        # cond = mangafied B&W of the target (XDoG + screentone)
+colorize_dropout = 0.8      # tag dropout on the color-tag caption form
+colorize_variants = 4       # per-variant coin flip: `-monochrome, -greyscale` vs color tags
+
 [preprocess]
 # The miner stages a DEDUPLICATED pool/, not a per-pair tree: resize + VAE run
 # over the distinct images once, then every pair view (resized image, target
@@ -49,7 +57,7 @@ caption_tag_dropout_rate = 0.0
 
 [training]
 network_dim = 32
-network_alpha = 32
+network_alpha = 128
 target_res = [896, 1024]
 
 network_args = [
@@ -61,29 +69,34 @@ network_args = [
 output_name = "anima_easycontrol_phash_edit"
 
 learning_rate = 2e-5
-max_train_epochs = 12
-save_every_n_epochs = 3
-checkpointing_epochs = 3
+max_train_epochs = 4
+save_every_n_epochs = 4
+checkpointing_epochs = 4
 
 # THE knob for an instruction editor: the prompt IS the task, so it must never be
 # dropped. (near_twins/sanitize sets 1.0 because there the task is a fixed prior.)
 caption_dropout_rate = 0.0
 easycontrol_drop_p = 0.05
 easycontrol_cond_noise_max = 0.0
-cond_diff_loss = true
+# Off since the colorize arm landed: gray->color differs *everywhere*, so the
+# diff map degenerates to ~uniform there (the flag's own help says so) while the
+# identity arm's map is exactly uniform by construction. Reweighting only the
+# edit arm out of three would bias the mix rather than focus it.
+cond_diff_loss = false
 
 # 16GB recipe for descriptor runs at 896/1024. 0.7 alone OOMs at step 0; 0.7 +
 # aggressive survives ~900 steps then OOMs on the first worst-case bucket. 0.3
 # costs ~5% step time and holds. Watch a new EC arm through a FULL first epoch.
-activation_memory_budget = 0.3
-partitioner_aggressive_recomputation = true
+activation_memory_budget = 0.35
+# partitioner_aggressive_recomputation = true
 blocks_to_swap = 0
 
-# NOTE: no identity no-op pairs are emitted (the miner floors tag delta at 1).
-# The twin_edit arm mixed in empty-instruction identity pairs and taught
-# "aligned cond + short prompt -> exact copy", which swallowed small edits and
-# hardened the inversion copy-lock. If they are ever reintroduced, use a
-# non-empty no-op token rather than an empty instruction.
+# NOTE on the identity arm: these ARE the empty-instruction no-op pairs the
+# twin_edit arm failed on ("aligned cond + short prompt -> exact copy", which
+# swallowed small edits and hardened the inversion copy-lock). Held to 2% here,
+# against ~14% of the edit arm being genuinely terse (delta <= 3, 542 records) so
+# "short prompt" is not by itself a copy signal. If small edits start getting
+# swallowed, this arm is the first suspect — drop identity_frac to 0 and re-mine.
 
 # === generated dataset blueprint (rewritten by the miner; do not edit below) ===
 # phash-mined aligned edit pairs wired as an EasyControl *instruction-edit*

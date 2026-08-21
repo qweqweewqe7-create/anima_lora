@@ -69,6 +69,7 @@ import hashlib
 import json
 import math
 import os
+import random
 import re
 import shutil
 import sys
@@ -397,6 +398,7 @@ def build_pairs(members: list[Member], args) -> tuple[list[dict], Counter]:
                 {
                     "pair_id": f"{cond.stem}__{target.stem}",
                     "artist": target.artist,
+                    "kind": "edit",
                     "cond": cond.key,
                     "target": target.key,
                     "cond_image": str(cond.image),
@@ -414,6 +416,165 @@ def build_pairs(members: list[Member], args) -> tuple[list[dict], Counter]:
             print(f"[phash_edit] --limit {args.limit} reached — stopping early.")
             break
     return accepted, drop
+
+
+# ---------------------------------------------------------------- synthetic arms
+
+
+MONO_TAGS = ("monochrome", "greyscale")
+
+
+def _rng_for(key: str) -> "random.Random":
+    """Deterministic per-record RNG — the mine is reproducible across re-runs."""
+    return random.Random(int(hashlib.md5(key.encode()).hexdigest()[:8], 16))
+
+
+def _spread(keys: list[str], n: int) -> list[str]:
+    """``n`` keys spread round-robin over their ``<artist>/`` prefix.
+
+    A flat sample would inherit the edit arm's artist skew (one artist owns 322
+    of the 3,712 edit pairs); round-robin keeps the synthetic arms broad.
+    """
+    by_artist: dict[str, list[str]] = {}
+    for k in sorted(keys):
+        by_artist.setdefault(k.split("/")[0], []).append(k)
+    out: list[str] = []
+    depth = 0
+    while len(out) < n:
+        row = [v[depth] for v in by_artist.values() if len(v) > depth]
+        if not row:
+            break
+        out.extend(row[: n - len(out)])
+        depth += 1
+    return out
+
+
+def build_identity_pairs(
+    edit_pairs: list[dict], by_key: dict[str, "Member"], n: int
+) -> list[dict]:
+    """No-op records: cond IS the target (same latent), caption empty.
+
+    The condition stream and the denoising target are literally the same cached
+    latent, so the sample teaches "empty instruction → reproduce the cond".
+    Deliberately a *small* share: the twin_edit arm showed that empty-instruction
+    identity pairs, given enough mass, harden into a copy-lock that swallows
+    small edits (see the note in configs/easycontrol/phash_edit.toml).
+    """
+    if n <= 0:
+        return []
+    keys = _spread(sorted({p["target"] for p in edit_pairs}), n)
+    out = []
+    for key in keys:
+        m = by_key[key]
+        out.append(
+            {
+                "pair_id": f"{m.stem}__self",
+                "artist": m.artist,
+                "kind": "identity",
+                "cond": key,
+                "target": key,
+                "cond_image": str(m.image),
+                "target_image": str(m.image),
+                "phash": 0,
+                "tag_delta": 0,
+                "n_additions": 0,
+                "n_removals": 0,
+                "same_artist": True,
+                "delta_caption": "",
+                "cond_caption": ", ".join(m.tags),
+                "variants": [""],
+            }
+        )
+    return out
+
+
+def build_colorize_pairs(
+    edit_pairs: list[dict],
+    by_key: dict[str, "Member"],
+    n: int,
+    args,
+    exclude: frozenset[str] = frozenset(),
+) -> list[dict]:
+    """Synthetic colorize records: cond = mangafied B&W of the target.
+
+    The condition image does not exist yet — ``make easycontrol-preprocess``
+    mangafies (XDoG + screentone, ``easycontrol_adapters/colorization``) each
+    selected *resized* target into ``mono/`` and VAE-encodes it into
+    ``mono_cache/``; the link step files that latent as the pair's cond. The
+    target latent is the pool latent the edit arm already encoded, so the arm
+    costs one extra cond encode per record and nothing on the target side.
+
+    Captions are written as an explicit ``{stem}.variants.txt`` sidecar (the TE
+    step treats it as the source of truth) with one of two forms drawn per
+    variant:
+
+    * ``-monochrome, -greyscale`` — the task marker, expressed in the same delta
+      grammar as the edit arm and in real corpus vocabulary (636/570 occurrences
+      in the crawl pool), so it composes with ordinary edit instructions.
+    * the target's **color tags only** (``filter_to_colors``) at
+      ``--colorize_dropout`` tag dropout, floored at one surviving tag — the
+      steering form. Images with no color tag at all fall back to the marker.
+
+    Copyright / character / comic tags are deliberately absent: they are shared
+    between cond and target, so the delta grammar cancels them by construction
+    and identity comes from the cond stream (unlike the standalone colorize
+    task, whose lineart cond cannot carry series identity).
+
+    One direction only — the reverse (decolorize) would need the mangafied view
+    resized as a denoising *target*, which the pool layout does not stage.
+    """
+    if n <= 0:
+        return []
+    from easycontrol_adapters.colorization.color_caption import filter_to_colors
+
+    mono = set(MONO_TAGS)
+    # already B&W: nothing to colorize, and mangafying it is close to a no-op.
+    skip = {k for k, m in by_key.items() if mono & set(m.tags)} | exclude
+    pool = sorted(
+        ({p["target"] for p in edit_pairs} | {p["cond"] for p in edit_pairs}) - skip
+    )
+    keys = _spread([k for k in pool if k in by_key], n)
+    out = []
+    for key in keys:
+        m = by_key[key]
+        rng = _rng_for(f"colorize/{key}")
+        colors = [
+            t for t in filter_to_colors(", ".join(m.tags)).split(",") if t.strip()
+        ]
+        variants = []
+        for _ in range(max(1, args.colorize_variants)):
+            if not colors or rng.random() < 0.5:
+                tags = [f"{args.removal_prefix}{t}" for t in MONO_TAGS]
+            else:
+                tags = [
+                    t.strip() for t in colors if rng.random() >= args.colorize_dropout
+                ]
+                # A 0.8 draw over 2-4 color tags empties out ~half the time; keep
+                # one so the steering form always carries a hue to steer with.
+                if not tags:
+                    tags = [rng.choice(colors).strip()]
+            rng.shuffle(tags)
+            variants.append(", ".join(tags))
+        out.append(
+            {
+                "pair_id": f"{m.stem}__colorize",
+                "artist": m.artist,
+                "kind": "colorize",
+                "cond": key,  # same image; the cond *latent* comes from mono_cache/
+                "target": key,
+                "cond_image": str(m.image),
+                "target_image": str(m.image),
+                "phash": 0,
+                "tag_delta": len(MONO_TAGS),
+                "n_additions": 0,
+                "n_removals": len(MONO_TAGS),
+                "same_artist": True,
+                "delta_caption": variants[0],
+                "cond_caption": ", ".join(m.tags),
+                "variants": variants,
+            }
+        )
+    return out
 
 
 # ---------------------------------------------------------------------------- export
@@ -623,6 +784,35 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="prefix marking a removal tag in the 'prefix' format",
     )
     p.add_argument(
+        "--identity_frac",
+        type=float,
+        default=0.0,
+        help="share of the final set to emit as no-op identity records (cond IS "
+        "the target latent, caption empty). Keep small: enough mass here hardens "
+        "into a copy-lock that swallows small edits (the twin_edit failure)",
+    )
+    p.add_argument(
+        "--colorize_frac",
+        type=float,
+        default=0.0,
+        help="share of the final set to emit as synthetic colorize records "
+        "(cond = mangafied B&W of the target, produced by the preprocess step)",
+    )
+    p.add_argument(
+        "--colorize_dropout",
+        type=float,
+        default=0.8,
+        help="tag-dropout applied to the color-tag caption form of a colorize "
+        "record (the other form is the bare `-monochrome, -greyscale` marker)",
+    )
+    p.add_argument(
+        "--colorize_variants",
+        type=int,
+        default=4,
+        help="caption variants written into each colorize record's "
+        "{stem}.variants.txt; each independently draws marker-vs-color-tags",
+    )
+    p.add_argument(
         "--limit", type=int, default=0, help="stop after N directed pairs (smoke runs)"
     )
     p.add_argument(
@@ -663,10 +853,38 @@ def main() -> None:
             "[phash_edit] no pair survived the gates — loosen --phash_max."
         )
 
-    n_unordered = len({tuple(sorted((p["cond"], p["target"]))) for p in pairs})
+    # Synthetic arms sized as a share of the FINAL set, so the requested
+    # fractions hold after they are appended (edit arm = the remainder).
+    frac = args.identity_frac + args.colorize_frac
+    if frac >= 1.0:
+        raise SystemExit(
+            f"--identity_frac + --colorize_frac = {frac} — must be < 1 "
+            "(the edit arm is the remainder)."
+        )
+    if frac > 0:
+        by_key = {m.key: m for m in members}
+        total = len(pairs) / (1.0 - frac)
+        ident = build_identity_pairs(pairs, by_key, round(total * args.identity_frac))
+        # Disjoint from the identity arm: an image serving as both would be
+        # over-represented relative to the round-robin spread.
+        color = build_colorize_pairs(
+            pairs,
+            by_key,
+            round(total * args.colorize_frac),
+            args,
+            frozenset(p["target"] for p in ident),
+        )
+        print(
+            f"[phash_edit] synthetic arms: {len(ident)} identity + {len(color)} "
+            f"colorize on top of {len(pairs)} edit records"
+        )
+        pairs = pairs + ident + color
+
+    edits = [p for p in pairs if p.get("kind", "edit") == "edit"]
+    n_unordered = len({tuple(sorted((p["cond"], p["target"]))) for p in edits})
     images = {p["cond"] for p in pairs} | {p["target"] for p in pairs}
-    deltas = sorted(p["tag_delta"] for p in pairs)
-    phashes = sorted(p["phash"] for p in pairs)
+    deltas = sorted(p["tag_delta"] for p in edits)
+    phashes = sorted(p["phash"] for p in edits)
     print(
         f"[phash_edit] accepted {n_unordered:,} pairs → {len(pairs):,} directed examples\n"
         f"             {len(images):,} distinct images to resize + VAE-encode; "
@@ -702,6 +920,10 @@ def main() -> None:
             "max_pairs_per_artist": args.max_pairs_per_artist,
             "both_directions": args.both_directions,
             "instruction_format": args.instruction_format,
+            "identity_frac": args.identity_frac,
+            "colorize_frac": args.colorize_frac,
+            "colorize_dropout": args.colorize_dropout,
+            "n_by_kind": dict(Counter(p.get("kind", "edit") for p in pairs)),
             "n_members": len(members),
             "n_pairs_unordered": n_unordered,
             "n_directed": len(pairs),

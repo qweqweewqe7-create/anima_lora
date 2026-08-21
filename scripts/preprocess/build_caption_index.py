@@ -50,7 +50,7 @@ from library.io.cache import caption_key
 from library.io.walk import safe_walk
 
 
-DEFAULT_VOCAB = "models/captioners/anima-tagger-v2/vocab.json"
+DEFAULT_VOCAB = "models/captioners/anima-tagger-v5/vocab.json"
 DEFAULT_OUT = "post_image_dataset/captions/caption_index.json"
 # Artist is detected by the `@` prefix (superset of the vocab artist list);
 # character/copyright/count are classified by vocab membership.

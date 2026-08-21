@@ -14,6 +14,7 @@ import re
 import shutil
 import sys
 import tomllib
+from collections import Counter
 from pathlib import Path
 
 import toml
@@ -856,6 +857,11 @@ def _phash_edit_preprocess(adapter: str, cfg: dict, base: str, extra) -> None:
     resized = pp.get("resized_dir", f"{base}/resized")
     cache = pp.get("cache_dir", f"{base}/cache")
     cond = pp.get("cond_dir", f"{base}/cond")
+    # Synthetic colorize arm: selected targets symlinked into mono_src/, mangafied
+    # into mono/, VAE-encoded into mono_cache/ — the cond side of those records.
+    mono_src = pp.get("mono_src_dir", f"{base}/mono_src")
+    mono = pp.get("mono_dir", f"{base}/mono")
+    mono_cache = pp.get("mono_cache_dir", f"{base}/mono_cache")
     manifest = ROOT / pp.get("manifest", f"{base}/pairs.json")
     recursive = ["--recursive"] if pp.get("recursive", True) else []
 
@@ -876,7 +882,7 @@ def _phash_edit_preprocess(adapter: str, cfg: dict, base: str, extra) -> None:
         ["--target_res", *[str(e) for e in target_res]] if target_res else []
     )
 
-    _phash_edit_purge_links(resized, cond)
+    _phash_edit_purge_links(resized, cond, mono_src, mono, mono_cache)
     run(
         [
             PY,
@@ -923,7 +929,8 @@ def _phash_edit_preprocess(adapter: str, cfg: dict, base: str, extra) -> None:
                 *recursive,
             ]
         )
-    _phash_edit_build_links(manifest, resized, cache, cond)
+    _phash_edit_colorize_cond(manifest, resized, mono_src, mono, mono_cache, pp)
+    _phash_edit_build_links(manifest, resized, cache, cond, mono_cache)
     run(
         [
             PY,
@@ -947,11 +954,18 @@ def _phash_edit_preprocess(adapter: str, cfg: dict, base: str, extra) -> None:
     )
 
 
-def _phash_edit_purge_links(resized: str, cond: str) -> None:
-    """Drop every derived pair view, leaving the resized pool itself intact."""
+def _phash_edit_purge_links(resized: str, cond: str, *derived: str) -> None:
+    """Drop every derived pair view, leaving the resized pool itself intact.
+
+    ``derived`` are whole trees rebuilt from scratch each run (the mangafied
+    colorize cond staging + its latent cache): the colorize selection moves when
+    the mine does, so a surviving tree would silently keep encoding images no
+    record references any more.
+    """
     resized_dir, cond_dir = ROOT / resized, ROOT / cond
-    if cond_dir.exists():
-        shutil.rmtree(cond_dir)
+    for d in (cond_dir, *(ROOT / x for x in derived)):
+        if d.exists():
+            shutil.rmtree(d)
     n = 0
     if resized_dir.is_dir():
         for p in resized_dir.rglob("*_no_tags.*"):
@@ -961,8 +975,93 @@ def _phash_edit_purge_links(resized: str, cond: str) -> None:
         print(f"[phash_edit] purged {n} stale pair views from {resized}")
 
 
+_PHASH_IMG_EXTS = (".png", ".webp", ".jpg", ".jpeg")
+
+
+def _phash_edit_colorize_cond(
+    manifest: Path, resized: str, mono_src: str, mono: str, mono_cache: str, pp: dict
+) -> int:
+    """Synthesize + encode the cond side of the ``kind="colorize"`` records.
+
+    Those records have no mined partner: the condition is a **mangafied B&W**
+    view (XDoG + screentone, ``easycontrol_adapters/colorization/prep.py``) of
+    the target itself. Mangafying the already-bucketed ``resized/`` image keeps
+    the cond at the target's exact shape for free.
+
+    Only the selected targets are staged — a symlink tree in ``mono_src/`` — so
+    the extra VAE work is one encode per colorize record, not one per pool
+    member. Must run **before** :func:`_phash_edit_build_links`: after that the
+    pool dir also holds the ``_no_tags`` pair views, which are not sources.
+    """
+    pairs = json.loads(manifest.read_text(encoding="utf-8"))["pairs"]
+    keys = sorted({p["target"] for p in pairs if p.get("kind") == "colorize"})
+    if not keys:
+        return 0
+
+    resized_dir, src_dir = ROOT / resized, ROOT / mono_src
+    staged = 0
+    for key in keys:
+        d = resized_dir / Path(key).parent
+        stem = Path(key).name
+        img = next(
+            (q for e in _PHASH_IMG_EXTS if (q := d / f"{stem}{e}").exists()), None
+        )
+        if img is None:
+            print(
+                f"  [phash_edit] colorize {key}: no resized image — skipping.",
+                file=sys.stderr,
+            )
+            continue
+        link = src_dir / Path(key).parent / img.name
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if not link.exists():
+            link.symlink_to(img.resolve())
+        staged += 1
+    if not staged:
+        return 0
+    print(f"[phash_edit] colorize: staged {staged} targets for mangafy → {mono}")
+
+    run(
+        [
+            PY,
+            "easycontrol_adapters/colorization/prep.py",
+            "--src",
+            mono_src,
+            "--staging",
+            mono,
+            "--skip_encode",
+            "--skip_target",
+            "--skip_text",
+            # No speech-bubble masks exist for the crawl pool, so there is
+            # nothing to paste back; screen the whole page.
+            "--skip_text_mask",
+            "--engine",
+            str(pp.get("mangafy_engine", "gpu")),
+            "--recursive",
+        ]
+    )
+    run(
+        [
+            PY,
+            "scripts/preprocess/cache_latents.py",
+            "--dir",
+            mono,
+            "--cache_dir",
+            mono_cache,
+            "--vae",
+            pp.get("vae", "models/vae/qwen_image_vae.safetensors"),
+            "--batch_size",
+            str(pp.get("batch_size", 4)),
+            "--chunk_size",
+            str(pp.get("chunk_size", 64)),
+            "--recursive",
+        ]
+    )
+    return staged
+
+
 def _phash_edit_build_links(
-    manifest: Path, resized: str, cache: str, cond: str
+    manifest: Path, resized: str, cache: str, cond: str, mono_cache: str = ""
 ) -> None:
     """Materialize each directed pair as symlinks over the encoded pool.
 
@@ -971,12 +1070,32 @@ def _phash_edit_build_links(
     the *target* stem inside ``cond/`` — at the cond's own bucket, which under
     free-fit need not match the target's (cond≠target shapes are supported;
     ``cond_diff_loss`` self-skips on a mismatch).
+
+    Three record kinds share this layout, differing only in where the cond latent
+    comes from and what the caption says:
+
+    ``edit``      the mined partner's latent; caption = the tag delta.
+    ``identity``  the target's OWN latent (cond and target are one cached file);
+                  caption empty — a no-op instruction.
+    ``colorize``  the mangafied latent from ``mono_cache/``; caption drawn per
+                  variant from the record's ``variants`` list.
+
+    A record carrying ``variants`` also gets a ``{stem}.variants.txt`` sidecar,
+    which the TE step treats as the source of truth instead of generating its own
+    shuffles — that is how the colorize arm gets its own dropout regime inside a
+    run whose global ``caption_tag_dropout_rate`` is 0.
     """
+    from library.preprocess.caption_variants import (
+        variants_sidecar_path,
+        write_variants_sidecar,
+    )
+
     resized_dir, cache_dir, cond_dir = ROOT / resized, ROOT / cache, ROOT / cond
+    mono_dir = ROOT / mono_cache if mono_cache else None
     pairs = json.loads(manifest.read_text(encoding="utf-8"))["pairs"]
 
-    def _latents(key: str) -> list[Path]:
-        d = cache_dir / Path(key).parent
+    def _latents(key: str, root: Path | None = None) -> list[Path]:
+        d = (root or cache_dir) / Path(key).parent
         stem = Path(key).name
         return sorted(d.glob(f"{stem}_*_anima.npz"))
 
@@ -992,11 +1111,16 @@ def _phash_edit_build_links(
         return next((p for e in _IMG_EXTS if (p := d / f"{stem}{e}").exists()), None)
 
     linked = skipped = 0
+    kinds: Counter = Counter()
     for p in pairs:
+        kind = p.get("kind", "edit")
+        # colorize's cond is the synthetic mangafied view, encoded into its own
+        # cache under the same key; every other kind reads the shared pool cache.
+        cond_root = mono_dir if kind == "colorize" else None
         tgt_img, tgt_npz, cond_npz = (
             _image(p["target"]),
             _latents(p["target"]),
-            _latents(p["cond"]),
+            _latents(p["cond"], cond_root),
         )
         if tgt_img is None or not tgt_npz or not cond_npz:
             missing = (
@@ -1004,7 +1128,7 @@ def _phash_edit_build_links(
                 if tgt_img is None
                 else "target latent"
                 if not tgt_npz
-                else "cond latent"
+                else f"cond latent ({kind})"
             )
             print(
                 f"  [phash_edit] {p['pair_id']}: no {missing} — skipping pair.",
@@ -1017,6 +1141,12 @@ def _phash_edit_build_links(
         img_link.parent.mkdir(parents=True, exist_ok=True)
         img_link.symlink_to(tgt_img.resolve())
         img_link.with_suffix(".txt").write_text(p["delta_caption"], encoding="utf-8")
+        variants = p.get("variants")
+        if variants:
+            write_variants_sidecar(
+                variants_sidecar_path(img_link),
+                [(f"v{i}", t) for i, t in enumerate(variants)],
+            )
 
         bucket = re.search(r"_(\d+x\d+)_anima\.npz$", tgt_npz[0].name)[1]
         link = cache_dir / p["artist"] / f"{stem}_{bucket}_anima.npz"
@@ -1029,9 +1159,10 @@ def _phash_edit_build_links(
         clink.parent.mkdir(parents=True, exist_ok=True)
         clink.symlink_to(cond_npz[0].resolve())
         linked += 1
+        kinds[kind] += 1
     print(
-        f"[phash_edit] linked {linked} pair views ({resized}/…_no_tags + {cond})"
-        + (f" ({skipped} skipped)" if skipped else "")
+        f"[phash_edit] linked {linked} pair views ({resized}/…_no_tags + {cond}) "
+        f"{dict(kinds)}" + (f" ({skipped} skipped)" if skipped else "")
     )
 
 

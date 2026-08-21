@@ -558,7 +558,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--preserve_groups",
-        default="models/captioners/anima-tagger-v2/groups.yaml",
+        default="models/captioners/anima-tagger-v5/groups.yaml",
         help="derive_groups --apply: existing groups.yaml whose groups are "
         "preserved verbatim and claim their tags first (no regression).",
     )

@@ -287,6 +287,17 @@ def cmd_test_easycontrol(extra):
             "ref_dir": ROOT / "post_image_dataset" / "resized",
             "empty_prompt": False,
         },
+        # phash_edit: ref is the source image and the prompt is an EDIT
+        # INSTRUCTION in the delta grammar ("glasses, -hat"), not a description
+        # -- shared tags cancel out of a delta, so identity rides the cond
+        # stream. Never force an empty prompt: empty is the identity/no-op arm's
+        # caption and returns a copy of the ref.
+        "phash_edit": {
+            "weight": "anima_easycontrol_phash_edit",
+            "out": "phash_edit",
+            "ref_dir": ROOT / "post_image_dataset" / "resized",
+            "empty_prompt": False,
+        },
         # subject: ref is a DIFFERENT image of the character to retrieve; the
         # prompt owns layout/pose, so never force an empty prompt.
         "subject": {

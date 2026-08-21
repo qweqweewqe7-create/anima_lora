@@ -97,7 +97,12 @@ def cmd_download_pe_spatial(_extra):
 def cmd_download_tagger(_extra):
     # Just the Tagger ``vocab.json`` (~0.7 MB) that caption-index/preprocess need.
     # The full model is not fetched here, so this won't clobber a local model.safetensors.
-    dst = ROOT / "models" / "captioners" / "anima-tagger-v2"
+    # Tracks the live checkpoint (``TAGGER_HF_SUBFOLDER`` / ``DEFAULT_TAGGER_DIR``
+    # in library/captioning/anima_tagger.py) so the vocab matches the model that
+    # actually runs.
+    sub = "v5"
+    rel = f"models/captioners/anima-tagger-{sub}"
+    dst = ROOT / rel
     if _skip("Anima Tagger vocab", [dst / "vocab.json"], _extra):
         return
     dst.mkdir(parents=True, exist_ok=True)
@@ -106,11 +111,17 @@ def cmd_download_tagger(_extra):
             "hf",
             "download",
             "sorryhyun/anima-tagger",
-            "vocab.json",
+            f"{sub}/vocab.json",
             "--local-dir",
-            "models/captioners/anima-tagger-v2",
+            rel,
         ]
     )
+    # ``hf`` mirrors the repo layout, so the file lands in a ``<sub>/`` subdir —
+    # flatten it to match the loader's directory contract.
+    nested = dst / sub / "vocab.json"
+    if nested.exists():
+        shutil.move(str(nested), str(dst / "vocab.json"))
+        shutil.rmtree(dst / sub, ignore_errors=True)
 
 
 def _download_danbooru_base(_extra):

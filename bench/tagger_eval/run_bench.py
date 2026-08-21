@@ -53,7 +53,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     p.add_argument(
         "--model_dir",
-        default="models/captioners/anima-tagger-v2",
+        default="models/captioners/anima-tagger-v5",
         help="Checkpoint dir (model.safetensors + config.json + vocab.json + "
         "dataset.json [+ thresholds.safetensors + rules.yaml]).",
     )

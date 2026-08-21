@@ -159,7 +159,7 @@ python tasks.py exp-test-directedit foo.png --prompt 'smile'  # positional sourc
 ```
 
 Requires the Anima Tagger checkpoint at
-`models/captioners/anima-tagger-v1/model.safetensors`; otherwise the
+`models/captioners/anima-tagger-v5/model.safetensors`; otherwise the
 task exits with an instruction to train it via `python -m
 scripts.anima_tagger.cli`. After the edit completes, the source is
 copied next to the output as `<name>_src.png` for side-by-side review.
