@@ -340,11 +340,24 @@ def _download(url: str, dest: Path) -> None:
         shutil.copyfileobj(resp, f, length=1 << 20)
 
 
+def _skip_links_filter(member, path):
+    """The data filter, but symlinks/hardlinks are dropped instead of fatal.
+
+    A stray committed symlink in the release tarball (absolute target →
+    LinkOutsideDestinationError) once bricked every update; release content
+    must never depend on links, so skipping is always safe.
+    """
+    if member.islnk() or member.issym():
+        print(f"  skipping link in tarball: {member.name}")
+        return None
+    return tarfile.data_filter(member, path)
+
+
 def _extract_tarball(tar: Path, dest: Path) -> Path:
     """Extract tarball to dest/, return path to single top-level dir inside."""
     dest.mkdir(parents=True, exist_ok=True)
     with tarfile.open(tar, "r:gz") as tf:
-        tf.extractall(dest, filter="data")
+        tf.extractall(dest, filter=_skip_links_filter)
     children = [p for p in dest.iterdir() if p.is_dir()]
     if len(children) != 1:
         sys.exit(f"unexpected tarball layout: {[p.name for p in children]}")
