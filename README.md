@@ -187,12 +187,11 @@ Adapter families that train something — a LoRA-style delta, a routing head, or
 ### Manual (from a clone)
 
 ```bash
-# Linux / macOS
+# Linux / macOS / Windows NVIDIA (CUDA is the default backend)
 uv sync
 
-# Windows: select exactly one backend
-uv sync --extra cuda-windows
-uv sync --extra rocm-windows
+# Windows AMD (ROCm) only:
+uv sync --no-group cuda-windows --group rocm-windows
 
 hf auth login             # or just sign in from the GUI — auth is built in now
 make download-models      # DiT + Qwen3 TE + QwenImage VAE (+ SAM3 / MIT / PE for masking & image conditioning) into models/
@@ -200,7 +199,7 @@ make download-models      # DiT + Qwen3 TE + QwenImage VAE (+ SAM3 / MIT / PE fo
 make gui                  # recommended — config editor + dataset browser + training monitor
 ```
 
-On Windows, the extras are mutually exclusive so `uv` cannot mix CUDA and ROCm wheels. Reuse the same extra for later manual `uv sync` commands. `make update` remembers the backend selected by the installer. The CUDA manual-clone path does **not** auto-install the CUDA 13.2 **toolkit** (needed for `torch.compile`/Triton) — install it per [guidebook §2](docs/guidelines/guidebook.md#2-cuda-132-handled-by-the-installer), or use the one-line installer above. The ROCm extra uses AMD's official ROCm 7.14 package index and does not install Flash Attention; `triton-windows` remains present because it supplies the Windows runtime used by `torch.compile` on both backends.
+On Windows, `cuda-windows` is a **default dependency group** — a plain `uv sync` always lands the CUDA stack, so NVIDIA users can never be demoted to a CPU/ROCm torch by a flagless sync (GH #92). The two backend groups are declared mutually exclusive so `uv` cannot mix CUDA and ROCm wheels; ROCm users must reuse the same `--no-group cuda-windows --group rocm-windows` flags for later manual syncs. `make update` remembers the backend selected by the installer. The CUDA manual-clone path does **not** auto-install the CUDA 13.2 **toolkit** (needed for `torch.compile`/Triton) — install it per [guidebook §2](docs/guidelines/guidebook.md#2-cuda-132-handled-by-the-installer), or use the one-line installer above. The ROCm extra uses AMD's official ROCm 7.14 package index and does not install Flash Attention; `triton-windows` remains present because it supplies the Windows runtime used by `torch.compile` on both backends.
 
 > **Anima ships as a uv-locked application environment, not a generic pip package.** `pyproject.toml` pins `python ==3.13.*`, specific torch / flash-attn wheel URLs, and `index-strategy = "unsafe-best-match"` — these are maintainer-chosen, known-good builds. Install with `uv sync` against the committed `uv.lock`; don't `pip install` from `pyproject.toml` (pip won't honor uv's index strategy or the prebuilt flash-attn wheels).
 

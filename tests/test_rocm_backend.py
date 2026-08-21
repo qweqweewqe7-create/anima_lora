@@ -2,7 +2,9 @@ import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
+import library.runtime.backend as backend
 from library.runtime.backend import (
+    diagnose_cuda_unavailable,
     is_rocm,
     needs_rocm_attention_fallback,
     resolve_attention_mode,
@@ -52,12 +54,16 @@ def test_update_reuses_saved_rocm_backend(monkeypatch, tmp_path):
     monkeypatch.setattr(update.sys, "platform", "win32")
     monkeypatch.delenv("ANIMA_BACKEND", raising=False)
 
-    assert update._uv_sync_command() == [
+    command, chosen = update._uv_sync_command()
+    assert command == [
         "uv",
         "sync",
-        "--extra",
+        "--no-group",
+        "cuda-windows",
+        "--group",
         "rocm-windows",
     ]
+    assert chosen == "rocm"
 
 
 def test_update_environment_override_wins(monkeypatch, tmp_path):
@@ -69,16 +75,95 @@ def test_update_environment_override_wins(monkeypatch, tmp_path):
     assert update._selected_windows_backend() == "cuda"
 
 
+def test_update_hardware_beats_poisoned_venv(monkeypatch, tmp_path):
+    """An NVIDIA box whose venv got the ROCm torch (GH #92) must pick cuda."""
+    venv = tmp_path / ".venv" / "Scripts"
+    venv.mkdir(parents=True)
+    (venv / "python.exe").write_text("", encoding="ascii")
+    monkeypatch.setattr(update, "ROOT", tmp_path)
+    monkeypatch.setattr(update.sys, "platform", "win32")
+    monkeypatch.delenv("ANIMA_BACKEND", raising=False)
+    monkeypatch.setattr(update, "_detect_windows_gpu_vendor", lambda: "nvidia")
+
+    def poisoned_probe(*a, **k):
+        raise AssertionError("venv probe must not run when hardware is known")
+
+    monkeypatch.setattr(update.subprocess, "run", poisoned_probe)
+    assert update._selected_windows_backend() == "cuda"
+
+
+def test_update_amd_hardware_selects_rocm(monkeypatch, tmp_path):
+    monkeypatch.setattr(update, "ROOT", tmp_path)
+    monkeypatch.setattr(update.sys, "platform", "win32")
+    monkeypatch.delenv("ANIMA_BACKEND", raising=False)
+    monkeypatch.setattr(update, "_detect_windows_gpu_vendor", lambda: "amd")
+
+    assert update._selected_windows_backend() == "rocm"
+
+
+def test_update_sync_persists_backend_marker(monkeypatch, tmp_path):
+    monkeypatch.setattr(update, "ROOT", tmp_path)
+    monkeypatch.setattr(update.sys, "platform", "win32")
+    monkeypatch.delenv("ANIMA_BACKEND", raising=False)
+    monkeypatch.setattr(update, "_detect_windows_gpu_vendor", lambda: "nvidia")
+
+    command, chosen = update._uv_sync_command()
+    assert command == ["uv", "sync"]
+    assert chosen == "cuda"
+    assert (tmp_path / ".anima_backend").read_text(encoding="ascii").strip() == "cuda"
+
+
+def _torch_full(*, available, hip=None, cuda=None):
+    return SimpleNamespace(
+        cuda=SimpleNamespace(is_available=lambda: available),
+        version=SimpleNamespace(hip=hip, cuda=cuda),
+    )
+
+
+def test_diagnose_silent_when_cuda_works(monkeypatch):
+    monkeypatch.setattr(backend.shutil, "which", lambda _: "/usr/bin/nvidia-smi")
+    assert diagnose_cuda_unavailable(_torch_full(available=True, cuda="13.2")) is None
+
+
+def test_diagnose_silent_without_nvidia_gpu(monkeypatch):
+    monkeypatch.setattr(backend.shutil, "which", lambda _: None)
+    assert diagnose_cuda_unavailable(_torch_full(available=False, hip="7.14.0")) is None
+
+
+def test_diagnose_flags_rocm_build_on_nvidia(monkeypatch):
+    monkeypatch.setattr(backend.shutil, "which", lambda _: "/usr/bin/nvidia-smi")
+    message = diagnose_cuda_unavailable(_torch_full(available=False, hip="7.14.0"))
+    assert message is not None and "ROCm build" in message
+
+
+def test_diagnose_flags_cpu_build_on_nvidia(monkeypatch):
+    monkeypatch.setattr(backend.shutil, "which", lambda _: "/usr/bin/nvidia-smi")
+    message = diagnose_cuda_unavailable(_torch_full(available=False))
+    assert message is not None and "CPU-only build" in message
+
+
+def test_diagnose_flags_driver_problem(monkeypatch):
+    monkeypatch.setattr(backend.shutil, "which", lambda _: "/usr/bin/nvidia-smi")
+    message = diagnose_cuda_unavailable(_torch_full(available=False, cuda="13.2"))
+    assert message is not None and "driver" in message
+
+
 def test_windows_backend_dependencies_are_isolated():
     with (ROOT / "pyproject.toml").open("rb") as file:
         project = tomllib.load(file)
 
-    extras = project["project"]["optional-dependencies"]
-    cuda = "\n".join(extras["cuda-windows"])
-    rocm = "\n".join(extras["rocm-windows"])
+    groups = project["dependency-groups"]
+    cuda = "\n".join(groups["cuda-windows"])
+    rocm = "\n".join(groups["rocm-windows"])
 
     assert "+cu132" in cuda
     assert "flash_attn" in cuda
     assert "+rocm7.14.0" in rocm
     assert "device-gfx1200" in rocm and "device-gfx1201" in rocm
     assert "flash" not in rocm
+
+    # GH #92: a flagless `uv sync` (old updaters) must install the CUDA stack
+    # on Windows, and the legacy --extra flags must keep resolving as stubs.
+    assert "cuda-windows" in project["tool"]["uv"]["default-groups"]
+    extras = project["project"]["optional-dependencies"]
+    assert extras["cuda-windows"] == [] and extras["rocm-windows"] == []

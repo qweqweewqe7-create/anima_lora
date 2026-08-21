@@ -97,22 +97,25 @@ Flash Attention, and dependency workflow.
 ## Manual clone / advanced setup
 
 The one-line installer above is recommended. If you intentionally install from
-a git clone on Windows, select exactly one backend extra.
+a git clone on Windows: CUDA is the **default** backend (the `cuda-windows`
+dependency group is default-on, so a plain `uv sync` installs it — GH #92);
+ROCm swaps that group out explicitly.
 
 ROCm:
 
 ```powershell
-uv sync --extra rocm-windows
+uv sync --no-group cuda-windows --group rocm-windows
 ```
 
 CUDA:
 
 ```powershell
-uv sync --extra cuda-windows
+uv sync
 ```
 
-The two Windows extras are declared mutually exclusive so `uv` cannot resolve a
-mixed CUDA/ROCm Torch environment.
+The two Windows backend groups are declared mutually exclusive so `uv` cannot
+resolve a mixed CUDA/ROCm Torch environment. Reuse the same ROCm flags for
+every later manual sync — a flagless `uv sync` reverts to CUDA.
 
 To force ROCm when using the one-line installer:
 
@@ -131,7 +134,7 @@ A manual ROCm installation can run the same post-install check used by the
 installer:
 
 ```powershell
-uv run --extra rocm-windows python tests/rocm_smoke_test.py
+uv run --no-group cuda-windows --group rocm-windows python tests/rocm_smoke_test.py
 ```
 
 A successful run verifies the key training path rather than only checking that

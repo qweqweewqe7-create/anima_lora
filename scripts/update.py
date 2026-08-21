@@ -57,6 +57,37 @@ for _stream in (sys.stdout, sys.stderr):
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def _detect_windows_gpu_vendor() -> str | None:
+    """Return 'nvidia' or 'amd' from the installed display adapters, or None."""
+    try:
+        result = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "Get-CimInstance Win32_VideoController | "
+                "ForEach-Object { $_.Name + ' ' + $_.AdapterCompatibility }",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+    adapters = result.stdout.lower()
+    # Prefer NVIDIA on mixed-vendor systems (iGPU + dGPU), matching install.ps1.
+    if "nvidia" in adapters:
+        return "nvidia"
+    if (
+        "amd" in adapters
+        or "advanced micro devices" in adapters
+        or "radeon" in adapters
+    ):
+        return "amd"
+    return None
+
+
 def _selected_windows_backend() -> str:
     """Keep the accelerator chosen at install time across release updates."""
     override = os.environ.get("ANIMA_BACKEND", "").strip().lower()
@@ -69,8 +100,18 @@ def _selected_windows_backend() -> str:
         if saved in {"cuda", "rocm"}:
             return saved
 
-    # Existing installs predate the marker. Preserve a working ROCm venv when
-    # possible; otherwise retain the historical CUDA default.
+    # Existing installs predate the marker. Decide from the hardware, NOT from
+    # the venv's torch build: the v1.16.0→v1.16.1 transition ran the old
+    # extra-unaware `uv sync`, which installed the ROCm torch on every Windows
+    # machine (GH #92) — trusting `torch.version.hip` here would lock NVIDIA
+    # users into that broken state on every subsequent update.
+    vendor = _detect_windows_gpu_vendor()
+    if vendor == "amd":
+        return "rocm"
+    if vendor == "nvidia":
+        return "cuda"
+
+    # No adapter identified (headless/VM): the venv build is the last resort.
     python = ROOT / ".venv" / "Scripts" / "python.exe"
     if python.is_file():
         try:
@@ -88,11 +129,60 @@ def _selected_windows_backend() -> str:
     return "cuda"
 
 
-def _uv_sync_command() -> list[str]:
+def _uv_sync_command() -> tuple[list[str], str | None]:
+    """Return the sync command and the Windows backend it targets (None off-Windows)."""
     command = ["uv", "sync"]
-    if sys.platform == "win32":
-        command.extend(["--extra", f"{_selected_windows_backend()}-windows"])
-    return command
+    if sys.platform != "win32":
+        return command, None
+    backend = _selected_windows_backend()
+    # cuda-windows is a DEFAULT dependency group (GH #92), so the CUDA stack
+    # needs no flags; ROCm swaps the default group out explicitly.
+    if backend == "rocm":
+        command.extend(["--no-group", "cuda-windows", "--group", "rocm-windows"])
+    # Persist the decision so later updates (and manual `make update` runs)
+    # stop re-deriving it — install.ps1 writes the same marker.
+    try:
+        (ROOT / ".anima_backend").write_text(backend + "\n", encoding="ascii")
+    except OSError:
+        pass
+    return command, backend
+
+
+def _verify_windows_backend(backend: str) -> None:
+    """Warn loudly when the synced venv's torch build contradicts the backend."""
+    python = ROOT / ".venv" / "Scripts" / "python.exe"
+    if not python.is_file():
+        return
+    try:
+        result = subprocess.run(
+            [
+                str(python),
+                "-c",
+                "import torch; print('rocm' if torch.version.hip else "
+                "('cuda' if torch.version.cuda else 'cpu'))",
+            ],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return
+    build = result.stdout.strip()
+    if build != backend:
+        fix = (
+            "uv sync"
+            if backend == "cuda"
+            else "uv sync --no-group cuda-windows --group rocm-windows"
+        )
+        print(
+            f"\nWARNING: the installed PyTorch is a {build} build but the "
+            f"selected backend is {backend} — training/caching would fall back "
+            f"to CPU.\n  Fix: {fix}\n"
+            f"  (backend override: set ANIMA_BACKEND=cuda|rocm or edit "
+            f".anima_backend)"
+        )
 
 
 REPO = "sorryhyun/anima_lora"
@@ -570,7 +660,7 @@ def _apply(
     print(f"\nmanifest updated: {MANIFEST_FILE.name} → {new_tag}")
 
     if not no_sync:
-        sync_command = _uv_sync_command()
+        sync_command, backend = _uv_sync_command()
         print(f"\nrunning {' '.join(sync_command)} …")
         try:
             subprocess.run(sync_command, cwd=ROOT, check=True)
@@ -579,6 +669,9 @@ def _apply(
         except subprocess.CalledProcessError as e:
             print(f"  uv sync failed (exit {e.returncode}); rerun manually")
             return e.returncode
+        else:
+            if backend is not None:
+                _verify_windows_backend(backend)
 
     # Code on disk changed → the running daemon supervisor is now stale (skip
     # if nothing was written — a no-op update leaves the daemon correct).

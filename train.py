@@ -2568,6 +2568,9 @@ class AnimaTrainer:
         )
 
     def train(self, args):
+        from library.runtime.backend import warn_if_cuda_unavailable
+
+        warn_if_cuda_unavailable(torch)
         session_id = random.randint(0, 2**32)
         training_started_at = time.time()
         normalize_sample_args(args)

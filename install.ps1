@@ -204,11 +204,13 @@ try {
   # not elevated, third-party AV, or Defender disabled -- retry loop handles it
 }
 
-$BackendExtra = if ($Backend -eq 'rocm') { 'rocm-windows' } else { 'cuda-windows' }
-Say "running uv sync --extra $BackendExtra (may take a while)"
+# cuda-windows is a DEFAULT dependency group (GH #92: a plain `uv sync` must
+# land the CUDA stack); ROCm swaps that group out explicitly.
+$SyncArgs = if ($Backend -eq 'rocm') { @('--no-group', 'cuda-windows', '--group', 'rocm-windows') } else { @() }
+Say "running uv sync $($SyncArgs -join ' ') (may take a while)"
 $syncOk = $false
 for ($attempt = 1; $attempt -le 3; $attempt++) {
-  uv sync --extra $BackendExtra
+  uv sync @SyncArgs
   if ($LASTEXITCODE -eq 0) { $syncOk = $true; break }
   if ($attempt -lt 3) {
     Say "uv sync failed (exit $LASTEXITCODE); retrying ($attempt/2) in 3s -- often a transient antivirus lock on a trampoline .exe"
@@ -237,7 +239,7 @@ trampoline .exe files. To fix:
 
 if ($Backend -eq 'rocm') {
   Say 'verifying the ROCm PyTorch runtime'
-  uv run --extra rocm-windows python tests/rocm_smoke_test.py
+  uv run --no-group cuda-windows --group rocm-windows python tests/rocm_smoke_test.py
   if ($LASTEXITCODE -ne 0) { Die 'ROCm PyTorch smoke test failed' }
 }
 
