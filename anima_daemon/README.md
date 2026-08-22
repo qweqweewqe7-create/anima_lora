@@ -42,7 +42,11 @@ JOB=<id> python tasks.py daemon-status        # one record, envelope inlined
 ```
 
 `daemon-run` exits with the job's own exit code (so `&&` chains work), ctrl-C
-detaches, and `--label NAME` overrides the auto-derived label. The same three
+detaches, and `--label NAME` overrides the auto-derived label. `daemon-run`'s
+own flags (`--label`, `--stall-timeout`) are recognized only **before** the
+script path — after it every token belongs to the child (bench scripts define
+`--label` themselves), and a literal `--` makes everything after it child argv
+verbatim, run-mode flags included. The same three
 verbs exist inside the package for callers that can't import `tasks.py` (a
 vendored node tree, a bare checkout):
 

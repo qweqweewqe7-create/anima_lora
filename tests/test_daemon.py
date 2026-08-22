@@ -77,6 +77,60 @@ def test_build_method_args_respects_explicit_overrides():
     assert "alice" not in args
 
 
+def test_split_daemon_run_args_label_after_script_belongs_to_child():
+    # The trap this fixes: bench scripts take --label themselves — a --label
+    # after the script path must reach the child, not name the daemon job.
+    from scripts.tasks.daemon import split_daemon_run_args
+
+    label, stall, head, tail = split_daemon_run_args(
+        ["bench/foo/run_bench.py", "--label", "smoke", "--stall-timeout", "600"]
+    )
+    assert label is None and stall is None
+    assert head == [
+        "bench/foo/run_bench.py",
+        "--label",
+        "smoke",
+        "--stall-timeout",
+        "600",
+    ]
+    assert tail == []
+
+
+def test_split_daemon_run_args_own_flags_before_script():
+    from scripts.tasks.daemon import split_daemon_run_args
+
+    label, stall, head, tail = split_daemon_run_args(
+        ["--label", "myjob", "--stall-timeout", "600", "run.py", "--limit", "5"]
+    )
+    assert label == "myjob" and stall == "600"
+    assert head == ["run.py", "--limit", "5"]
+    assert tail == []
+
+
+def test_split_daemon_run_args_equals_forms_and_mode_flag():
+    from scripts.tasks.daemon import split_daemon_run_args
+
+    label, stall, head, tail = split_daemon_run_args(
+        ["--queue", "--label=myjob", "--stall-timeout=0", "run.py"]
+    )
+    assert label == "myjob" and stall == "0"
+    # run-mode flags stay in head for _resolve_run_mode to pop.
+    assert head == ["--queue", "run.py"]
+    assert tail == []
+
+
+def test_split_daemon_run_args_dash_dash_is_verbatim_passthrough():
+    from scripts.tasks.daemon import split_daemon_run_args
+
+    label, stall, head, tail = split_daemon_run_args(
+        ["--label", "j", "run.py", "--", "--queue", "--label", "x"]
+    )
+    assert label == "j" and stall is None
+    assert head == ["run.py"]
+    # everything after `--` is the child's, even run-mode/own-flag lookalikes.
+    assert tail == ["--queue", "--label", "x"]
+
+
 def test_job_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "JOBS_DIR", tmp_path / "jobs")
     job = jobs.Job(

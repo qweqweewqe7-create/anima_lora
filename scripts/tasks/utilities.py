@@ -39,6 +39,11 @@ def cmd_comfy_batch(extra):
     prompt text as a third axis alongside artist.txt / chara.txt:
 
         make comfy-batch W=modhydra.json PROMPTS=preferred.txt
+
+    ``RANDOMS=<file>`` (default ``workflows/randoms.yaml``, bare names resolve
+    under ``workflows/``) is the grouped pool the ``__random__`` placeholders
+    draw from — ``__random:<group>__`` picks one group, bare ``__random__`` the
+    file's ``default:`` groups. Re-rolled per job, not an axis.
     """
     workflow = os.environ.get("W") or (
         extra[0] if extra else "workflows/modhydra-simple.json"
@@ -52,6 +57,12 @@ def cmd_comfy_batch(extra):
         if os.sep not in prompts and "/" not in prompts:
             prompts = f"workflows/{prompts}"
         remaining = ["--prompts", prompts, *remaining]
+
+    randoms = os.environ.get("RANDOMS")
+    if randoms and "--randoms" not in remaining:
+        if os.sep not in randoms and "/" not in randoms:
+            randoms = f"workflows/{randoms}"
+        remaining = ["--randoms", randoms, *remaining]
 
     images_dir = os.environ.get("IMAGES", "../comfy/input/to_colorize2")
     if images_dir and "--images_dir" not in remaining:

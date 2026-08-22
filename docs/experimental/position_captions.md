@@ -9,8 +9,13 @@ the clause of the subject it belongs to.
 Status: **v2 shipped and runnable as `make caption-position`.** v2 *replaces* v1
 — same pipeline, but the flat bag is rewritten instead of merely appended to;
 `--no_rewrite` keeps the additive v1 behaviour for the A/B arm. Dry run is the
-default and **nothing has been applied to the corpus yet** — two gates are still
-owed (spot-check, then a training A/B), spelled out at the bottom. The rewrite
+default. **Applied corpus-wide 2026-08-19** with the shipped bag-relax defaults
+(`--bag_relax 0.35` / `--bag_word_relax 0.85`, picked by curation over the
+review-sheet A/Bs): flatten → re-apply (453 captions rewritten, 3432 moved tags;
+`post_image_dataset/captions/position/report.json`) → `make preprocess-te`. Of
+the two gates originally owed, the review-sheet spot-check is done; **the
+training A/B (clause vs flattened control corpus) is still owed** — see
+"Limits / open". The rewrite
 targets the derived captions under `post_image_dataset/resized/`; the
 hand-written master in `image_dataset/` is never written.
 
@@ -731,8 +736,10 @@ it. The pass is idempotent — a caption
 that already carries clauses is skipped by the prefilter — and reversible from the
 CLI (`--flatten --apply`), but `make caption-position` (dry run, `report.json`,
 `--crops`) is still the way to eyeball proposals first, and is worth doing once on
-a new dataset. **The spot-check below is still owed**, which is why every surface
-ships off.
+a new dataset. The 2026-08-19 corpus apply went through exactly this flow
+(review sheets → curation → apply → `preprocess-te`); the in-chain stage still
+ships off (`caption_position_clauses = false`) so a plain `make preprocess` on a
+new dataset never rewrites captions un-reviewed.
 
 ## Limits / open
 

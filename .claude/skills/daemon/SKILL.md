@@ -15,7 +15,7 @@ Local FIFO job queue (`anima_daemon/`), auto-starts on first submit. Full HTTP c
 
 `make daemon | daemon-run ARGS="<script.py> …" | daemon-wait [JOB=<id>] | daemon-attach [JOB=<id>] | daemon-pause [JOB=<id>] | daemon-resume [JOB=<id>] | daemon-kill | daemon-terminate | daemon-prune`
 
-- Front door: **`make daemon-run ARGS="<script.py> [flags]"`** — attach-by-default, exits with the job's code; `--queue` detaches, `--inline` bypasses the daemon; `--stall-timeout S` where `0` = off. No Python snippet needed; `python -m anima_daemon submit|wait|status` is the same thing without `tasks.py`.
+- Front door: **`make daemon-run ARGS="<script.py> [flags]"`** — attach-by-default, exits with the job's code; `--queue` detaches, `--inline` bypasses the daemon; `--stall-timeout S` where `0` = off. daemon-run's own `--label`/`--stall-timeout` go **before** the script path — after it every token reaches the child untouched (bench scripts take `--label` themselves), and `-- ` passes everything after it verbatim (run-mode flags included). No Python snippet needed; `python -m anima_daemon submit|wait|status` is the same thing without `tasks.py`.
 - **`make daemon-wait [JOB=<id>]`** blocks to terminal and prints the record + result envelope, exiting with the job's code (`DaemonClient.wait()` programmatically) — don't hand-roll an HTTP poll loop.
 - `daemon-pause` tree-freezes the running job (SIGSTOP — VRAM held, SM idle, resume instant; the queue does NOT advance past it; refuses `accelerate launch` runs).
 - Append `--queue` to any train/distill target to enqueue instead of running inline (`make lora --queue`, `make turbo --queue`). GUI Train button, ComfyUI trainer node, and preprocessing all submit here.
