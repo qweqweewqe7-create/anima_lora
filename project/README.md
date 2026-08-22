@@ -19,8 +19,16 @@ adopt these into its home — `project/<line>/bench/` for the bench and e.g.
 and sigma_lowres lines did both); lines that haven't keep them in
 `bench/<line>/` and `docs/proposal/<line>*.md`.
 
-Retired lines move to the gitignored `_archive/` tree (local + preserved in
-the private mirror), keeping this dir strictly the *active* set:
+A line leaves the active set one of two ways:
+
+- **Finished** — it ran to a successful conclusion (goal reached or measured
+  ceiling hit). Its digest home moves to the tracked
+  [`finished/`](finished/) tier so the verdicts stay visible in the repo;
+  any still-operational working tree (code, make targets) stays where it is.
+- **Retired** — killed, superseded, or shelved. It moves to the gitignored
+  `_archive/` tree (local + preserved in the private mirror).
+
+Retired lines so far:
 
 - `sigma_lowres` — archived 2026-08-19 → `_archive/sigma_lowres/`. The research
   branches + paper drafts were already mirrored to the private repo
@@ -30,6 +38,9 @@ the private mirror), keeping this dir strictly the *active* set:
   mirroring still pending; the state is snapshot in the mirror's `main` and
   in origin history. EasyEdit ship proposal + paper prep remain the owed
   write-ups if the line reopens.
+
+Finished lines are listed in [`finished/README.md`](finished/README.md)
+(first entry: the ResShift SR sidecar, 2026-08-22).
 
 Active projects:
 

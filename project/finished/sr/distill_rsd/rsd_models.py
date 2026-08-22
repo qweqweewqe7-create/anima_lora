@@ -15,8 +15,8 @@ import torch
 import torch.nn as nn
 from omegaconf import OmegaConf
 
-SR = Path(__file__).resolve().parents[1]   # sr/
-REPO = SR.parent                           # repo root (for output/ + data/ paths)
+SR = Path(__file__).resolve().parents[1]   # project/finished/sr/
+REPO = SR.parents[2]                       # repo root (for output/ + data/ paths)
 RESSHIFT = SR / "resshift"                 # vendored ResShift source (no external clone)
 WEIGHTS = SR / "weights"                   # model checkpoints (gitignored, see sr/README.md)
 if str(RESSHIFT) not in sys.path:

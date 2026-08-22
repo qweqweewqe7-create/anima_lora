@@ -45,7 +45,7 @@ All training runs `train.py --method <name> --preset <name>`. By default it's in
 | `tasks.py` | Cross-platform task runner — source of truth for every `make` target |
 | `scripts/tasks/` + `scripts/experimental_tasks/` | Where command bodies actually live (`_common.py` = shared helpers) |
 
-Docs: shipped method deep-dives in `docs/methods/`, experimental in `docs/experimental/`, active proposals in `docs/proposal/`, retired material under `_archive/`. Active promoted lines with open phases get a home under `project/<line>/` (methods/bench/questions/roadmap digests — see `project/README.md`).
+Docs: shipped method deep-dives in `docs/methods/`, experimental in `docs/experimental/`, active proposals in `docs/proposal/`, retired material under `_archive/`. Active promoted lines with open phases get a home under `project/<line>/` (methods/bench/questions/roadmap digests — see `project/README.md`); successfully completed lines move to the tracked `project/finished/<line>/` tier (verdict digest + working tree; e.g. the ResShift SR sidecar, whose `make sr-*` targets were removed — run its scripts directly), while killed/superseded lines go to `_archive/`.
 
 ## Programmatic API (embedders)
 

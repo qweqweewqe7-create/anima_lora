@@ -45,8 +45,9 @@ What it does:
     Perf defaults follow the 2026-07-02 distill_rsd pass (same net, same 256² crops):
     grad-ckpt OFF (recompute costs ~25%), bf16 ON, --compile to trade warmup for VRAM.
 
-Run in the root venv:  make sr-train ARGS="--iters 30000 [--bs 8 --compile] [--no-amp]"
-or ×4:                 make sr-train VERSION=x4 ARGS="--iters 30000 --bs 8 --compile"
+Run in the root venv (`make sr-*` targets removed 2026-08-22 — line finished):
+  make daemon-run ARGS="project/finished/sr/train_sr/train.py --iters 30000 [--bs 8 --compile] [--no-amp]"
+or ×4: append --version x4.
 """
 import argparse
 import json

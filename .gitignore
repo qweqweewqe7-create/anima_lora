@@ -47,12 +47,13 @@ gui/gui_settings.json
 configs/gui-methods/custom/
 near_twins_temp.toml
 sincos_decensored/
-# ResShift SR sidecar — vendored source (sr/resshift/) IS committed; ignore only
-# the (now-removed) external clone, the venv, weights, and data artifacts.
+# ResShift SR sidecar (finished — lives under project/finished/sr/) — vendored
+# source (resshift/) IS committed; ignore only the (now-removed) external clone,
+# the old venv, weights, and data artifacts.
 /ResShift/
-/sr/.venv/
-/sr/data/
-/sr/**/weights/
+/project/finished/sr/.venv/
+/project/finished/sr/data/
+/project/finished/sr/**/weights/
 /post_image_dataset
 # LaTeX build artifacts (paper dirs; main.pdf stays tracked)
 project/*/paper/*.log

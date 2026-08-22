@@ -2,7 +2,7 @@
 # Verify the ResShift SR sidecar can run in the ROOT Anima venv.
 #
 # The sidecar no longer has its own venv. Its deps are an opt-in dependency group
-# installed with `uv sync --group sr` (run by `make sr-setup` before this script).
+# installed with `uv sync --group sr --inexact` (run before this script).
 # torch/torchvision are already core Anima deps (the same torch 2.12 + cu132 Blackwell
 # build), so there is nothing SR-specific to install beyond the group. xformers stays
 # absent (the vendored VQGAN ships query-chunked SDPA — a Blackwell xformers build is a

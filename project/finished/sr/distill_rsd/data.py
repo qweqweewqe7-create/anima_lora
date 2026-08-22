@@ -26,7 +26,7 @@ import torch
 from PIL import Image
 from torch.utils.data import Dataset
 
-REPO = Path(__file__).resolve().parents[2]
+REPO = Path(__file__).resolve().parents[4]
 EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 
 

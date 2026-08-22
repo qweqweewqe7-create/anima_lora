@@ -129,7 +129,7 @@ def _load_ctd(onnx_path: str, device: str = "cuda"):
     """Return forward(canvas_1024_rgb) -> raw output list.
 
     onnxruntime CUDAExecutionProvider when available (~17 ms/forward vs seconds
-    on cv2.dnn CPU — same lever as sr/scripts/detect_text_boxes.py), cv2.dnn
+    on cv2.dnn CPU — same lever as project/finished/sr/scripts/detect_text_boxes.py), cv2.dnn
     CPU as fallback.
     """
     if device != "cpu":
@@ -174,7 +174,7 @@ def _ctd_text_boxes(
 ) -> list[tuple[int, int, int, int]]:
     """Text-block boxes (yolo blk head + stroke-coverage cross-check) in img coords.
 
-    Mirrors sr/scripts/detect_text_boxes.py::_detect — see there for why the blk
+    Mirrors project/finished/sr/scripts/detect_text_boxes.py::_detect — see there for why the blk
     head is required (the seg head alone false-positives on halos/ornaments).
     """
     h0, w0 = img.shape[:2]

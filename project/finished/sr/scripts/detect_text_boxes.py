@@ -37,7 +37,7 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 SR = HERE.parent
-REPO = SR.parent
+REPO = SR.parents[2]
 ONNX_DEFAULT = REPO / "models" / "mit" / "comictextdetector.pt.onnx"
 EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 CANVAS = 1024  # CTD input size

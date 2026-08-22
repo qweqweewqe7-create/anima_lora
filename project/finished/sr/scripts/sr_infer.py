@@ -28,8 +28,9 @@ import torch.nn.functional as F
 from PIL import Image, ImageDraw
 
 # vendored ResShift source + rsd_models builders
-HERE = Path(__file__).resolve().parent          # sr/scripts
-SR = HERE.parent                                 # sr/
+HERE = Path(__file__).resolve().parent          # project/finished/sr/scripts
+SR = HERE.parent                                 # project/finished/sr/
+REPO = SR.parents[2]                             # repo root (output/ lives there)
 sys.path.insert(0, str(SR / "distill_rsd"))
 import rsd_models as M  # noqa: E402
 
@@ -50,9 +51,9 @@ _VERSIONS = {
 # our locally-trained art models (no release URL — checkpoint is produced by make sr-train).
 # version -> (config, default ckpt dir); the dirs mirror train_sr/train.py's VERSIONS.
 _LOCAL = {
-    "x2":   (SR / "configs" / "realsr_x2_art.yaml", SR.parent / "output" / "sr" / "x2"),
-    "x4ft": (SR / "configs" / "realsr_x4_art.yaml", SR.parent / "output" / "sr" / "x4_art"),
-    "x4s4": (SR / "configs" / "realsr_x4_s4_art.yaml", SR.parent / "output" / "sr" / "x4_s4_art"),
+    "x2":   (SR / "configs" / "realsr_x2_art.yaml", REPO / "output" / "sr" / "x2"),
+    "x4ft": (SR / "configs" / "realsr_x4_art.yaml", REPO / "output" / "sr" / "x4_art"),
+    "x4s4": (SR / "configs" / "realsr_x4_s4_art.yaml", REPO / "output" / "sr" / "x4_s4_art"),
 }
 # ckpt file prefix per local version (train_sr writes resshift_<train-version>_<step>.pth)
 _LOCAL_PREFIX = {"x2": "x2", "x4ft": "x4", "x4s4": "x4s4"}
@@ -301,7 +302,7 @@ def main():
                     help="cap contact-sheet rows (first N inputs)")
     args = ap.parse_args()
     out_path = args.out_path or str(
-        SR.parent / "output" / "sr" / args.version / "infer" if args.version in _LOCAL
+        REPO / "output" / "sr" / args.version / "infer" if args.version in _LOCAL
         else SR / "data" / "results")
     sampler = ResShiftInfer(version=args.version, chop_size=args.chop_size,
                             chop_stride=args.chop_stride, use_amp=not args.no_amp,

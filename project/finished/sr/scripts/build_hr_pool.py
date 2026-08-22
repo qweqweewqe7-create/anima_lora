@@ -24,8 +24,8 @@ from PIL import Image, ImageFile
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-SR = Path(__file__).resolve().parents[1]          # sr/
-REPO = SR.parent                                  # repo root
+SR = Path(__file__).resolve().parents[1]          # project/finished/sr/
+REPO = SR.parents[2]                              # repo root
 DEFAULT_SRCS = [REPO.parent.parent / "gelcrawl" / "retrieved", REPO / "image_dataset"]
 EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 
@@ -148,7 +148,7 @@ def main():
         (out / "manifest.json").write_text(json.dumps(manifest, indent=2))
         print(f"\nsymlinked {stats['kept']} masters -> {out}")
         print(f"manifest: {out / 'manifest.json'}")
-        print(f"\nnext:  make sr-train   (defaults --src to {out})")
+        print(f"\nnext:  train_sr/train.py   (defaults --src to {out})")
 
 
 if __name__ == "__main__":

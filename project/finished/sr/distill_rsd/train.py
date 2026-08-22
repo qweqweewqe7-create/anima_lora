@@ -3,7 +3,9 @@
 Two-timescale: K fake-critic updates per generator update. Frozen v2 teacher, 1-step
 stochastic student, fake ResShift critic + GAN head, image-space LPIPS. See DESIGN.md.
 
-Run in the root venv:  make sr-rsd-train ARGS="--iters 3000 [--bs 6 --compile] [--no-amp]"
+Run in the root venv (`make sr-*` targets removed 2026-08-22 — line finished):
+  make daemon-run ARGS="project/finished/sr/distill_rsd/train.py --iters 3000
+                        --src project/finished/sr/data/rsd_hr_cap4096 [--bs 6 --compile] [--no-amp]"
 (perf defaults benched 2026-07-02 — see DESIGN.md "Throughput".)
 """
 import argparse
