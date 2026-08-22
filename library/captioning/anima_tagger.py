@@ -126,6 +126,30 @@ def ensure_tagger_checkpoint(
 # intentionally not matched — no exact count, so leave the character head alone.
 _GIRLS_COUNT_RE = re.compile(r"^(\d+)\+?girls?$")
 
+# Exact people-count families ("3girls" / "2boys" / "1other", open "6+girls"
+# included). "multiple_girls"/"multiple_boys" are booru implication co-tags,
+# not exact counts — they legitimately ride alongside a digit count and are
+# deliberately not matched here.
+_EXACT_COUNT_RES = tuple(
+    re.compile(rf"^\d+\+?{noun}s?$") for noun in ("girl", "boy", "other")
+)
+
+
+def dedupe_count_tags(kept: Dict[str, float]) -> None:
+    """Drop all but the highest-scoring exact count per family, in place.
+
+    Training captions never carry two exact counts of one family
+    (``3girls`` + ``4girls``), but the sigmoid head has no mutual exclusion,
+    so a near-threshold image can clear both — which also inflates the
+    girls-count-driven character cap and trips the position-clause pipeline's
+    count-mismatch gate downstream.
+    """
+    for cre in _EXACT_COUNT_RES:
+        hits = sorted((n for n in kept if cre.match(n)), key=lambda n: -kept[n])
+        for name in hits[1:]:
+            kept.pop(name)
+
+
 # Trailing parens suffix, e.g. "nejet (kawakami rokkaku)". Booru OC convention:
 # when copyright is `original`/meta, the parens content is the artist's name.
 _OC_SUFFIX_RE = re.compile(r"\(([^()]+)\)\s*$")
@@ -518,6 +542,8 @@ class AnimaTagger:
                 group_preds[name] = winner_name
             out["kept"] = kept
             out["groups"] = group_preds
+
+        dedupe_count_tags(kept)
 
         # cap characters to the largest digit-prefixed girls-count in `kept`
         # (trim borderline sigmoid admits to top-N by score, N = parsed count)

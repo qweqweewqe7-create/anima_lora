@@ -120,3 +120,30 @@ def test_constants_reexports_for_back_compat():
 
     assert c.is_count_tag is tx.is_count_tag
     assert c._COUNT_RE is tx._COUNT_RE
+
+
+def test_dedupe_count_tags_keeps_top_score_per_family():
+    from library.captioning.anima_tagger import dedupe_count_tags
+
+    # Contradictory exact girl counts: only the higher-scoring one survives;
+    # the booru-implied `multiple_girls` co-tag and other families stay.
+    kept = {
+        "4girls": 0.62,
+        "3girls": 0.55,
+        "multiple_girls": 0.91,
+        "1boy": 0.70,
+        "blue eyes": 0.80,
+    }
+    dedupe_count_tags(kept)
+    assert "3girls" not in kept
+    assert set(kept) == {"4girls", "multiple_girls", "1boy", "blue eyes"}
+
+    # Families dedupe independently; open-ended counts are exact too.
+    kept = {"6+girls": 0.7, "3girls": 0.6, "2boys": 0.8, "1boy": 0.4}
+    dedupe_count_tags(kept)
+    assert set(kept) == {"6+girls", "2boys"}
+
+    # Single count per family is a no-op.
+    kept = {"1girl": 0.9, "solo": 0.95}
+    dedupe_count_tags(kept)
+    assert set(kept) == {"1girl", "solo"}
