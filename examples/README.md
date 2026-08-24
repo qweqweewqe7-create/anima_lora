@@ -10,20 +10,27 @@ importable from anywhere — the curated entry points live on `anima_lora`:
 
 ```python
 import anima_lora
-settings = anima_lora.get_generation_settings(args)
-latent = anima_lora.generate(args, settings)
-image = anima_lora.decode_to_pil(vae, latent, device)
+settings = anima_lora.inference.get_generation_settings(args)
+latent = anima_lora.inference.generate(args, settings)
+image = anima_lora.inference.decode_to_pil(vae, latent, device)
 ```
 
 `anima_lora` is a thin lazy re-export of `library.inference` /
-`library.config.io` / `library.anima.weights` / `library.models.qwen_vae` (see
-`anima_lora/__init__.py` for the full map). Repo-relative model/config paths
+`library.config.io` / `library.anima.weights` / `library.models.qwen_vae`,
+grouped into curated namespaces — `anima_lora.{models, inference, config,
+training, captioning}` is the preferred spelling; the pre-namespace flat names
+(`anima_lora.generate`, …) keep working as aliases (see
+`anima_lora/__init__.py` for the full map). `anima_lora.training` carries the
+in-process training toolkit (`AnimaTrainer`, `setup_parser`,
+`build_network_extras`, `verify_command_line_training_args`, `create_network`,
+`resolve_network_spec`) — repo-root `train.py` is loaded by path, so it works
+from any CWD. Repo-relative model/config paths
 resolve against the repo home, not the CWD — so `import anima_lora` works from
 any directory; set `ANIMA_HOME` to point at a relocated checkout. The high-level flows
 (`01`–`03`, `08`) import the curated entry points from `anima_lora`; the building-block
 scripts (`04`–`07`) reach into the `library.*` homes directly, since their point
-is to show the raw primitives. Either way each script keeps a `sys.path` shim so
-`python examples/<script>.py` runs straight from the repo without an install.
+is to show the raw primitives. Either way there's no `sys.path` bootstrap:
+`uv sync` installs the repo editable, so the scripts run from any directory.
 
 **High-level flows** — the supported entry points:
 

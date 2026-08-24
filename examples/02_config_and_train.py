@@ -33,17 +33,9 @@ settings still win over preset on overlap.
 from __future__ import annotations
 
 import argparse
-import sys
-from pathlib import Path
 
-# Allow `python examples/<script>.py`: put the repo root on sys.path so
-# `import library` / `train` resolve. Model/config paths resolve against the
-# repo home regardless of CWD (set ANIMA_HOME for a relocated checkout); only the
-# output paths below are written relative to your CWD.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-# `load_method_preset` is re-exported from the `anima_lora` front door.
-from anima_lora import load_method_preset
+# `load_method_preset` is re-exported on the `anima_lora.config` namespace.
+from anima_lora.config import load_method_preset
 
 # Keys that make up the LoRA routing/shape surface — the values an adapter
 # author cares about. (Full merged dict has ~150 keys spanning optimizer,
@@ -82,7 +74,8 @@ def build_network(merged: dict):
     import torch
 
     from library.anima import weights as anima_weights
-    from networks.lora_anima import create_network
+
+    from anima_lora.training import create_network
 
     # We only need the raw DiT weights to bind a fresh network to — no LoRA / no
     # adapters to attach. So skip the namespace-driven load_dit_model and call the
@@ -128,17 +121,17 @@ def run_training(method: str, preset: str, extra_argv: list[str]) -> None:
     setup_parser() + populate_schema()  →  parse  →  read_config_from_file  →
     AnimaTrainer().train(args)
     """
-    from train import (
+    from library.config import schema as config_schema
+
+    # The whole run-training toolkit rides the façade: `anima_lora.training`
+    # loads repo-root train.py by path, so this works from any CWD.
+    from anima_lora.config import read_config_from_file
+    from anima_lora.training import (
         AnimaTrainer,
         build_network_extras,
         setup_parser,
         verify_command_line_training_args,
     )
-    from library.config import schema as config_schema
-
-    # `read_config_from_file` is re-exported from the `anima_lora` front door
-    # (AnimaTrainer / setup_parser stay on `train` — not part of the façade).
-    from anima_lora import read_config_from_file
 
     argv = ["--method", method, "--preset", preset, *extra_argv]
 

@@ -38,27 +38,20 @@ prereq: a trained `anima_easycontrol*.safetensors` (defaults to the newest under
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
-
-# Allow `python examples/<script>.py`: put the repo root on sys.path so
-# `import library` / `train` resolve. Model/config paths resolve against the
-# repo home regardless of CWD (set ANIMA_HOME for a relocated checkout); only the
-# output paths below are written relative to your CWD.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import torch
 
-# Curated entry points on the `anima_lora` front door (thin lazy re-export).
-from anima_lora import (
+# Curated entry points on the `anima_lora` front door (thin lazy re-export),
+# spelled through its grouped namespaces.
+from anima_lora.config import load_method_preset
+from anima_lora.inference import (
     GenerationRequest,
-    default_checkpoints,
     generate,
     get_generation_settings,
-    load_method_preset,
-    load_vae,
     save_output,
 )
+from anima_lora.models import default_checkpoints, load_vae
 from library.runtime.device import clean_memory_on_device
 
 # env (ANIMA_DIT / ANIMA_VAE / ANIMA_TEXT_ENCODER, incl. a project-root `.env`)
@@ -109,15 +102,15 @@ def run_training(preset: str, extra_argv: list[str]) -> None:
     frozen-DiT + cond-LoRA build happens inside AnimaTrainer, driven entirely by
     the resolved config.
     """
-    from train import (
+    from library.config import schema as config_schema
+
+    from anima_lora.config import read_config_from_file
+    from anima_lora.training import (
         AnimaTrainer,
         build_network_extras,
         setup_parser,
         verify_command_line_training_args,
     )
-    from library.config import schema as config_schema
-
-    from anima_lora import read_config_from_file
 
     argv = ["--method", "easycontrol", "--preset", preset, *extra_argv]
 

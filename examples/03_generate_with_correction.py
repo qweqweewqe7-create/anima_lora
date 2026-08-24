@@ -36,14 +36,7 @@ Compare the saved PNGs against `--correction none` to eyeball the effect.
 from __future__ import annotations
 
 import argparse
-import sys
-from pathlib import Path
 
-# Allow `python examples/<script>.py`: put the repo root on sys.path so
-# `import library` / `inference` resolve. Model/config paths resolve against the
-# repo home regardless of CWD (set ANIMA_HOME for a relocated checkout); only the
-# output paths below are written relative to your CWD.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import torch
 

@@ -29,10 +29,7 @@ it stops once the model is ready to train and prints the trainable-param split).
 from __future__ import annotations
 
 import argparse
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import torch
 
