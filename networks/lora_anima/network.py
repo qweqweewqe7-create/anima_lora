@@ -739,6 +739,12 @@ class LoRANetwork(_NetworkMetricsMixin, torch.nn.Module):
                 f"chimera modules={len(self._chimera_aware_loras)}"
             )
 
+        # Depth of the DiT this adapter is being trained against, stamped into
+        # save_weights metadata as ss_num_blocks. Read here rather than derived
+        # from module names later, which layer_start/layer_end filtering would
+        # under-count.
+        self._trained_num_blocks = len(unet.blocks) if hasattr(unet, "blocks") else 0
+
         # DSR register tokens trained jointly with the LoRA (see networks/CLAUDE.md
         # register_injection.py entry). Top-level dot-free key ("register_tokens")
         # so lora key-sniffers/refusers/merge_to's prefix grouping never see it.
@@ -1795,6 +1801,13 @@ class LoRANetwork(_NetworkMetricsMixin, torch.nn.Module):
             metadata = {}
         if metadata:
             metadata["ss_network_spec"] = spec.name
+            # Adapters are depth-specific: module names carry the block index, so
+            # a 40-block (Anima-2.9B) adapter merged onto the 28-block base drops
+            # its tail blocks with only a "not all LoRA keys are used" warning.
+            # Stamp the depth so the mismatch is machine-detectable.
+            num_blocks = getattr(self, "_trained_num_blocks", 0)
+            if num_blocks:
+                metadata["ss_num_blocks"] = str(num_blocks)
 
         # Hard σ-band partition lives in non-persistent buffers; nothing
         # survives the state_dict write, so stamp the scalars the loader

@@ -50,14 +50,17 @@ def build_mod_schedule(args: argparse.Namespace, num_blocks: int) -> List[float]
     """Build a per-block w(l) list from CLI args.
 
     Default flags reproduce the 'step_i8_skip27' ComfyUI preset -- protects
-    tonal-DC blocks 0-7 and the compensation block 27, applying full w to 8-26.
+    tonal-DC blocks 0-7 and the final compensation block, applying full w in
+    between. The end layer is depth-relative (num_blocks-1) so a deeper
+    checkpoint skips its own last block, not block 27.
     See docs/inference/mod-guidance.md for rationale.
     """
+    end_layer = getattr(args, "mod_end_layer", None)
     return build_block_schedule(
         num_blocks,
         w=float(args.mod_w),
         start_layer=int(getattr(args, "mod_start_layer", 8)),
-        end_layer=int(getattr(args, "mod_end_layer", 27)),
+        end_layer=num_blocks - 1 if end_layer is None else int(end_layer),
         taper=int(getattr(args, "mod_taper", 0)),
         taper_scale=float(getattr(args, "mod_taper_scale", 0.25)),
     )
