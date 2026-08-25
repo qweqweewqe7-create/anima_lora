@@ -34,6 +34,16 @@ This bench measures that claim directly:
       * found_rate        — SAM found a girl at all (per arm)
       * bg_psnr           — PSNR between output and the plate outside
                             (dilated paint ∪ girl) — does the scene survive?
+      * inpaint_bg_psnr   — PSNR vs the plate INSIDE the paint but outside the
+                            (dilated) girl — does the scene continue under the
+                            rest of the paint (harmonize), or did the character
+                            fill it edge-to-edge? Only scored when ≥2% of the
+                            paint is not girl; ``inpaint_bg_scored_frac_slack``
+                            reports how often that happened. The ``slack_*``
+                            + ``large_center`` layouts (``SLACK_LAYOUTS``) are
+                            the intended home for this read; ``mean_area_ratio_
+                            slack`` vs ``_tight`` is the headline split (v4 =
+                            fill-the-paint scored ~0.8 on both).
 
 Run (GPU — submit through the daemon)::
 
@@ -94,7 +104,13 @@ LAYOUTS = {
     "bottom_right": (0.70, 0.70, 0.18, 0.25),
     "small_center": (0.50, 0.50, 0.10, 0.15),
     "large_center": (0.50, 0.52, 0.30, 0.42),
+    # Slack layouts (v5): an oversized paint where a full-figure character
+    # cannot plausibly fill the ellipse — scored on area_ratio << 1 and on
+    # the background continuing INSIDE the paint (inpaint_bg_psnr), not IoU.
+    "slack_left": (0.32, 0.55, 0.30, 0.44),
+    "slack_wide": (0.50, 0.58, 0.46, 0.40),
 }
+SLACK_LAYOUTS = {"slack_left", "slack_wide", "large_center"}
 
 PAINT_COLOR = (128, 128, 128)  # keep in sync with configs/easycontrol/region.toml
 
@@ -517,6 +533,19 @@ def phase_metrics(args, run_dir: Path, plan: list[dict]) -> tuple[dict, list[str
                     )
                     mse = float(((out_img - plate)[keep] ** 2).mean())
                     row["bg_psnr"] = float(10 * np.log10(255.0**2 / max(mse, 1e-6)))
+                    # Harmonization: does the scene continue INSIDE the paint,
+                    # around the girl? PSNR vs the plate over paint minus the
+                    # dilated girl. A fill-the-paint adapter leaves ~nothing
+                    # here (NaN); a harmonizing one scores like bg_psnr.
+                    inside = (paint > 0) & ~(
+                        cv2.dilate(girl, np.ones((k, k), np.uint8)) > 0
+                    )
+                    row["inpaint_bg_frac"] = float(inside.sum() / max(1, paint.sum()))
+                    if inside.sum() > 0.02 * paint.sum():
+                        mse_in = float(((out_img - plate)[inside] ** 2).mean())
+                        row["inpaint_bg_psnr"] = float(
+                            10 * np.log10(255.0**2 / max(mse_in, 1e-6))
+                        )
         elif row["found"] and s["arm"] == "control":
             # Chance baseline: how well does an UNsteered girl match each layout?
             girl_sum = int(girl.sum())
@@ -563,8 +592,23 @@ def phase_metrics(args, run_dir: Path, plan: list[dict]) -> tuple[dict, list[str
                     "center_dist": float(np.mean([r["center_dist"] for r in sub])),
                     "girl_in_paint": float(np.mean([r["girl_in_paint"] for r in sub])),
                     "area_ratio": float(np.mean([r["area_ratio"] for r in sub])),
+                    "inpaint_bg_psnr": (
+                        float(
+                            np.mean(
+                                [
+                                    r["inpaint_bg_psnr"]
+                                    for r in sub
+                                    if "inpaint_bg_psnr" in r
+                                ]
+                            )
+                        )
+                        if any("inpaint_bg_psnr" in r for r in sub)
+                        else float("nan")
+                    ),
                     "n": len(sub),
                 }
+        slack = [r for r in cond if r["layout"] in SLACK_LAYOUTS]
+        tight = [r for r in cond if r["layout"] not in SLACK_LAYOUTS]
         mean_iou = float(np.mean([r["iou"] for r in cond])) if cond else float("nan")
         return {
             "n_cond": len(cond),
@@ -598,6 +642,34 @@ def phase_metrics(args, run_dir: Path, plan: list[dict]) -> tuple[dict, list[str
             "mean_bg_psnr": (
                 float(np.mean([r["bg_psnr"] for r in cond if "bg_psnr" in r]))
                 if any("bg_psnr" in r for r in cond)
+                else float("nan")
+            ),
+            # v5 harmonize read-outs: on slack layouts the goal is a girl much
+            # smaller than the paint (area_ratio << 1) with the scene continued
+            # inside the paint (inpaint_bg_psnr ≈ bg_psnr); tight layouts keep
+            # the v4 fill behaviour (area_ratio → 1).
+            "mean_area_ratio_slack": (
+                float(np.mean([r["area_ratio"] for r in slack]))
+                if slack
+                else float("nan")
+            ),
+            "mean_area_ratio_tight": (
+                float(np.mean([r["area_ratio"] for r in tight]))
+                if tight
+                else float("nan")
+            ),
+            "mean_inpaint_bg_psnr_slack": (
+                float(
+                    np.mean(
+                        [r["inpaint_bg_psnr"] for r in slack if "inpaint_bg_psnr" in r]
+                    )
+                )
+                if any("inpaint_bg_psnr" in r for r in slack)
+                else float("nan")
+            ),
+            "inpaint_bg_scored_frac_slack": (
+                float(np.mean(["inpaint_bg_psnr" in r for r in slack]))
+                if slack
                 else float("nan")
             ),
             "per_layout": per_layout,

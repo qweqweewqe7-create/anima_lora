@@ -3,7 +3,8 @@
 Covers the two load-bearing pieces of easycontrol_adapters/region/prep.py:
 
 * ``_mask_gates`` — the dirty-mask filter (drop reasons, speck cleanup).
-* ``_augment_mask`` — every augmentation level must keep the pose readable:
+* ``_augment_mask`` — every silhouette level must keep the pose readable
+  (slack is a region by design and is only held to superset + bounds):
   a wide gap between limbs (the spread-legs case) must NOT be bridged into
   one fat blob, and the per-stem seeding must be deterministic.
 
@@ -104,27 +105,31 @@ class TestMaskGates:
 
 
 class TestAugmentMask:
-    WEIGHTS = [0.25, 0.35, 0.30, 0.10]
+    TIGHT_LEVELS = (0, 1, 2, 3)  # exact / smooth / blob / wobble — silhouette levels
+    SLACK = 4
 
     @pytest.mark.parametrize("seed", range(12))
     def test_limb_gap_survives(self, seed):
-        """No augment level may bridge a wide limb gap into one blob
-        (user feedback 2026-08-23: fat blobs over-simplified an M-leg pose)."""
+        """No silhouette level may bridge a wide limb gap into one blob
+        (user feedback 2026-08-23: fat blobs over-simplified an M-leg pose).
+        Slack is exempt by design — it is a *region*, not a silhouette."""
         m = _two_legs(gap_frac=0.25)
-        out = _augment_mask(m, random.Random(seed), self.WEIGHTS)
         gap_lo = int(W * 0.5 - W * 0.25 / 2)
         gap_hi = int(W * 0.5 + W * 0.25 / 2)
-        gap_band = out[int(H * 0.65) : H - 10, gap_lo:gap_hi]
-        assert gap_band.mean() < 0.35, (
-            f"seed {seed}: limb gap {gap_band.mean():.0%} painted — over-simplified"
-        )
+        for level in self.TIGHT_LEVELS:
+            out = _augment_mask(m, random.Random(seed), level)
+            gap_band = out[int(H * 0.65) : H - 10, gap_lo:gap_hi]
+            assert gap_band.mean() < 0.35, (
+                f"seed {seed} level {level}: limb gap {gap_band.mean():.0%} painted"
+            )
 
     @pytest.mark.parametrize("seed", range(6))
     def test_covers_most_of_source(self, seed):
         """Augmentation may round the mask but not relocate/shrink it away."""
         m = _ellipse()
-        out = _augment_mask(m, random.Random(seed), self.WEIGHTS)
-        assert (out & m).sum() / m.sum() > 0.75
+        for level in self.TIGHT_LEVELS:
+            out = _augment_mask(m, random.Random(seed), level)
+            assert (out & m).sum() / m.sum() > 0.75
 
     @pytest.mark.parametrize("seed", range(12))
     def test_strict_superset_of_source(self, seed):
@@ -135,18 +140,49 @@ class TestAugmentMask:
         inference, where nothing sits under the paint."""
         for maker in (_ellipse, _two_legs):
             m = maker()
-            out = _augment_mask(m, random.Random(seed), self.WEIGHTS)
-            assert int((m & ~out).sum()) == 0
+            for level in (*self.TIGHT_LEVELS, self.SLACK):
+                out = _augment_mask(m, random.Random(seed), level)
+                if out is None:
+                    continue  # slack with no room — caller falls back
+                assert int((m & ~out).sum()) == 0, f"level {level}"
+
+    @pytest.mark.parametrize("seed", range(8))
+    def test_slack_is_loose_and_bounded(self, seed):
+        """Slack paints a region clearly larger than the character (the
+        harmonize lever: background must be continued under the rest) but
+        never the whole frame (no scene left to harmonize with)."""
+        m = np.zeros((H, W), np.uint8)
+        m[int(H * 0.3) : int(H * 0.7), int(W * 0.35) : int(W * 0.55)] = 1
+        out = _augment_mask(
+            m,
+            random.Random(seed),
+            self.SLACK,
+            slack_grow=(1.5, 3.0),
+            max_slack_coverage=0.7,
+        )
+        assert out is not None
+        assert out.sum() >= 1.25 * m.sum()
+        assert out.mean() <= 0.72
+        assert int((m & ~out).sum()) == 0
+
+    def test_slack_full_frame_falls_back(self):
+        """A figure filling the frame leaves no room: slack returns None so the
+        caller picks a tight level instead of painting the whole image."""
+        m = np.zeros((H, W), np.uint8)
+        m[4 : H - 4, 4 : W - 4] = 1
+        assert _augment_mask(m, random.Random(0), self.SLACK) is None
 
     def test_deterministic_per_seed(self):
         m = _two_legs()
-        a = _augment_mask(m, random.Random(7), self.WEIGHTS)
-        b = _augment_mask(m, random.Random(7), self.WEIGHTS)
-        assert np.array_equal(a, b)
+        for level in (*self.TIGHT_LEVELS, self.SLACK):
+            a = _augment_mask(m, random.Random(7), level)
+            b = _augment_mask(m, random.Random(7), level)
+            assert (a is None and b is None) or np.array_equal(a, b)
 
     def test_degenerate_never_empty(self):
         m = np.zeros((H, W), np.uint8)
         m[100:110, 100:110] = 1
         for seed in range(8):
-            out = _augment_mask(m, random.Random(seed), self.WEIGHTS)
-            assert out.any()
+            for level in self.TIGHT_LEVELS:
+                out = _augment_mask(m, random.Random(seed), level)
+                assert out.any()

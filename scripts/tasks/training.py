@@ -728,9 +728,9 @@ def _inpaint_preprocess(adapter: str, cfg: dict, base: str, extra) -> None:
 
 
 def _region_stage(adapter: str, cfg: dict, base: str, extra) -> None:
-    """Region staging: solo-1girl targets → SAM3 character masks → paint cond tree.
+    """Region staging: solo-1girl + 1girl1boy targets → SAM3 masks → paint cond tree.
 
-    Runs prep.py's select + sam + cond stages (GPU: SAM3) into ``{base}``.
+    Runs prep.py's select + sam + cond + captions stages (GPU: SAM3) into ``{base}``.
     Knobs come from the descriptor's ``[staging]`` table. The cond-latent
     caching is the separate preprocess pass."""
     knobs = _toml_table_to_argv(cfg.get("staging") or {})
@@ -739,6 +739,7 @@ def _region_stage(adapter: str, cfg: dict, base: str, extra) -> None:
             PY,
             "easycontrol_adapters/region/prep.py",
             "--skip_encode",
+            "--skip_text",
             "--base",
             base,
             *knobs,
@@ -748,9 +749,10 @@ def _region_stage(adapter: str, cfg: dict, base: str, extra) -> None:
 
 
 def _region_preprocess(adapter: str, cfg: dict, base: str, extra) -> None:
-    """Region preprocess: VAE-cache the painted cond tree into ``{base}/cond``.
+    """Region preprocess: VAE-cache the painted cond tree into ``{base}/cond`` and
+    TE-cache the staged flat + positioned caption variants into ``{base}/text``.
 
-    Target latents/TE are reused from the shared LoRA cache (no re-encode)."""
+    Target latents/PE are reused from the shared LoRA cache (no re-encode)."""
     knobs = _toml_table_to_argv(cfg.get("preprocess") or {})
     run(
         [
@@ -759,6 +761,7 @@ def _region_preprocess(adapter: str, cfg: dict, base: str, extra) -> None:
             "--skip_select",
             "--skip_sam",
             "--skip_cond",
+            "--skip_captions",
             "--base",
             base,
             *knobs,
@@ -1261,8 +1264,8 @@ _EASY_ADAPTERS = {
     "sanitize": {"stage": _near_twins_stage, "preprocess": _near_twins_preprocess},
     "colorize": {"stage": _colorize_stage, "preprocess": _colorize_preprocess},
     "inpaint": {"stage": _inpaint_stage, "preprocess": _inpaint_preprocess},
-    # Paint-to-character: solo-1girl targets, SAM3 character masks gated +
-    # blob-augmented into a white-canvas paint cond tree.
+    # Paint-to-character: solo-1girl + 1girl1boy targets, SAM3 masks gated +
+    # augmented (exact→slack, face) into a real-background paint cond tree.
     "region": {"stage": _region_stage, "preprocess": _region_preprocess},
     "subject": {"stage": _subject_stage, "preprocess": _subject_preprocess},
     "subject_edit": {
