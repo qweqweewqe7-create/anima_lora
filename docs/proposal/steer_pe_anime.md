@@ -3,8 +3,9 @@
 Status: **Tier A RUN (2026-08-25)** — results in
 [`docs/experimental/steer_pe.md`](../experimental/steer_pe.md) §Tier A.
 Phase 2 (vocabulary) passes, abstain passes, **Phase 1 (attribute binding)
-fails at the data we have** (2 160 multi-instance rows, chance-level
-wrong-instance share); zero-shot words weak. Practical outcome: a
+fails and is closed** (chance-level wrong-instance share three times, the
+last on ~10 k pairs with distinct hair colours per instance — data was not
+the lever); zero-shot words weak. Practical outcome: a
 fixed-vocabulary anime concept grounder. Phases 3–4 unrun. Reuse inventory verified by code-reading; external datasets are listed
 as *candidates to verify* — none has been downloaded or licence-checked yet.
 

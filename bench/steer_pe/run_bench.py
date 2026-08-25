@@ -453,13 +453,19 @@ def main() -> None:
         print(
             f"drop_kinds={sorted(drop_kinds)}: -{before - len(train_rows)}", flush=True
         )
+    weighted_kinds = {
+        item.partition("=")[0].strip()
+        for item in args.kind_weight.split(",")
+        if item.strip()
+    }
     if args.max_per_kind > 0:
         random.shuffle(train_rows)
         seen: dict[str, int] = {}
         capped = []
         for r in train_rows:
             n = seen.get(r["kind"], 0)
-            if n < args.max_per_kind:
+            # An oversampled kind is never capped — the weight means "more".
+            if n < args.max_per_kind or r["kind"] in weighted_kinds:
                 capped.append(r)
                 seen[r["kind"]] = n + 1
         train_rows = capped

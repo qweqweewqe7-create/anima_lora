@@ -166,16 +166,31 @@ the same concept — the first run's concept `swapped` column is meaningless).
   on solo images the name is just "the girl"; no evidence the name itself is
   read.
 
+### Attribute retry with visible-attribute pairs (`20260825-2222-tierA-attr-v2`)
+
+The confound above was removed: `dump_instance_pairs.py --ungated_identity`
+on the main corpus **plus** the tagger crawl pool's multi-girl slice
+(`stage_retrieved_multi.py`: 1 766 images staged from
+`/media/…/dataset/retrieved`, 1 518 passed the gates → 3 818 instances).
+9 796 `attr_multi` rows, 67 % carrying a hair colour, **1 019 images where
+the instances have two distinct hair colours**; ×3 oversampled to 25.9 k train
+rows. Result: wrong-instance share-correct **0.525**, rival/own 0.95,
+attribute-map cosine **0.993** — chance again, and the concept kinds paid
+for it (hair 0.97 → 0.87, animal ears 0.72 → 0.33) because attribute rows
+dominated the mix. Three runs, three chance results, the last on data that
+does differ in a visible trait: **at this scale (PE-Spatial-B16, 32×32 grid,
+6 gated CA layers, ~10 k pairs) the recipe does not bind attributes to
+instances.** The line is closed unless the architecture changes (per-instance
+pooling / a decoder head), not with more data.
+
 ### Verdict / what to use
 
 Ship-able as a **fixed-vocabulary anime concept grounder** (girl / boy / face
 / person / hair / hands / clothing / ears / bubbles …) with a trustworthy
 abstain — the practical consumer set from the proposal (audit witness, SAM3
 box-prompt fallback, region `focus not found` rescue). Do **not** use it for
-"which girl" questions. If attribute binding is ever retried, the lever is
-data, not training knobs: multi-instance pairs whose prompts differ in a
-*visible* attribute (rerun the dump with `--ungated_identity`, or pair by hair
-colour from the crop tagger's raw scores) at ≥ 10 k rows.
+"which girl" questions — the visible-attribute retry above closed that with
+~10 k pairs; more data is not the lever.
 
 Adapter: `bench/steer_pe/results/20260825-2104-tierA/steer_pe_adapter.safetensors`
 (run 1 — the better concept numbers; run 2 traded concept accuracy for the
