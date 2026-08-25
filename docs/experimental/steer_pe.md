@@ -111,7 +111,77 @@ SAM3 (thr 0.4) on all 1 111 real-GT images, IoU of the per-prompt union mask:
   only rows worth keeping as a hard-case eval / training garnish. Re-download
   the full set if a broader real-GT eval is ever needed again.
 
-## Next phase (not started)
+## Tier A — in-house pseudo-labels (2026-08-25)
+
+Proposal `docs/proposal/steer_pe_anime.md` Tier A, run end-to-end in one
+evening. Data (`post_image_dataset/steer_pe/`, untracked):
+
+| Source | Script | Rows |
+|---|---|---|
+| A.1 multi-girl instances (SAM3 mask + crop-tagger tags, rival mask) | `bench/steer_pe/dump_instance_pairs.py --mode multi` | 453 imgs → 1 080 instances → 2 160 rows |
+| A.1/A.3 solo attributes + character names (text-only, Phase-0 girl mask) | `… --mode solo` | 2 624 attr + 1 488 name |
+| abstain negatives (absent hair/eye colour, wrong name) | both modes | 5 018 |
+| A.2 caption-gated SAM3 concept sweep (`concepts.yaml`, ~75 concepts + hair/eyes/hands always) | `bench/steer_pe/sweep_concepts.py` | 31 k positive + 25 k negative (12.9 k SAM3 no-det, 12 k absent-tag) |
+
+Bench additions: `--pairs_manifest` (JSONL row contract, `negative` /
+`rival_mask` fields), `pr_auc_by_kind`, `abstain`, `wrong_instance`,
+`--holdout_prompts` (zero-shot word test), `--drop_kinds`, `--kind_weight`.
+
+### Results (`20260825-2104-tierA`, `20260825-2117-tierA-attr`)
+
+Both 6 000 steps / 12 min, held-out by artist. The second run drops
+`attr_solo` from training and oversamples `attr_multi` ×4; its swapped-prompt
+control is the corrected one (a *different concept*, not the other phrasing of
+the same concept — the first run's concept `swapped` column is meaningless).
+
+| Kind (held-out) | steered | gate 0 | swapped (run 2) |
+|---|---|---|---|
+| the girl / boy / face | 0.98 / 0.91 / 0.96 | 0.80 / 0.20 / 0.54 | 0.78 / 0.23 / 0.34 |
+| hair / hands / eyes | 0.97 / 0.74 / 0.54 | 0.64 / 0.02 / 0.01 | 0.30 / 0.04 / – |
+| school uniform / swimsuit / speech bubble / sky / bag | 0.95 / 0.85 / 0.91 / 0.88 / 0.88 | 0.69 / 0.21 / 0.07 / 0.22 / 0.08 | – / 0.14 / 0.12 / – / – |
+| cat ears / animal ears / thighs / breasts / bed | 0.83 / 0.72 / 0.79 / 0.72 / 0.76 | 0.20 / 0.12 / 0.09 / 0.05 / 0.16 | – / 0.15 / – / – / – |
+| small things: choker / collar / necklace / navel / nipples | 0.13 / 0.01 / 0.08 / 0.06 / 0.18 | ~0 | – |
+| **attr_multi** (the attribute test) | **0.43–0.47** | 0.34–0.39 | 0.44–0.48 |
+| zero-shot held-out words umbrella / glasses / window | 0.34 / 0.14 / 0.09 | 0.12 / 0.00 / 0.07 | – |
+
+- **Vocabulary (Phase 2 goal): PASS.** Most concepts with ≥ ~50 training
+  masks land 0.7–0.97 with gate-0 near zero and swapped-prompt ≤ 0.3 — it is
+  the text. Speech bubble 0.91 is a free win for the region/mask pipelines.
+  Failures are the sub-patch objects (16 px patches at 512²) — expected, and
+  the pixel-decoder (Phase 4c) is the only fix.
+- **Abstain: PASS.** Mean prob 0.03–0.04 under an absent attribute / wrong
+  character name vs 0.17–0.33 under a present one.
+- **Attribute binding (Phase 1 gate): FAIL, twice.** `wrong_instance`
+  share-correct 0.475 → 0.458 (chance), rival/own ≈ 1.0, attribute-map cosine
+  0.987 → 0.961. Dropping the solo shortcut rows and ×4 oversampling did not
+  move it. The instance sheet shows correct SAM3 targets and a heat map that
+  floods every girl regardless of prompt. Caveat before calling the mechanism
+  dead: only 2 160 multi-instance rows exist (proposal kill line is 30 k+), and
+  their tags are mostly pose / anatomy (`standing, navel, nipples`) because the
+  clause vocabulary gates hair / eye colour on the caption listing both — the
+  data is thin *and* rarely visually discriminative.
+- **Zero-shot words: weak.** Slightly above frozen, far from the paper's
+  claim; with ~75 trained concepts the tower is still mostly a lookup table.
+- Character names 0.93–0.95 but gate-0 already 0.74–0.82 and swapped 0.83 —
+  on solo images the name is just "the girl"; no evidence the name itself is
+  read.
+
+### Verdict / what to use
+
+Ship-able as a **fixed-vocabulary anime concept grounder** (girl / boy / face
+/ person / hair / hands / clothing / ears / bubbles …) with a trustworthy
+abstain — the practical consumer set from the proposal (audit witness, SAM3
+box-prompt fallback, region `focus not found` rescue). Do **not** use it for
+"which girl" questions. If attribute binding is ever retried, the lever is
+data, not training knobs: multi-instance pairs whose prompts differ in a
+*visible* attribute (rerun the dump with `--ungated_identity`, or pair by hair
+colour from the crop tagger's raw scores) at ≥ 10 k rows.
+
+Adapter: `bench/steer_pe/results/20260825-2104-tierA/steer_pe_adapter.safetensors`
+(run 1 — the better concept numbers; run 2 traded concept accuracy for the
+attribute oversampling that did not pay).
+
+## Original next-phase note (superseded by Tier A above)
 
 Attribute supervision is the missing ingredient and it also exists in-house:
 the position-caption pipeline's per-instance boxes/masks carry identity tags

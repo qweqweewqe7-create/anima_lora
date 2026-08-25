@@ -1,0 +1,113 @@
+# Tier A.2 concept sweep — caption tag → SAM3 prompt.
+# A concept runs on an image only when its tag is in the caption (the caption
+# gates false grounding). ``always`` prompts run on every image regardless.
+# ``absent_ok`` concepts are safe abstain negatives when their tag is missing
+# from the caption (objects the booru taggers reliably list); body parts and
+# generic clothing are NOT, since a missing tag does not mean absence.
+threshold: 0.4
+always:
+  hair: hair
+  eyes: eyes
+  hands: hand
+concepts:
+  # body
+  breasts: breasts
+  nipples: nipple
+  navel: navel
+  thighs: thighs
+  ass: buttocks
+  legs: legs
+  feet: feet
+  armpits: armpit
+  tongue: tongue
+  penis: penis
+  pussy: vulva
+  # non-human parts
+  animal ears: animal ears
+  cat ears: cat ears
+  rabbit ears: rabbit ears
+  tail: tail
+  wings: wings
+  horns: horns
+  halo: halo
+  pointy ears: pointy ears
+  # hair style
+  twintails: twintails
+  ponytail: ponytail
+  braid: braid
+  # clothing
+  school uniform: school uniform
+  serafuku: sailor uniform
+  swimsuit: swimsuit
+  bikini: bikini
+  skirt: skirt
+  pleated skirt: pleated skirt
+  dress: dress
+  shirt: shirt
+  jacket: jacket
+  panties: panties
+  bra: bra
+  thighhighs: thigh-high stockings
+  pantyhose: pantyhose
+  socks: socks
+  gloves: gloves
+  shoes: shoes
+  boots: boots
+  high heels: high heels
+  hat: hat
+  necktie: necktie
+  ribbon: ribbon
+  bow: bow
+  choker: choker
+  collar: collar
+  glasses: glasses
+  hair ornament: hair ornament
+  hairclip: hair clip
+  earrings: earrings
+  necklace: necklace
+  # objects
+  phone: phone
+  cellphone: phone
+  smartphone: phone
+  pillow: pillow
+  bed: bed
+  flower: flower
+  food: food
+  cup: cup
+  book: book
+  bag: bag
+  umbrella: umbrella
+  chair: chair
+  table: table
+  window: window
+  sky: sky
+  cloud: cloud
+  water: water
+  speech bubble: speech bubble
+  heart: heart symbol
+absent_ok:
+  - phone
+  - pillow
+  - bed
+  - flower
+  - food
+  - cup
+  - book
+  - bag
+  - umbrella
+  - chair
+  - table
+  - window
+  - sky
+  - glasses
+  - hat
+  - umbrella
+  - wings
+  - horns
+  - tail
+  - animal ears
+  - speech bubble
+  - swimsuit
+  - school uniform
+  - thighhighs
+  - gloves

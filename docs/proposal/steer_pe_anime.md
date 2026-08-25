@@ -1,9 +1,11 @@
 # SteerPE — an anime-native, text-steerable vision tower (project proposal)
 
-Status: **PROPOSAL.** Phase 0 is done and measured
-([`docs/experimental/steer_pe.md`](../experimental/steer_pe.md),
-`bench/steer_pe/results/20260825-1713-p0/`); everything from Phase 1 on is
-unrun. Reuse inventory verified by code-reading; external datasets are listed
+Status: **Tier A RUN (2026-08-25)** — results in
+[`docs/experimental/steer_pe.md`](../experimental/steer_pe.md) §Tier A.
+Phase 2 (vocabulary) passes, abstain passes, **Phase 1 (attribute binding)
+fails at the data we have** (2 160 multi-instance rows, chance-level
+wrong-instance share); zero-shot words weak. Practical outcome: a
+fixed-vocabulary anime concept grounder. Phases 3–4 unrun. Reuse inventory verified by code-reading; external datasets are listed
 as *candidates to verify* — none has been downloaded or licence-checked yet.
 
 ## TL;DR

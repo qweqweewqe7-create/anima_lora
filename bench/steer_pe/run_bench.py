@@ -12,6 +12,14 @@ the region prep already produced, then scores held-out artists on:
 * qualitative sheets      — hair-colour prompts on ``2girls`` captions and the
                             audit's zero-box multi-view images
 
+Tier A (``docs/proposal/steer_pe_anime.md``) adds arbitrary pair sources
+through ``--pairs_manifest`` (JSONL, one ``collect_pairs`` row per line;
+``negative: true`` rows carry an empty mask, ``rival_mask`` rows score the
+wrong-instance share) and three metrics: ``pr_auc_by_kind`` for every kind in
+the mix, ``abstain`` (mean prob under an absent concept), ``wrong_instance``
+(mass on the rival instance / mass on the right one), plus
+``--holdout_prompts`` for the zero-shot held-out-word test.
+
 Run: ``make daemon-run ARGS="--label p0 bench/steer_pe/run_bench.py"``.
 """
 
@@ -97,6 +105,40 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--anime_seg_prompt", default="a person", help="prompt bound to Tier B masks"
     )
+    p.add_argument(
+        "--pairs_manifest",
+        action="append",
+        default=[],
+        help="JSONL of extra pair rows (image, mask|null, prompt, kind, artist, key, "
+        "negative?, rival_mask?). Repeatable. See bench/steer_pe/dump_instance_pairs.py",
+    )
+    p.add_argument(
+        "--no_region_pairs",
+        action="store_true",
+        help="Skip the Phase-0 region masks (train from manifests only)",
+    )
+    p.add_argument(
+        "--holdout_prompts",
+        default="",
+        help="Comma list of prompt substrings whose rows are dropped from TRAIN "
+        "but kept in test (zero-shot held-out-word test)",
+    )
+    p.add_argument(
+        "--max_per_kind",
+        type=int,
+        default=0,
+        help="Cap training rows per kind (0 = off) so a big sweep can't drown the rest",
+    )
+    p.add_argument(
+        "--drop_kinds",
+        default="",
+        help="Comma list of kinds removed from TRAIN only (still evaluated)",
+    )
+    p.add_argument(
+        "--kind_weight",
+        default="",
+        help="kind=N[,kind=N] — repeat a kind's train rows N times (oversample)",
+    )
     p.add_argument("--pe", default="pe_spatial", choices=["pe_spatial", "pe_core"])
     p.add_argument("--res", type=int, default=512)
     p.add_argument("--steps", type=int, default=2000)
@@ -174,6 +216,39 @@ def collect_anime_seg(root: Path, prompt: str) -> list[dict]:
     return rows
 
 
+def collect_manifest(path: Path) -> list[dict]:
+    """Rows written by ``dump_instance_pairs.py`` / ``sweep_concepts.py``.
+
+    Paths are repo-relative or absolute; ``mask`` may be null only when
+    ``negative`` is set (empty target). Missing image/mask files are skipped so a
+    partially regenerated dump still loads."""
+    rows = []
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            r = json.loads(line)
+            img = resolve_under_home(r["image"])
+            if not img.exists():
+                continue
+            r["image"] = str(img)
+            if r.get("negative"):
+                r["mask"] = None
+            else:
+                m = resolve_under_home(r["mask"])
+                if not m.exists():
+                    continue
+                r["mask"] = str(m)
+            if r.get("rival_mask"):
+                rv = resolve_under_home(r["rival_mask"])
+                r["rival_mask"] = str(rv) if rv.exists() else None
+            r.setdefault("negative", False)
+            r.setdefault("rival_mask", None)
+            rows.append(r)
+    return rows
+
+
 def split_by_artist(rows: list[dict], frac: float, seed: int):
     def h(a: str) -> float:
         return (
@@ -194,7 +269,14 @@ class PairDataset(Dataset):
 
     def __getitem__(self, i):
         r = self.rows[i]
-        if r["mask"] is None:  # RGBA foreground: alpha is the mask
+        if r.get("negative"):  # absent concept: empty target
+            img = (
+                Image.open(r["image"])
+                .convert("RGB")
+                .resize((self.res, self.res), Image.BICUBIC)
+            )
+            msk = Image.new("L", (self.res, self.res), 0)
+        elif r["mask"] is None:  # RGBA foreground: alpha is the mask
             rgba = Image.open(r["image"]).convert("RGBA")
             msk = rgba.getchannel("A").resize((self.res, self.res), Image.BILINEAR)
             bg = Image.new(
@@ -345,8 +427,51 @@ def main() -> None:
     region_base = resolve_under_home(args.region_base)
     resized = resolve_under_home(args.resized_dir)
 
-    rows = collect_pairs(region_base, resized)
+    rows = [] if args.no_region_pairs else collect_pairs(region_base, resized)
+    for mp in args.pairs_manifest:
+        got = collect_manifest(resolve_under_home(mp))
+        print(f"manifest {mp}: {len(got)} rows", flush=True)
+        rows += got
+    for r in rows:
+        r.setdefault("negative", False)
+        r.setdefault("rival_mask", None)
     train_rows, test_rows = split_by_artist(rows, args.holdout_frac, args.seed)
+    holdout_words = [w.strip() for w in args.holdout_prompts.split(",") if w.strip()]
+    if holdout_words:
+        before = len(train_rows)
+        train_rows = [
+            r for r in train_rows if not any(w in r["prompt"] for w in holdout_words)
+        ]
+        print(
+            f"holdout_prompts={holdout_words}: dropped {before - len(train_rows)} train rows",
+            flush=True,
+        )
+    drop_kinds = {k.strip() for k in args.drop_kinds.split(",") if k.strip()}
+    if drop_kinds:
+        before = len(train_rows)
+        train_rows = [r for r in train_rows if r["kind"] not in drop_kinds]
+        print(
+            f"drop_kinds={sorted(drop_kinds)}: -{before - len(train_rows)}", flush=True
+        )
+    if args.max_per_kind > 0:
+        random.shuffle(train_rows)
+        seen: dict[str, int] = {}
+        capped = []
+        for r in train_rows:
+            n = seen.get(r["kind"], 0)
+            if n < args.max_per_kind:
+                capped.append(r)
+                seen[r["kind"]] = n + 1
+        train_rows = capped
+    if args.kind_weight:
+        weights = {}
+        for item in args.kind_weight.split(","):
+            k, _, n = item.partition("=")
+            if k.strip():
+                weights[k.strip()] = max(1, int(n or 1))
+        extra = [r for r in train_rows for _ in range(weights.get(r["kind"], 1) - 1)]
+        train_rows = train_rows + extra
+        print(f"kind_weight={weights}: +{len(extra)} rows", flush=True)
     aseg_test: list[dict] = []
     if args.anime_seg_mode != "off":
         aseg = collect_anime_seg(Path(args.anime_seg), args.anime_seg_prompt)
@@ -360,11 +485,13 @@ def main() -> None:
             f"eval={len(aseg_test)}",
             flush=True,
         )
-    all_kinds = list(KINDS) + ["aseg_imgs", "aseg_fg"]
-    counts = {
-        k: sum(r["kind"] == k for r in rows + aseg_test + train_rows) for k in all_kinds
-    }
-    counts = {k: v for k, v in counts.items() if v}
+    counts = {}
+    for r in rows + aseg_test:
+        counts[r["kind"]] = counts.get(r["kind"], 0) + 1
+    train_counts = {}
+    for r in train_rows:
+        train_counts[r["kind"]] = train_counts.get(r["kind"], 0) + 1
+    print(f"train by kind: {train_counts}", flush=True)
     print(
         f"pairs={len(rows)} train={len(train_rows)} test={len(test_rows)} {counts}",
         flush=True,
@@ -463,14 +590,41 @@ def main() -> None:
         "the face": "a person",
         "a person": "the face",
     }
+    # Swap partner for an arbitrary prompt: a different prompt of the same
+    # kind when one exists (e.g. the other instance's attributes), else a
+    # random prompt of another kind — either way "is it the text".
+    prompts_by_kind: dict[str, list[str]] = {}
+    for r in test_rows:
+        if not r["negative"]:
+            prompts_by_kind.setdefault(r["kind"], []).append(r["prompt"])
+    all_prompts = sorted({r["prompt"] for r in test_rows if not r["negative"]})
+    rng = random.Random(args.seed)
+
+    prompt_kind = {r["prompt"]: r["kind"] for r in test_rows if not r["negative"]}
+
+    def swap_for(prompt: str, kind: str) -> str:
+        """A prompt of a DIFFERENT kind (concept rows carry two phrasings of
+        the same concept, so same-kind would swap skirt <-> the skirt); for
+        multi-instance rows, another instance's attributes (same kind)."""
+        if prompt in swap:
+            return swap[prompt]
+        if kind == "attr_multi":
+            same = [q for q in prompts_by_kind.get(kind, []) if q != prompt]
+            if same:
+                return rng.choice(same)
+        pool = [q for q in all_prompts if prompt_kind.get(q) != kind]
+        return rng.choice(pool) if pool else prompt
+
     per_prompt: dict[str, dict[str, list[float]]] = {
         p: {"steered": [], "gate0": [], "swapped": []} for p in KINDS.values()
     }
+    per_kind: dict[str, dict[str, list[float]]] = {}
     tiles = []
     by_kind: dict[str, list[dict]] = {}
     for r in test_rows:
-        by_kind.setdefault(r["kind"], []).append(r)
-    eval_rows = [r for k in KINDS for r in by_kind.get(k, [])[: args.max_eval]]
+        if not r["negative"]:
+            by_kind.setdefault(r["kind"], []).append(r)
+    eval_rows = [r for k in sorted(by_kind) for r in by_kind[k][: args.max_eval]]
     ds = PairDataset(eval_rows, args.res, train=False)
     for x, m, prompts, idx in DataLoader(
         ds, batch_size=args.batch_size, num_workers=args.workers
@@ -478,29 +632,38 @@ def main() -> None:
         x, m = x.to(dev), m.to(dev)
         target = patch_targets(m, model.grid(x)) > 0.5
         prompts = list(prompts)
+        kinds = [eval_rows[int(i)]["kind"] for i in idx]
+        swapped_prompts = [swap_for(p, k) for p, k in zip(prompts, kinds)]
         steered = heat(model, bank, x, prompts)
         gate0 = heat(model, bank, x, prompts, gate=0.0)
-        swapped = heat(model, bank, x, [swap[p] for p in prompts])
+        swapped = heat(model, bank, x, swapped_prompts)
         for j, p in enumerate(prompts):
             if target[j].sum() == 0:
                 continue
-            per_prompt[p]["steered"].append(pr_auc(steered[j], target[j]))
-            per_prompt[p]["gate0"].append(pr_auc(gate0[j], target[j]))
-            per_prompt[p]["swapped"].append(pr_auc(swapped[j], target[j]))
-            if len(tiles) < 48 and int(idx[j]) % 7 == 0:
+            st, g0, sw = (
+                pr_auc(steered[j], target[j]),
+                pr_auc(gate0[j], target[j]),
+                pr_auc(swapped[j], target[j]),
+            )
+            bucket = per_kind.setdefault(
+                kinds[j], {"steered": [], "gate0": [], "swapped": []}
+            )
+            bucket["steered"].append(st)
+            bucket["gate0"].append(g0)
+            bucket["swapped"].append(sw)
+            if p in per_prompt:
+                per_prompt[p]["steered"].append(st)
+                per_prompt[p]["gate0"].append(g0)
+                per_prompt[p]["swapped"].append(sw)
+            if len(tiles) < 72 and int(idx[j]) % 7 == 0:
                 tiles.append(
-                    overlay(
-                        x[j],
-                        steered[j].sigmoid(),
-                        f"{p}  auc={per_prompt[p]['steered'][-1]:.2f}",
-                        m[j],
-                    )
+                    overlay(x[j], steered[j].sigmoid(), f"{p}  auc={st:.2f}", m[j])
                 )
                 tiles.append(
                     overlay(
                         x[j],
                         swapped[j].sigmoid(),
-                        f"swap:{swap[p]}  auc={per_prompt[p]['swapped'][-1]:.2f}",
+                        f"swap:{swapped_prompts[j]}  auc={sw:.2f}",
                         m[j],
                     )
                 )
@@ -509,8 +672,83 @@ def main() -> None:
         | {"n": len(d["steered"])}
         for p, d in per_prompt.items()
     }
+    metrics["pr_auc_by_kind"] = {
+        k: {kk: (float(np.nanmean(v)) if v else None) for kk, v in d.items()}
+        | {"n": len(d["steered"])}
+        for k, d in sorted(per_kind.items())
+    }
     sheet(tiles, 6).save(run_dir / "heldout_sheet.png")
     print("PR-AUC:", json.dumps(metrics["pr_auc"], indent=1), flush=True)
+    print(
+        "PR-AUC by kind:", json.dumps(metrics["pr_auc_by_kind"], indent=1), flush=True
+    )
+
+    # ── abstain: mean prob under a prompt whose concept is absent ─────────
+    neg_rows = [r for r in test_rows if r["negative"]][: args.max_eval * 2]
+    pos_ref = [r for r in eval_rows][: len(neg_rows)]
+    if neg_rows:
+        neg_mean, neg_max, pos_mean = [], [], []
+        for x, _m, prompts, _i in DataLoader(
+            PairDataset(neg_rows, args.res, train=False),
+            batch_size=args.batch_size,
+            num_workers=args.workers,
+        ):
+            pr = heat(model, bank, x.to(dev), list(prompts)).sigmoid()
+            neg_mean += pr.flatten(1).mean(1).tolist()
+            neg_max += pr.flatten(1).max(1).values.tolist()
+        for x, _m, prompts, _i in DataLoader(
+            PairDataset(pos_ref, args.res, train=False),
+            batch_size=args.batch_size,
+            num_workers=args.workers,
+        ):
+            pr = heat(model, bank, x.to(dev), list(prompts)).sigmoid()
+            pos_mean += pr.flatten(1).mean(1).tolist()
+        metrics["abstain"] = {
+            "n": len(neg_mean),
+            "neg_mean_prob": float(np.mean(neg_mean)),
+            "neg_max_prob": float(np.mean(neg_max)),
+            "pos_mean_prob": float(np.mean(pos_mean)) if pos_mean else None,
+            "kinds": sorted({r["kind"] for r in neg_rows}),
+        }
+        print("abstain:", metrics["abstain"], flush=True)
+
+    # ── wrong-instance share on multi-instance images (rival_mask rows) ───
+    riv_rows = [r for r in test_rows if r.get("rival_mask")][: args.max_eval]
+    if riv_rows:
+        right, wrong, rtiles = [], [], []
+        for r in riv_rows:
+            x = load_image(Path(r["image"]), args.res)[None].to(dev)
+            own = PairDataset([r], args.res, False)[0][1].to(dev)
+            rv = PairDataset(
+                [{**r, "mask": r["rival_mask"], "negative": False}], args.res, False
+            )[0][1].to(dev)
+            ot = patch_targets(own[None], model.grid(x))[0] > 0.5
+            rt = patch_targets(rv[None], model.grid(x))[0] > 0.5
+            if ot.sum() == 0 or rt.sum() == 0:
+                continue
+            pr = heat(model, bank, x, [r["prompt"]])[0].sigmoid()
+            a, b = float(pr[ot].mean()), float(pr[rt].mean())
+            right.append(a)
+            wrong.append(b)
+            if len(rtiles) < 36:
+                rtiles.append(
+                    overlay(
+                        x[0], pr, f"{r['prompt'][:40]} own={a:.2f} rival={b:.2f}", own
+                    )
+                )
+        metrics["wrong_instance"] = {
+            "n": len(right),
+            "own_mean_prob": float(np.mean(right)) if right else None,
+            "rival_mean_prob": float(np.mean(wrong)) if wrong else None,
+            "rival_over_own": (
+                float(np.mean(wrong) / max(np.mean(right), 1e-6)) if right else None
+            ),
+            "share_correct": (
+                float(np.mean([a > b for a, b in zip(right, wrong)])) if right else None
+            ),
+        }
+        sheet(rtiles, 6).save(run_dir / "instance_sheet.png")
+        print("wrong_instance:", metrics["wrong_instance"], flush=True)
 
     # ── Tier B: held-out anime-segmentation real GT (teacher-independent) ─
     if aseg_test:
@@ -542,6 +780,8 @@ def main() -> None:
     # ── pair steer: girl vs boy on images that carry both masks ───────────
     girl = {r["key"]: r for r in test_rows if r["kind"] == "masks"}
     boy = {r["key"]: r for r in test_rows if r["kind"] == "masks_boy"}
+    if args.no_region_pairs:
+        girl, boy = {}, {}
     both = sorted(set(girl) & set(boy))[: args.max_eval]
     pair = {
         "n": len(both),
@@ -661,6 +901,7 @@ def main() -> None:
             "attribute_sheet.png",
             "attribute_probe.json",
             "multiview_sheet.png",
+            "instance_sheet.png",
         ],
     )
     print(f"result → {run_dir}", flush=True)
