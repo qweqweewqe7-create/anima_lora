@@ -43,7 +43,7 @@ from library.captioning.position_clauses import parse_caption
 from library.captioning.tag_groups import load_groups
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
-TAGGER = REPO / "models" / "captioners" / "anima-tagger-v5"
+TAGGER = REPO / "models" / "captioners" / "anima-tagger-dbv4"
 SPEC_PATH = REPO / "workflows" / "randoms_build.yaml"
 
 HEADER = """\

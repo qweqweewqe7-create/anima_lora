@@ -183,15 +183,12 @@ class TagReadback:
 
     @torch.no_grad()
     def image_logits(self, pil_img) -> torch.Tensor:
-        """Encode one PIL image through the frozen dual-encoder head → ``[n_tags]``.
+        """Encode one PIL image through the frozen tagger → ``[n_tags]`` logits.
 
-        The live path for arbitrary renders (no cached feature). Mirrors
-        :meth:`AnimaTagger.predict` but returns raw logits.
+        The live path for arbitrary renders (no cached feature); backend-
+        agnostic via :meth:`AnimaTagger.tag_logits` (PE head or dbv4).
         """
-        feat = self.tagger._encode_image(pil_img).unsqueeze(0).to(self.device)
-        feat_aux = self.tagger._encode_image_aux(pil_img).unsqueeze(0).to(self.device)
-        tag_logits, _rating, _people = self.tagger.model(feat, feat_aux)
-        return tag_logits[0].float().cpu()
+        return self.tagger.tag_logits(pil_img)
 
     @torch.no_grad()
     def readback_images(

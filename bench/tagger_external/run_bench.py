@@ -265,33 +265,22 @@ def collect_external(
 def align_vocab(vocab: dict, ext_rows: List[dict], rename_recovery: Dict[str, str]):
     """Return ``(ours_idx, ext_idx, ext_rating_cols, unmatched_by_cat)``.
 
-    External names are danbooru ``snake_case``; ours are space-separated
-    (rules.yaml may have renamed some — try the recovered original too).
+    Thin shim over ``library.captioning.dbv4_backend.align_vocab`` — the same
+    join the shipped dbv4 backend uses, so the bench and the tagger can't drift.
     """
-    ext_by_name = {}
-    ext_rating_cols: Dict[str, int] = {}
+    from library.captioning.dbv4_backend import Dbv4Card
+    from library.captioning.dbv4_backend import align_vocab as _align
+
+    card = Dbv4Card(repo="external", rows=ext_rows, model_args={})
     for j, r in enumerate(ext_rows):
-        cat = int(r["category"])
-        name = r["name"].replace("_", " ")
-        if cat == 9:
+        if int(r["category"]) == 9:
             our = RATING_MAP.get(r["name"])
             if our:
-                ext_rating_cols[our] = j
+                card.rating_cols[our] = j
             continue
-        ext_by_name[name] = j
-    ours_idx, ext_idx = [], []
-    unmatched: Dict[str, int] = {}
-    for t in vocab["tags"]:
-        name = t["name"]
-        j = ext_by_name.get(name)
-        if j is None and name in rename_recovery:
-            j = ext_by_name.get(rename_recovery[name])
-        if j is None:
-            unmatched[t["category"]] = unmatched.get(t["category"], 0) + 1
-            continue
-        ours_idx.append(t["index"])
-        ext_idx.append(j)
-    return torch.tensor(ours_idx), torch.tensor(ext_idx), ext_rating_cols, unmatched
+        card.name_to_col[r["name"].replace("_", " ")] = j
+    a = _align(vocab["tags"], card, rename_recovery)
+    return a.ours_idx, a.ext_idx, card.rating_cols, a.unmatched_by_category
 
 
 # --------------------------------------------------------------------------- #

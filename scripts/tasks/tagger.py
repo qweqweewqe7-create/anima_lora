@@ -113,3 +113,17 @@ def cmd_autotag(extra):
     Extra args (``--image``, ``--tagger_dir``, ``--device``) forwarded verbatim.
     """
     run([PY, "-m", "scripts.anima_tagger.autotag", *extra])
+
+
+def cmd_tagger_dbv4(extra):
+    """Build the dbv4-backed tagger checkpoint dir (external caformer backend).
+
+    ``python -m scripts.anima_tagger.build_dbv4_ckpt`` — copies our vocab /
+    rules / groups / split from ``--src`` (default ``anima-tagger-v5``) next to
+    a ``config.json`` naming the upstream ``animetimm/*.dbv4-full`` repo and
+    thresholds seeded from its card. No weights are vendored (GPL-3.0, gated
+    — fetched under the user's HF token on first use). Then train the sidecar
+    head (copyright / OC characters / people-count) on the GPU via
+    ``make daemon-run ARGS="scripts/anima_tagger/train_sidecar.py"``.
+    """
+    run([PY, "-m", "scripts.anima_tagger.build_dbv4_ckpt", *extra])

@@ -26,7 +26,7 @@ The node works in two install shapes:
 
 Both checkpoints auto-download on first use:
 
-- **Tagger checkpoint** (~26 MB) is fetched from [`sorryhyun/anima-tagger`](https://huggingface.co/sorryhyun/anima-tagger) into `tagger_dir` (default `models/captioners/anima-tagger-v5`) when any required file is missing.
+- **Tagger checkpoint** (~26 MB) is fetched from [`sorryhyun/anima-tagger`](https://huggingface.co/sorryhyun/anima-tagger) into `tagger_dir` (default `models/captioners/anima-tagger-dbv4`) when any required file is missing.
 - **PE-Core-L14-336** vision encoder (~1 GB) is fetched from `facebook/PE-Core-L14-336` into `pe_ckpt` (default `models/pe/PE-Core-L14-336.pt`).
 
 ### For maintainers — keeping the vendor copy fresh
@@ -52,7 +52,7 @@ python scripts/release/sync_vendor.py     # from the anima_lora repo root (refre
   pe_lora.safetensors      # PE-LoRA delta on PE-Core trailing blocks   (optional, gated on config.pe_lora=true)
 ```
 
-Default `tagger_dir` is `models/captioners/anima-tagger-v5` (relative to the `anima_lora/` repo root in dev install, or to ComfyUI root in standalone install). Absolute paths used as-is. Re-train via `python -m scripts.anima_tagger.cli` in the parent repo to produce a custom checkpoint.
+Default `tagger_dir` is `models/captioners/anima-tagger-dbv4` (relative to the `anima_lora/` repo root in dev install, or to ComfyUI root in standalone install). Absolute paths used as-is. Re-train via `python -m scripts.anima_tagger.cli` in the parent repo to produce a custom checkpoint.
 
 ## Usage
 
@@ -62,7 +62,7 @@ Default `tagger_dir` is `models/captioners/anima-tagger-v5` (relative to the `an
 [Load Image] ──┐
                ├─► [Anima Tagger Caption] ──► [Save Text File]
 [Anima Tagger Loader] ──┘
-       tagger_dir: models/captioners/anima-tagger-v5
+       tagger_dir: models/captioners/anima-tagger-dbv4
 ```
 
 ### Drive a normal text-to-image generation from an existing image's tags

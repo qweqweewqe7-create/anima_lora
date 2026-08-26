@@ -96,6 +96,12 @@ TAGGER_VERBATIM: list[tuple[str, str]] = [
     ),
     ("library/captioning/tag_rules.py", "library/captioning/tag_rules.py"),
     ("library/captioning/tag_groups.py", "library/captioning/tag_groups.py"),
+    # dbv4 backend (external caformer behind the same contract) + the
+    # torch-free tag-shape helpers it needs; hf_download fetches the gated
+    # upstream weights + card.
+    ("library/captioning/dbv4_backend.py", "library/captioning/dbv4_backend.py"),
+    ("library/captioning/taxonomy.py", "library/captioning/taxonomy.py"),
+    ("library/runtime/hf_download.py", "library/runtime/hf_download.py"),
     ("library/vision/encoder.py", "library/vision/encoder.py"),
     ("library/vision/encoders.py", "library/vision/encoders.py"),
     ("library/vision/buckets.py", "library/vision/buckets.py"),
@@ -112,6 +118,7 @@ TAGGER_PACKAGE_DIRS: list[str] = [
     "library/vision",
     "library/models",
     "library/datasets",
+    "library/runtime",
     "networks",
     "networks/methods",
 ]

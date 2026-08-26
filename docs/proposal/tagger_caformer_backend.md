@@ -1,7 +1,58 @@
 # Anima Tagger → external dbv4 backbone: archive the training pipeline, keep the contract
 
-Status: **PROPOSED (2026-08-26)** — Phase 0 (the measurement) is done and is
-the reason this document exists. Nothing below Phase 0 has run.
+Status: **Phases 1–2 LANDED (2026-08-27)**, artist scope dropped by decision.
+Phase 0 (the measurement) is the reason this document exists.
+
+**2026-08-27 results** — `config.json["backend"]="dbv4"` behind the unchanged
+`AnimaTagger.predict()` contract (`library/captioning/dbv4_backend.py`,
+`make tagger-dbv4` → `models/captioners/anima-tagger-dbv4/`, sidecar via
+`daemon-run scripts/anima_tagger/train_sidecar.py`):
+
+- **Sidecar** (linear on caformer's 3072-d MLP-head hidden, 238 rows =
+  118 copyright + 36 OC characters + 84 danbooru-renamed generals; **no
+  `@artist`** — the user decided artist attribution is not a tagger goal):
+  copyright macro-F1 **0.815** / mAP 0.92 (v5 0.638 → gate passed), OC
+  characters 0.889 / 0.98, renamed generals 0.40 / 0.61. People-count: the
+  plain count-tag rule on dbv4's count tags scores **0.943** vs the sidecar
+  head 0.929 vs v5 0.885 — the rule is shipped as authoritative (it is also
+  consistent with the emitted `Ngirls` tags); the head's softmax is exposed
+  as `people_count_scores` only.
+- **Phase 1 gate** (`bench/position_captions/probe_autocaption.py`, same-day
+  v5 baseline on today's 338-GT-image population, 168 hair / 45 character
+  positions): hair-position accuracy **0.566 → 0.750**, character-position
+  **0.822 → 0.911**, count 0.757 (shared SAM3 detections). The proposal's
+  "≥ 0.80 hair" was set against the 0.30 12-sheet number; on this larger
+  population the remaining 42 misses are adjacent-shade confusions
+  (grey↔white, blue/purple→black on dark art), not a backend defect.
+- Two backend-specific rules were needed and are unit-pinned
+  (`tests/test_tagger_dbv4_backend.py`): pure-`softmax` groups only emit a
+  winner that clears its own threshold (dbv4 was never CE-trained on our
+  groups — the first live run emitted `@aak`/`loli`/`uncensored` off a −30
+  logit), and the `original`-copyright OC/artist consistency rule is skipped
+  (no artist is ever emitted, so it killed 9/12 mignon OC hits).
+- **Default flipped** (same day): `DEFAULT_TAGGER_DIR` →
+  `models/captioners/anima-tagger-dbv4`, `TAGGER_HF_SUBFOLDER` → `dbv4/`
+  (our vocab/rules/groups/thresholds/sidecar only — the backbone is fetched
+  from the gated upstream repo); ComfyUI node, `make download-tagger`,
+  caption-index vocab default and the node's `_vendor` tree follow.
+- **Phase 3 calibration** (`bench/tagger_external/calibration_check.py`,
+  `results/20260827-*-dbv4-calib`): head-tier ECE **0.019** (gate ≤ 0.05
+  PASS; mid 0.006, tail 0.002 — pooled ECE is dominated by the negative mass;
+  above 0.5 the backbone is mildly over-confident, conf−acc +0.08…+0.16).
+  Threshold transfer: only 55 % of head tags have the card `best_threshold`
+  within ±0.10 of our val-optimal (gate ≥ 80 % FAIL) **but** mean card−val
+  = +0.007 and median |Δ| = 0.09 — no systematic bias, just 0.05-grid noise
+  on few-positive tags. Verdict: keep the card thresholds; recalibrating on
+  791 val images would re-introduce the v4 hair-trigger problem. Sidecar
+  rows: ECE 0.002 (val-calibrated by construction).
+- **Phase 4 readback** (`bench/readback/results/20260827-0827-dbv4`, logits
+  off the sidecar feature cache): shuffled-caption win-rate **1.000**, AUROC
+  **1.000**, recall@1 row/col 0.979 / 0.987 (v3-era 0.991 / 0.98) → PASS;
+  the read-back instrument is strictly stronger on the new backend.
+- Still open: the `caption-position` knob resweep (`bag_relax` /
+  `_EDGE_CLEAR`, soft-prompt proposal A3), Phase 5 (RWR), Phase 6 (archive
+  the PE training pipeline + 158 GB caches), and uploading the `dbv4/`
+  subfolder to `sorryhyun/anima-tagger` so the auto-fetch resolves.
 
 ## TL;DR
 

@@ -100,7 +100,7 @@ def cmd_download_tagger(_extra):
     # Tracks the live checkpoint (``TAGGER_HF_SUBFOLDER`` / ``DEFAULT_TAGGER_DIR``
     # in library/captioning/anima_tagger.py) so the vocab matches the model that
     # actually runs.
-    sub = "v5"
+    sub = "dbv4"
     rel = f"models/captioners/anima-tagger-{sub}"
     dst = ROOT / rel
     if _skip("Anima Tagger vocab", [dst / "vocab.json"], _extra):

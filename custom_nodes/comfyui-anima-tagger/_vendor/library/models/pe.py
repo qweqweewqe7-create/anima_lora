@@ -550,6 +550,20 @@ PE_CONFIGS: dict[str, PEConfig] = {
         pool_type="none",
         use_ln_post=False,
     ),
+    # Large spatial variant (same drop-the-head recipe as B16; 448px native,
+    # patch 14 → the same 32x32 = 1024 patch grid + CLS).
+    "PE-Spatial-L14-448": PEConfig(
+        image_size=448,
+        patch_size=14,
+        width=1024,
+        layers=24,
+        heads=16,
+        mlp_ratio=4.0,
+        output_dim=None,
+        use_cls_token=True,
+        pool_type="none",
+        use_ln_post=False,
+    ),
 }
 
 

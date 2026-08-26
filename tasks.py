@@ -291,6 +291,12 @@ COMMANDS = {
         "Predict tags for a single image (--image <path>) or sample a random "
         "val-split stem. Pass --show_scores for rating + top-K kept tags.",
     ),
+    "tagger-dbv4": (
+        tagger.cmd_tagger_dbv4,
+        "Build the dbv4-backed (external caformer_b36) tagger checkpoint dir "
+        "from anima-tagger-v5's vocab; sidecar training runs separately via "
+        "daemon-run scripts/anima_tagger/train_sidecar.py.",
+    ),
     "autotag": (
         tagger.cmd_autotag,
         "Autotag one image (--image <path>) with the Anima Tagger "

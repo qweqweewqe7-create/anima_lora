@@ -12,12 +12,19 @@ bucketing) consume those constants.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Optional, Tuple
+from typing import Optional, Tuple
 
 # Count-tag detection lives in the shared torch-free tag-shape module so the
 # vocab build and caption-index builder can't drift. Re-exported here
-# (``_COUNT_RE`` is imported by ``train_common``).
-from library.captioning.taxonomy import _COUNT_RE, _LEADING_INT_RE, is_count_tag
+# (``_COUNT_RE`` is imported by ``train_common``); ``classify_people`` moved
+# there too so the torch-free inference path (dbv4 backend without a sidecar)
+# can bucket people-counts from count tags.
+from library.captioning.taxonomy import (
+    _COUNT_RE,
+    _LEADING_INT_RE,
+    classify_people,
+    is_count_tag,
+)
 
 __all__ = [
     "_COUNT_RE",
@@ -39,76 +46,3 @@ def find_image_for_caption(caption_path: Path) -> Optional[Path]:
         if candidate.exists():
             return candidate
     return None
-
-
-def classify_people(tags: Iterable[str]) -> int:
-    """Derive the 8-class :data:`PEOPLE_COUNT_LABELS` index for a parsed-tag list.
-
-    Bucketing rules:
-
-    * ``no_people`` (0) — no count tag at all
-    * ``1girl`` (1), ``2girls`` (3), ``1boy`` (6) — exact-girls-no-boy /
-      exact-boys-no-girl combos
-    * ``1girl_1boy`` (2), ``2girls_1boy`` (4), ``2boys_1girl`` (5) —
-      the three explicit mixed combos
-    * ``multi`` (7) — anything else with a count tag: ``3+girls``,
-      ``3+boys``, ``2girls+2+boys``, ``Nothers``, or a ``multiple_*`` tag
-      with no explicit numeric companion. ``others`` count tags ride into
-      ``multi`` since the head is girls/boys-shaped.
-
-    Booru auto-fires ``multiple_girls`` / ``multiple_boys`` whenever the
-    count is ≥2, not just ≥3 — so it cannot be treated as a ≥3 signal on
-    its own. We defer to the explicit numeric count tag when one is
-    present; ``multiple_*`` only contributes as a floor of 2 when no
-    numeric tag for that gender was seen.
-
-    Tag order in ``tags`` doesn't matter — counts are reduced first.
-    """
-    girls = boys = 0
-    saw_multi_g = saw_multi_b = False
-    saw_other = False
-    for t in tags:
-        if not is_count_tag(t):
-            continue
-        if t.startswith("multiple"):
-            if "girl" in t:
-                saw_multi_g = True
-            elif "boy" in t:
-                saw_multi_b = True
-            elif "other" in t:
-                saw_other = True
-            continue
-        m = _LEADING_INT_RE.match(t)
-        if m is None:  # e.g. malformed; defensive
-            continue
-        n = int(m.group(1))
-        if "girl" in t:
-            girls = max(girls, n)
-        elif "boy" in t:
-            boys = max(boys, n)
-        # "others" counts go to the "multi" indicator (no 7-bucket fit).
-        elif "other" in t:
-            saw_other = True
-    # ``multiple_*`` only kicks in when the numeric tag is missing; treat as ≥2
-    # not ≥3, since that's what the booru auto-tag means.
-    if saw_multi_g and girls == 0:
-        girls = 2
-    if saw_multi_b and boys == 0:
-        boys = 2
-    if saw_other or girls >= 3 or boys >= 3 or (boys >= 2 and girls >= 2):
-        return 7  # multi: 3+girls / 3+boys / 2g+2b+ / lonely multiple_* / Nothers
-    if girls == 0 and boys == 0:
-        return 0  # no_people (only when no count tag fired)
-    if girls == 1 and boys == 0:
-        return 1  # 1girl
-    if girls == 1 and boys == 1:
-        return 2  # 1girl_1boy
-    if girls == 2 and boys == 0:
-        return 3  # 2girls
-    if girls == 2 and boys == 1:
-        return 4  # 2girls_1boy
-    if girls == 1 and boys == 2:
-        return 5  # 2boys_1girl
-    if girls == 0 and boys == 1:
-        return 6  # 1boy
-    return 7  # fallback (e.g. 0g/2b without "others")

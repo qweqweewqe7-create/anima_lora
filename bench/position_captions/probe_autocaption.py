@@ -185,6 +185,12 @@ def parse_args() -> argparse.Namespace:
         "--pad", type=float, default=0.06, help="bbox padding, fraction of box size"
     )
     p.add_argument("--device", default="cuda")
+    p.add_argument(
+        "--tagger_dir",
+        default=None,
+        help="AnimaTagger checkpoint dir (default: DEFAULT_TAGGER_DIR; pass "
+        "models/captioners/anima-tagger-dbv4 for the external backend).",
+    )
     p.add_argument("--label", default=None)
     return p.parse_args()
 
@@ -269,7 +275,9 @@ def main() -> None:
     )
     from library.env import resolve_under_home  # noqa: E402
 
-    ckpt_dir = ensure_tagger_checkpoint(resolve_under_home(DEFAULT_TAGGER_DIR))
+    ckpt_dir = ensure_tagger_checkpoint(
+        resolve_under_home(args.tagger_dir or DEFAULT_TAGGER_DIR)
+    )
     tagger = AnimaTagger(ckpt_dir, device=args.device)
     with open(Path(ckpt_dir) / "vocab.json", encoding="utf-8") as f:
         vocab = json.load(f)

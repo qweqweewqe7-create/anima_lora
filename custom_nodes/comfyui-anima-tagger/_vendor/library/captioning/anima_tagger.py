@@ -20,11 +20,24 @@ When ``groups.yaml`` is present, prediction is group-aware: ``softmax`` and
 group logits) instead of the sigmoid threshold. Ungrouped/multi-label tags
 use the standard threshold path.
 
-**The head is always dual-encoder (PE-Core + PE-Spatial), hard-routed**:
-PE-Core drives rating/people-count/identity tags, PE-Spatial drives
-localized tags, both loaded lazily and run per image. Pre-dual / v1
-single-encoder checkpoints no longer load (``config.json`` must carry
-``aux_encoder`` + ``model.d_in_aux``).
+Two backends, selected by ``config.json["backend"]``:
+
+* ``"pe"`` (default when absent) — the in-house dual-encoder head
+  (PE-Core + PE-Spatial, hard-routed): PE-Core drives rating/people-count/
+  identity tags, PE-Spatial drives localized tags, both loaded lazily and
+  run per image. Pre-dual / v1 single-encoder checkpoints no longer load
+  (``config.json`` must carry ``aux_encoder`` + ``model.d_in_aux``).
+* ``"dbv4"`` — an off-the-shelf danbooru tagger (``animetimm/*.dbv4-full``,
+  GPL-3.0 + gated, **never vendored** — fetched under the user's HF token)
+  projected onto our vocab (``library/captioning/dbv4_backend.py``), plus an
+  optional ``sidecar.safetensors`` linear head for what dbv4 lacks
+  (copyright / dataset-only characters / people-count). ``model.safetensors``
+  is absent; ``config.json["dbv4"]`` carries ``repo`` / ``arch`` / ``img_size``.
+  Build one with ``python -m scripts.anima_tagger.build_dbv4_ckpt``.
+
+Everything after the score vector — thresholds, softmax groups, count dedupe,
+character floor, top-1 copyright, OC-suffix rule, slot order — is backend-
+agnostic post-processing of ``{tag: prob}`` and runs identically for both.
 
 Captions are emitted in Anima's canonical slot order:
 ``rating, count_tags, characters, copyrights, @artists, generals``, with
@@ -50,6 +63,15 @@ from library.captioning import tag_groups as tg
 from library.captioning import tag_rules as tr
 from library.captioning.anima_tagger_data import pil_resize_to_bucket
 from library.captioning.anima_tagger_model import AnimaTaggerConfig, AnimaTaggerHead
+from library.captioning.dbv4_backend import (
+    UNSUPPORTED_LOGIT,
+    Dbv4Backend,
+    SidecarHead,
+    align_vocab,
+    probs_to_logits,
+    rename_recovery_from_rules,
+)
+from library.captioning.taxonomy import classify_people
 from library.datasets.image_utils import IMAGE_TRANSFORMS
 from library.vision.encoder import (
     VisionEncoderBundle,
@@ -60,14 +82,20 @@ from library.vision.encoder import (
 logger = logging.getLogger(__name__)
 
 # Auto-fetch repo when ckpt_dir is missing required files (mirrors the ComfyUI
-# loader). Live checkpoint lives under the `v5/` subfolder (curated-caption
-# labels + 4-class rating + white-stroke augmentation, 2026-08-20); `v3/`
-# holds the previous 3-class checkpoint, repo root the legacy v2 files.
+# loader). Live checkpoint lives under the `dbv4/` subfolder (2026-08-27: the
+# external caformer_b36 backend + our sidecar — vocab / rules / groups /
+# thresholds / sidecar only, the GPL-3.0 backbone weights come from the
+# upstream gated repo); `v5/` is the last in-house PE dual-encoder head,
+# `v3/` the previous 3-class checkpoint, repo root the legacy v2 files.
 TAGGER_HF_REPO = "sorryhyun/anima-tagger"
-TAGGER_HF_SUBFOLDER = "v5"
+TAGGER_HF_SUBFOLDER = "dbv4"
 TAGGER_REQUIRED_FILES = ("config.json", "model.safetensors", "vocab.json", "rules.yaml")
 TAGGER_OPTIONAL_FILES = ("thresholds.safetensors", "groups.yaml")
-DEFAULT_TAGGER_DIR = "models/captioners/anima-tagger-v5"
+# dbv4-backed checkpoints carry no model.safetensors (weights come from the
+# gated upstream repo); the sidecar pair is optional.
+DBV4_REQUIRED_FILES = ("config.json", "vocab.json", "rules.yaml")
+DBV4_OPTIONAL_FILES = TAGGER_OPTIONAL_FILES + ("sidecar.safetensors", "sidecar.json")
+DEFAULT_TAGGER_DIR = "models/captioners/anima-tagger-dbv4"
 
 
 def ensure_tagger_checkpoint(
@@ -83,6 +111,10 @@ def ensure_tagger_checkpoint(
     """
     ckpt_dir = Path(ckpt_dir)
     if all((ckpt_dir / f).exists() for f in TAGGER_REQUIRED_FILES):
+        return ckpt_dir
+    if all((ckpt_dir / f).exists() for f in DBV4_REQUIRED_FILES) and _is_dbv4_dir(
+        ckpt_dir
+    ):
         return ckpt_dir
     from huggingface_hub.utils import EntryNotFoundError
 
@@ -112,9 +144,17 @@ def ensure_tagger_checkpoint(
             shutil.move(str(downloaded), str(dest))
         return dest
 
-    for fname in TAGGER_REQUIRED_FILES:
-        _fetch_flat(fname)
-    for fname in TAGGER_OPTIONAL_FILES:
+    # config.json first: it decides whether this is a PE checkpoint (needs
+    # model.safetensors) or a dbv4 one (no weights of ours — sidecar optional).
+    _fetch_flat("config.json")
+    if _is_dbv4_dir(ckpt_dir):
+        required, optional = DBV4_REQUIRED_FILES, DBV4_OPTIONAL_FILES
+    else:
+        required, optional = TAGGER_REQUIRED_FILES, TAGGER_OPTIONAL_FILES
+    for fname in required:
+        if fname != "config.json":
+            _fetch_flat(fname)
+    for fname in optional:
         try:
             _fetch_flat(fname)
         except EntryNotFoundError:
@@ -122,9 +162,41 @@ def ensure_tagger_checkpoint(
     return ckpt_dir
 
 
+def _is_dbv4_dir(ckpt_dir: Path) -> bool:
+    try:
+        with open(ckpt_dir / "config.json", encoding="utf-8") as f:
+            return json.load(f).get("backend") == "dbv4"
+    except (OSError, ValueError):
+        return False
+
+
 # Digit-prefixed girls counts ("1girl"…"6+girls"). "multiple girls" is
 # intentionally not matched — no exact count, so leave the character head alone.
 _GIRLS_COUNT_RE = re.compile(r"^(\d+)\+?girls?$")
+
+# Exact people-count families ("3girls" / "2boys" / "1other", open "6+girls"
+# included). "multiple_girls"/"multiple_boys" are booru implication co-tags,
+# not exact counts — they legitimately ride alongside a digit count and are
+# deliberately not matched here.
+_EXACT_COUNT_RES = tuple(
+    re.compile(rf"^\d+\+?{noun}s?$") for noun in ("girl", "boy", "other")
+)
+
+
+def dedupe_count_tags(kept: Dict[str, float]) -> None:
+    """Drop all but the highest-scoring exact count per family, in place.
+
+    Training captions never carry two exact counts of one family
+    (``3girls`` + ``4girls``), but the sigmoid head has no mutual exclusion,
+    so a near-threshold image can clear both — which also inflates the
+    girls-count-driven character cap and trips the position-clause pipeline's
+    count-mismatch gate downstream.
+    """
+    for cre in _EXACT_COUNT_RES:
+        hits = sorted((n for n in kept if cre.match(n)), key=lambda n: -kept[n])
+        for name in hits[1:]:
+            kept.pop(name)
+
 
 # Trailing parens suffix, e.g. "nejet (kawakami rokkaku)". Booru OC convention:
 # when copyright is `original`/meta, the parens content is the artist's name.
@@ -256,24 +328,18 @@ class AnimaTagger:
 
         with open(self.ckpt_dir / "config.json", encoding="utf-8") as f:
             cfg_d = json.load(f)
-        self.encoder_name: str = cfg_d.get("encoder", "pe")
-        # aux (PE-Spatial) encoder is mandatory — the head is always dual-encoder.
-        self.aux_encoder_name: Optional[str] = cfg_d.get("aux_encoder")
-        self.cfg = AnimaTaggerConfig.from_dict(cfg_d["model"])
-        if not self.aux_encoder_name:
-            raise ValueError(
-                f"config.json has model.d_in_aux set but no top-level "
-                f"'aux_encoder' field — can't determine which auxiliary "
-                f'encoder to load. Re-train or hand-add `"aux_encoder": '
-                f'"pe_spatial"` to {self.ckpt_dir / "config.json"}.'
-            )
         self._cfg_d = cfg_d
-
-        self.model = AnimaTaggerHead(self.cfg)
-        self.model.load_state_dict(st_load(str(self.ckpt_dir / "model.safetensors")))
-        self.model.to(self.device).eval()
-        for p in self.model.parameters():
-            p.requires_grad_(False)
+        self.backend_kind: str = str(cfg_d.get("backend", "pe"))
+        if self.backend_kind not in ("pe", "dbv4"):
+            raise ValueError(
+                f"unknown tagger backend {self.backend_kind!r} in "
+                f"{self.ckpt_dir / 'config.json'} (expected 'pe' or 'dbv4')"
+            )
+        self.encoder_name: str = cfg_d.get("encoder", "pe")
+        self.aux_encoder_name: Optional[str] = cfg_d.get("aux_encoder")
+        self.model: Optional[AnimaTaggerHead] = None
+        self._dbv4: Optional[Dbv4Backend] = None
+        self._sidecar: Optional[SidecarHead] = None
 
         with open(self.ckpt_dir / "vocab.json", encoding="utf-8") as f:
             vocab = json.load(f)
@@ -308,8 +374,19 @@ class AnimaTagger:
         for cat in self._by_cat:
             self._by_cat[cat].sort(key=lambda triple: (triple[1], triple[2]))
 
+        self.n_tags = len(self.tag_entries)
+        self.rules = tr.load_rules(self.ckpt_dir / "rules.yaml")
+        if self.backend_kind == "pe":
+            self._init_pe_backend(cfg_d)
+        else:
+            self._init_dbv4_backend(cfg_d)
+        if int(self.cfg.n_tags) != self.n_tags:
+            raise ValueError(
+                f"vocab.json has {self.n_tags} tags but the head expects {self.cfg.n_tags}"
+            )
+
         self.thresholds = _load_thresholds(
-            self.ckpt_dir / "thresholds.safetensors", n_tags=self.cfg.n_tags
+            self.ckpt_dir / "thresholds.safetensors", n_tags=self.n_tags
         )
         self.thresholds_dev = self.thresholds.to(self.device)
         # Per-tag keep thresholds by name, in ``tag_entries`` order (the same
@@ -320,8 +397,6 @@ class AnimaTagger:
         self.threshold_map: Dict[str, float] = {
             e.name: float(t) for e, t in zip(self.tag_entries, self.thresholds)
         }
-
-        self.rules = tr.load_rules(self.ckpt_dir / "rules.yaml")
 
         # Optional groups snapshot; None when missing (older/flat-vocab).
         groups_path = self.ckpt_dir / "groups.yaml"
@@ -369,6 +444,79 @@ class AnimaTagger:
                     self._multi_count_names.add(e.name)
         self._encoder: Optional[VisionEncoderBundle] = None
         self._encoder_aux: Optional[VisionEncoderBundle] = None
+
+    # ------------------------------------------------------------------ #
+    # Backend construction
+    # ------------------------------------------------------------------ #
+
+    def _init_pe_backend(self, cfg_d: dict) -> None:
+        """In-house dual-encoder head: PE-Core + PE-Spatial, always both."""
+        if not self.aux_encoder_name:
+            raise ValueError(
+                f"config.json has model.d_in_aux set but no top-level "
+                f"'aux_encoder' field — can't determine which auxiliary "
+                f'encoder to load. Re-train or hand-add `"aux_encoder": '
+                f'"pe_spatial"` to {self.ckpt_dir / "config.json"}.'
+            )
+        self.cfg = AnimaTaggerConfig.from_dict(cfg_d["model"])
+        self.model = AnimaTaggerHead(self.cfg)
+        self.model.load_state_dict(st_load(str(self.ckpt_dir / "model.safetensors")))
+        self.model.to(self.device).eval()
+        for p in self.model.parameters():
+            p.requires_grad_(False)
+
+    def _init_dbv4_backend(self, cfg_d: dict) -> None:
+        """External dbv4 tagger projected onto our vocab (+ optional sidecar)."""
+        from types import SimpleNamespace
+
+        d = dict(cfg_d.get("dbv4") or {})
+        self._dbv4 = Dbv4Backend(
+            repo=d.get("repo", "animetimm/caformer_b36.dbv4-full"),
+            arch=d.get("arch", "caformer_b36"),
+            img_size=int(d.get("img_size", 384)),
+            device=self.device,
+            dtype=self.dtype,
+            revision=d.get("revision"),
+        )
+        # readback / bench read ``cfg.n_tags``; pool kinds are PE-only concepts.
+        self.cfg = SimpleNamespace(
+            n_tags=self.n_tags, pool_kind=None, pool_kind_aux=None
+        )
+        vocab_tags = [
+            {"name": e.name, "index": e.index, "category": e.category}
+            for e in self.tag_entries
+        ]
+        self._align = align_vocab(
+            vocab_tags, self._dbv4.card, rename_recovery_from_rules(self.rules)
+        )
+        self._align_ours = self._align.ours_idx
+        self._align_ext = self._align.ext_idx
+        self._supported = self._align.supported_mask(self.n_tags)
+        self._rating_cols = [self._dbv4.card.rating_cols.get(r) for r in self.ratings]
+        self._sidecar = SidecarHead.load(self.ckpt_dir)
+        if self._sidecar is not None:
+            self._sidecar.to(self.device)
+            self._sidecar_bce_idx = torch.tensor(
+                self._sidecar.bce_indices, dtype=torch.long
+            )
+            self._supported[self._sidecar_bce_idx] = True
+            if self._sidecar.people_count_labels:
+                if list(self._sidecar.people_count_labels) != self.people_count_labels:
+                    raise ValueError(
+                        "sidecar people_count_labels disagree with vocab.json"
+                    )
+        logger.info(
+            "AnimaTagger[dbv4]: %s → %d/%d vocab tags supported (unmatched by "
+            "category: %s); sidecar=%s",
+            self._dbv4.repo,
+            int(self._supported.sum()),
+            self.n_tags,
+            self._align.unmatched_by_category,
+            "none"
+            if self._sidecar is None
+            else f"{self._sidecar.n_bce} bce + "
+            f"{len(self._sidecar.people_count_labels)} people",
+        )
 
     def _bundle(self) -> VisionEncoderBundle:
         if self._encoder is None:
@@ -435,6 +583,53 @@ class AnimaTagger:
         return feats.to(torch.float32)
 
     @torch.no_grad()
+    def _heads_forward(
+        self, pil_img: Image.Image
+    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        """Backend-agnostic head pass.
+
+        Returns ``(tag_logits[n_tags], rating_probs[n_ratings], people_probs
+        [n_people] | None)`` on ``self.device``. For dbv4 the tag logits are the
+        projected sigmoid probs mapped back through logit(); tags the backend
+        cannot emit sit at ``UNSUPPORTED_LOGIT`` (never clear any threshold,
+        never win a group argmax).
+        """
+        if self.backend_kind == "pe":
+            feat = self._encode_image(pil_img).unsqueeze(0).to(self.device)
+            feat_aux = self._encode_image_aux(pil_img).unsqueeze(0).to(self.device)
+            tag_logits, rating_logits, people_logits = self.model(feat, feat_aux)
+            people = (
+                people_logits.softmax(dim=-1)[0] if people_logits is not None else None
+            )
+            return tag_logits[0], rating_logits.softmax(dim=-1)[0], people
+
+        out = self._dbv4.forward([pil_img])
+        probs = torch.zeros(self.n_tags)
+        probs[self._align_ours] = out.probs[0, self._align_ext]
+        people: Optional[torch.Tensor] = None
+        if self._sidecar is not None:
+            bce, people_logits = self._sidecar(out.hidden.to(self.device))
+            probs[self._sidecar_bce_idx] = bce[0].float().sigmoid().cpu()
+            if people_logits is not None:
+                people = people_logits[0].float().softmax(dim=-1)
+        tag_logits = probs_to_logits(probs)
+        tag_logits[~self._supported] = UNSUPPORTED_LOGIT
+        # dbv4 ratings are 4 independent sigmoids; normalise to a distribution.
+        rating = torch.tensor(
+            [
+                float(out.probs[0, c]) if c is not None else 0.0
+                for c in self._rating_cols
+            ]
+        )
+        rating = rating / rating.sum().clamp(min=1e-6)
+        return tag_logits.to(self.device), rating.to(self.device), people
+
+    @torch.no_grad()
+    def tag_logits(self, pil_img: Image.Image) -> torch.Tensor:
+        """Image → raw ``[n_tags]`` tag logits (float32, cpu). The readback path."""
+        return self._heads_forward(pil_img)[0].float().cpu()
+
+    @torch.no_grad()
     def predict(self, pil_img: Image.Image) -> Dict[str, object]:
         """Run one image through the head; return raw + thresholded outputs.
 
@@ -445,22 +640,18 @@ class AnimaTagger:
         threshold, when typed groups are loaded); and ``groups``
         (``{group_name: predicted_tag_or_None}``, only when groups loaded).
         """
-        feat = self._encode_image(pil_img).unsqueeze(0).to(self.device)
-        feat_aux = self._encode_image_aux(pil_img).unsqueeze(0).to(self.device)
-        tag_logits, rating_logits, people_logits = self.model(feat, feat_aux)
-        tag_logits_row = tag_logits[0]
+        tag_logits_row, rating_probs, people_probs = self._heads_forward(pil_img)
         tag_probs = tag_logits_row.sigmoid()
-        rating_probs = rating_logits.softmax(dim=-1)[0]
         kept_mask = (tag_probs >= self.thresholds_dev).cpu()
         tag_probs_cpu = tag_probs.cpu()
         scores = {
             self.tag_entries[i].name: float(tag_probs_cpu[i])
-            for i in range(self.cfg.n_tags)
+            for i in range(self.n_tags)
         }
         # sentinel slots ("<none:group>") stay in `scores` but are never emitted
         kept = {
             self.tag_entries[i].name: float(tag_probs_cpu[i])
-            for i in range(self.cfg.n_tags)
+            for i in range(self.n_tags)
             if kept_mask[i] and not tg.is_sentinel_name(self.tag_entries[i].name)
         }
         rating_idx = int(rating_probs.argmax().item())
@@ -474,8 +665,7 @@ class AnimaTagger:
             # A shared reference, not a copy — treat as read-only.
             "thresholds": self.threshold_map,
         }
-        if people_logits is not None and self.people_count_labels:
-            people_probs = people_logits.softmax(dim=-1)[0]
+        if people_probs is not None and self.people_count_labels:
             people_idx = int(people_probs.argmax().item())
             out["people_count"] = self.people_count_labels[people_idx]
             out["people_count_scores"] = {
@@ -513,11 +703,35 @@ class AnimaTagger:
                     group_preds[name] = None
                     continue
                 winner_idx = int(idx_t[winner_local].item())
+                # dbv4 was never CE-trained on our groups, so "exactly one"
+                # is not a calibrated contract there: the winner must also
+                # clear its own threshold ("at most one"). This is what stops
+                # an all-unsupported group (e.g. @artist) from emitting its
+                # first member off a -30 logit.
+                if (
+                    self.backend_kind == "dbv4"
+                    and tag_probs_cpu[winner_idx] < self.thresholds[winner_idx]
+                ):
+                    group_preds[name] = None
+                    continue
                 winner_name = self.tag_entries[winner_idx].name
                 kept[winner_name] = float(tag_probs_cpu[winner_idx])
                 group_preds[name] = winner_name
             out["kept"] = kept
             out["groups"] = group_preds
+
+        dedupe_count_tags(kept)
+
+        # dbv4: people-count comes from the emitted count tags, bucketed by the
+        # same rule the vocab build labels people-count by. Measured on v5's
+        # val split (2026-08-27) the rule beats the sidecar softmax head
+        # (0.943 vs 0.929) and is consistent with the ``Ngirls`` tags the
+        # position-clause pipeline reads; the sidecar's distribution stays
+        # available as ``people_count_scores``.
+        if self.backend_kind == "dbv4" and self.people_count_labels:
+            people_idx = classify_people(n.replace(" ", "_") for n in kept)
+            out["people_count"] = self.people_count_labels[people_idx]
+            out["people_count_source"] = "count-tag-rule"
 
         # cap characters to the largest digit-prefixed girls-count in `kept`
         # (trim borderline sigmoid admits to top-N by score, N = parsed count)
@@ -573,7 +787,11 @@ class AnimaTagger:
         # With `original`/meta copyright, keep a character only when its
         # parens-suffix matches the surviving artist (sans `@`) — the
         # artist's named OC `<name> (<artist>)`.
-        if any(c in kept for c in _META_COPYRIGHTS):
+        # The dbv4 backend never emits @artist (out of scope by decision), so
+        # the check has nothing to compare against — skip it there rather
+        # than dropping every OC (measured: 9 of 12 lost character hits on
+        # the position-caption gate were mignon OCs killed here).
+        if self.backend_kind != "dbv4" and any(c in kept for c in _META_COPYRIGHTS):
             artist_suffix = next(
                 (
                     e.name[1:].lower()

@@ -123,6 +123,9 @@ def collect_logits(
     Returns ``(tag_logits [N, n_tags] fp32 cpu, multi_hot [N, n_tags] cpu,
     device)`` in loader-emission order — the two rows always align.
     """
+    if cfg_d.get("backend") == "dbv4":
+        return _collect_logits_dbv4(args, model_dir, cfg_d, split_stems)
+
     from torch.utils.data import DataLoader
 
     from library.captioning.anima_tagger_data import (
@@ -200,6 +203,69 @@ def collect_logits(
             logit_chunks.append(tl.float().cpu())
             mh_chunks.append(mh)
     return torch.cat(logit_chunks, dim=0), torch.cat(mh_chunks, dim=0), device
+
+
+def _collect_logits_dbv4(
+    args: argparse.Namespace, model_dir: Path, cfg_d: dict, split_stems: List[str]
+) -> Tuple[torch.Tensor, torch.Tensor, torch.device]:
+    """dbv4 backend: logits off the sidecar trainer's feature cache.
+
+    ``train_sidecar.py`` caches the projected our-vocab probs + the MLP-head
+    hidden feature for every ``dataset.json`` stem; sidecar rows are recomputed
+    from the hidden feature so the logits match ``AnimaTagger.tag_logits``.
+    """
+    from safetensors import safe_open
+    from safetensors.torch import load_file as st_load
+
+    from library.captioning.dbv4_backend import (
+        UNSUPPORTED_LOGIT,
+        SidecarHead,
+        probs_to_logits,
+    )
+
+    device = torch.device(args.device or "cpu")
+    arch = cfg_d["dbv4"]["arch"]
+    cache_path = (
+        Path(args.feature_cache_dir or "post_image_dataset/anima_tagger")
+        / "dbv4"
+        / f"{arch}_hidden.safetensors"
+    )
+    if not cache_path.exists():
+        raise SystemExit(
+            f"missing {cache_path} — run scripts/anima_tagger/train_sidecar.py "
+            f"--cache_only first"
+        )
+    with safe_open(str(cache_path), "pt") as f:
+        cached_stems = json.loads(f.metadata()["stems"])
+    cache = st_load(str(cache_path))
+    pos = {s: i for i, s in enumerate(cached_stems)}
+    rows = torch.tensor(
+        [pos[s] for s in split_stems if s in pos and cache["ok"][pos[s]]]
+    )
+    probs = cache["probs"][rows].float()
+    n_tags = probs.shape[1]
+    with open(model_dir / "config.json") as f:
+        n_sup = json.load(f)["alignment"]
+    supported = torch.zeros(n_tags, dtype=torch.bool)
+    unmatched = {u["index"] for u in n_sup["unmatched"]}
+    supported[[i for i in range(n_tags) if i not in unmatched]] = True
+    head = SidecarHead.load(model_dir)
+    if head is not None:
+        with torch.no_grad():
+            bce, _ = head(cache["hidden"][rows].float())
+        idx = torch.tensor(head.bce_indices)
+        probs[:, idx] = bce.sigmoid()
+        supported[idx] = True
+    logits = probs_to_logits(probs)
+    logits[:, ~supported] = UNSUPPORTED_LOGIT
+    with open(model_dir / "dataset.json") as f:
+        ds = json.load(f)
+    tag_idx = dict(zip(ds["stems"], ds["tag_indices"]))
+    kept_stems = [cached_stems[i] for i in rows.tolist()]
+    mh = torch.zeros(len(kept_stems), n_tags)
+    for n, s in enumerate(kept_stems):
+        mh[n, tag_idx[s]] = 1.0
+    return logits, mh, device
 
 
 # --------------------------------------------------------------------------- #

@@ -75,9 +75,21 @@ PE_SPATIAL_B16_512_SPEC = BucketSpec(
 )
 
 
+# PE-Spatial-L14-448 — 448px native, 32x32=1024 patch tokens + 1 CLS. Same
+# patch grid as B16-512 (identical bucket list), just patch=14 so pixel dims
+# are 14/16 of the B16 ones (e.g. native 448x448).
+PE_SPATIAL_L14_448_SPEC = BucketSpec(
+    encoder="pe_spatial_l",
+    patch=14,
+    use_cls=True,
+    buckets=PE_SPATIAL_B16_512_SPEC.buckets,
+)
+
+
 _SPECS: dict[str, BucketSpec] = {
     "pe": PE_CORE_L14_336_SPEC,
     "pe_spatial": PE_SPATIAL_B16_512_SPEC,
+    "pe_spatial_l": PE_SPATIAL_L14_448_SPEC,
 }
 
 

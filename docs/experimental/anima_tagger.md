@@ -5,14 +5,19 @@ exactly the format Anima's training-time T5 saw. Used as the case-1 ψ_src
 provider for DirectEdit, and as a standalone captioner for LoRA dataset
 prep / prompt scaffolding via the `comfyui-anima-tagger` ComfyUI node.
 
-Status: **shipped**. The live checkpoint is **v5** —
-`models/captioners/anima-tagger-v5/` (2,532-tag vocab, 4-class rating
-`safe/sensitive/nsfw/explicit`, val macro-F1 ~0.236 / spatial-AP ~0.275),
-auto-fetched from the `v5/` subfolder of
+Status: **shipped**. The live checkpoint is **dbv4** (2026-08-27) —
+`models/captioners/anima-tagger-dbv4/`: the external
+`animetimm/caformer_b36.dbv4-full` backbone (GPL-3.0, gated, fetched under
+your HF token — **never vendored**) projected onto the same 2,532-tag vocab /
+4-class rating, plus a small sidecar head for copyright / OC characters /
+renamed generals (see *dbv4 backend* under Inference). Our part of the
+checkpoint (vocab, rules, groups, thresholds, sidecar) is auto-fetched from
+the `dbv4/` subfolder of
 [`sorryhyun/anima-tagger`](https://huggingface.co/sorryhyun/anima-tagger) when
-missing. `DEFAULT_TAGGER_DIR` / `TAGGER_HF_SUBFOLDER` in
+missing; `v5/` is the last in-house PE dual-encoder head (val macro-F1
+~0.236). `DEFAULT_TAGGER_DIR` / `TAGGER_HF_SUBFOLDER` in
 `library/captioning/anima_tagger.py` are the single source of truth for both;
-the ComfyUI node and `make download-tagger` track them.
+the ComfyUI node and `make download-tagger` track them. Requires `timm`.
 
 > **Doc drift.** Sections below still describe the pre-v3 single-encoder +
 > PE-LoRA stack, which no longer loads — the tagger is dual-encoder
@@ -289,7 +294,7 @@ in the checkpoint dir are mutated.
 from library.captioning import AnimaTagger
 from PIL import Image
 
-tagger = AnimaTagger("models/captioners/anima-tagger-v5")
+tagger = AnimaTagger("models/captioners/anima-tagger-dbv4")  # default
 caption = tagger.predict_caption(Image.open("foo.png"))
 # → "sensitive, 1girl, hatsune miku, vocaloid, @some_artist, blue eyes, ..."
 
@@ -322,6 +327,42 @@ debug = tagger.predict(Image.open("foo.png"))
 6. **Top-1 artist + top-1 copyright.** Independent sigmoid heads can
    admit several borderline tags; collapse to the highest-scoring one
    (booru convention is one artist / one copyright per work).
+
+### dbv4 backend (2026-08-27)
+
+`config.json["backend"] = "dbv4"` swaps the whole PE stack for an external
+danbooru tagger (`animetimm/caformer_b36.dbv4-full` by default — 134 M
+params, 384², **GPL-3.0 + gated: fetched under the user's HF token, never
+vendored**) projected onto our vocab. Steps 2–6 above are unchanged; only
+step 1 differs (`library/captioning/dbv4_backend.py`):
+
+- `align_vocab` joins dbv4's snake_case names onto our space-separated vocab
+  (rules.yaml renames recovered). On v5's vocab 2,182 / 2,532 tags match;
+  unmatched = 118 copyright + 36 dataset OCs + 84 renamed generals + 92
+  `@artist` (+ deprecated/meta). Unsupported tags sit at logit −30 and a
+  pure-`softmax` group only emits a winner that clears its own threshold
+  ("at most one" — dbv4 was never CE-trained on our groups).
+- dbv4's four rating sigmoids (`general`/`questionable` → `safe`/`nsfw`) are
+  normalised to a distribution for `rating_scores`.
+- A **sidecar** linear head (`sidecar.safetensors` + `sidecar.json`, trained
+  by `scripts/anima_tagger/train_sidecar.py` on the backend's 3072-d MLP-head
+  hidden feature) emits what dbv4 cannot: copyright, OC characters, renamed
+  generals, and the 8-way people-count. **`@artist` is deliberately not
+  covered** — artist attribution stopped being a tagger goal on 2026-08-27.
+  `people_count` is always the count-tag rule on dbv4
+  (`taxonomy.classify_people`, `people_count_source="count-tag-rule"`) — on
+  v5's val split it scores 0.943 vs the sidecar head's 0.929 (v5 head 0.885);
+  the sidecar softmax is exposed as `people_count_scores` only. Sidecar val
+  (2026-08-27): copyright macro-F1 0.815 / mAP 0.92 (v5 0.638), OC characters
+  0.889 / 0.98, renamed generals 0.40 / 0.61.
+- Thresholds: dbv4 card `best_threshold` for matched tags, F1-calibrated on
+  our val split for sidecar rows, `1.01` (never fires) for the rest.
+
+Build with `make tagger-dbv4` (→ `models/captioners/anima-tagger-dbv4/`),
+train the sidecar with `make daemon-run
+ARGS="scripts/anima_tagger/train_sidecar.py"`, then pass the dir anywhere a
+`--tagger_dir` is accepted. Bench evidence: `bench/tagger_external/` and
+`docs/proposal/tagger_caformer_backend.md`.
 
 `predict_caption` then slots tags by canonical category order
 (`rating, count, character, copyright, artist, general`), within-slot by

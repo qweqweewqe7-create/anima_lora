@@ -51,6 +51,29 @@ VENDOR = HERE / "_vendor"
 # custom-trained checkpoint.
 _HF_TAGGER_REPO = "sorryhyun/anima-tagger"
 _REQUIRED_FILES = ("config.json", "model.safetensors", "vocab.json", "rules.yaml")
+# dbv4-backed checkpoints (the live default since 2026-08-27) ship no weights
+# of ours — the GPL-3.0 caformer backbone is fetched from its own gated
+# upstream repo by the library (needs `timm` + an HF token that accepted the
+# terms). Only our vocab/rules/thresholds + the sidecar head live on the repo.
+_DBV4_REQUIRED_FILES = ("config.json", "vocab.json", "rules.yaml")
+_DBV4_OPTIONAL_FILES = (
+    "thresholds.safetensors",
+    "groups.yaml",
+    "sidecar.safetensors",
+    "sidecar.json",
+)
+
+
+def _is_dbv4_dir(tdir: Path) -> bool:
+    try:
+        import json
+
+        with open(tdir / "config.json", encoding="utf-8") as f:
+            return json.load(f).get("backend") == "dbv4"
+    except (OSError, ValueError):
+        return False
+
+
 _OPTIONAL_FILES = ("thresholds.safetensors", "groups.yaml")
 
 # The tagger is dual-encoder only (PE-Core + PE-Spatial, hard-routed). The
@@ -59,8 +82,8 @@ _OPTIONAL_FILES = ("thresholds.safetensors", "groups.yaml")
 # augmentation) sits under the ``v5/`` subfolder of ``sorryhyun/anima-tagger``;
 # ``v3/`` keeps the previous 3-class checkpoint, the repo root the legacy v2
 # files.
-_HF_SUBFOLDER = "v5"
-_DEFAULT_TAGGER_DIR = "models/captioners/anima-tagger-v5"
+_HF_SUBFOLDER = "dbv4"
+_DEFAULT_TAGGER_DIR = "models/captioners/anima-tagger-dbv4"
 
 # Default vision-encoder checkpoints (auto-fetched if absent). Listed as the
 # first dropdown row so a fresh install resolves to the auto-download target
@@ -141,6 +164,8 @@ def _ensure_tagger_dir(tdir: Path, hf_subfolder: str = "") -> None:
     """
     if all((tdir / f).exists() for f in _REQUIRED_FILES):
         return
+    if all((tdir / f).exists() for f in _DBV4_REQUIRED_FILES) and _is_dbv4_dir(tdir):
+        return
     from huggingface_hub import hf_hub_download
     from huggingface_hub.utils import EntryNotFoundError
 
@@ -167,9 +192,17 @@ def _ensure_tagger_dir(tdir: Path, hf_subfolder: str = "") -> None:
             shutil.move(str(downloaded), str(dest))
         return dest
 
-    for fname in _REQUIRED_FILES:
-        _fetch_flat(fname)
-    for fname in _OPTIONAL_FILES:
+    # config.json first — it decides whether we need model.safetensors (PE
+    # head) or just our data + sidecar (dbv4 backend).
+    _fetch_flat("config.json")
+    if _is_dbv4_dir(tdir):
+        required, optional = _DBV4_REQUIRED_FILES, _DBV4_OPTIONAL_FILES
+    else:
+        required, optional = _REQUIRED_FILES, _OPTIONAL_FILES
+    for fname in required:
+        if fname != "config.json":
+            _fetch_flat(fname)
+    for fname in optional:
         try:
             _fetch_flat(fname)
         except EntryNotFoundError:
