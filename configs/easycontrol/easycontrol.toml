@@ -4,7 +4,7 @@ network_dim = 32
 network_alpha = 32
 
 train_adaln = true
-adaln_rank = 8
+adaln_rank = 16
 
 network_args = [
     "b_cond_init=-10.0",

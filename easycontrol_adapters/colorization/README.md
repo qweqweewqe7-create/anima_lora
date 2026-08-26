@@ -88,6 +88,7 @@ it matters. This is expected, not a bug.
 | `mangafy.py` | color RGB → B&W manga (XDoG lineart + dot/line/cross screentone), per-stem jitter |
 | `color_caption.py` | reduce a full Anima caption to color tags only (`filter_to_colors`) |
 | `prep.py` | mangafy `resized/` → VAE-encode into `easycontrol/colorize/cond/`; re-encode color-only captions into `easycontrol/colorize/text/` |
+| `pool_from_tags.py` | carve a tag slice out of a raw crawl pool into a standalone symlink tree (see *Appending a tag slice*) |
 
 Config: `configs/easycontrol/colorize.toml` — a single self-contained descriptor
 (top-level `name` + `[staging]` / `[preprocess]` / `[training]` knob tables + a
@@ -119,6 +120,60 @@ REF_IMAGE=post_image_dataset/resized/takaman_\(gaffe\)/7645571.png \
     make test-easycontrol EASYADAPTER=colorize
 #    Color steer:  ... ARGS='--prompt "pink hair, blue eyes, white dress"'
 ```
+
+### Appending a tag slice from the crawl pool
+
+The default subset is the curated corpus (`post_image_dataset/resized`), which
+is thin in some slices — `korean text` is 22 pages there vs 349 in the
+crawler's `retrieved/` pool. To append such a slice **without touching the
+shared corpus** (which every other method trains on), give it its own resized
+tree + caches as a second dataset subset. Worked example, the Korean-text
+slice:
+
+```bash
+KO=post_image_dataset/easycontrol/colorize/korean
+
+# 1. Select — symlink the tagged pages (image + .txt) out of the crawl pool,
+#    minus the stems the curated master already has.
+python easycontrol_adapters/colorization/pool_from_tags.py \
+    --src ~/gelcrawl/retrieved --dst $KO/src \
+    --include-tags "korean text" --skip-existing-in image_dataset
+
+# 2. Resize — same free-fit tiers as the corpus ([training].target_res).
+#    --recursive is required: the pool mirrors the crawl's artist subdirs.
+#    Captions are mirrored into $KO/resized, so it doubles as --caption_src.
+python scripts/preprocess/resize_images.py --src $KO/src --dst $KO/resized \
+    --target_res 1024 896 --recursive
+
+# 3. Masks (recommended for a text slice — this is what keeps the glyphs
+#    pixel-exact in the condition instead of screentoned into mush).
+python scripts/preprocess/generate_masks_mit.py --image-dir $KO/resized \
+    --mask-dir /tmp/ko-mit --model-path models/mit/model.pth --recursive
+python scripts/preprocess/generate_masks.py --config configs/sam_mask.yaml \
+    --image-dir $KO/resized --mask-dir /tmp/ko-sam \
+    --checkpoint models/sam3/sam3.pt --batch-size 4 --recursive
+python scripts/preprocess/merge_masks.py /tmp/ko-sam /tmp/ko-mit --output-dir $KO/masks
+
+# 4. Stage + preprocess into the slice's own trees. `ARGS` is appended last, so
+#    these path flags override the slug-derived defaults.
+SLICE="--src $KO/resized --caption_src $KO/resized --mask_dir $KO/masks \
+       --staging $KO/staging --cond_cache_dir $KO/cond \
+       --target_cache_dir $KO/target --text_cache_dir $KO/text"
+make easycontrol-staging    EASYADAPTER=colorize ARGS="$SLICE"
+make easycontrol-preprocess EASYADAPTER=colorize ARGS="$SLICE"
+```
+
+Then add the slice as a second `[[datasets.subsets]]` in
+`configs/easycontrol/colorize.toml` (already wired for `korean/`), pointing
+`image_dir`/`cond_cache_dir`/`text_cache_dir`/`latent_cache_dir` at the trees
+above. Only targets with a cached cond latent train, so the descriptor's
+`[staging].exclude_data_includes` + `--target_drop_sat` still pair out the
+slice's monochrome pages with no extra filtering.
+
+Two things worth checking before you raise `num_repeats` on such a slice: a
+crawl slice is usually **artist-skewed** (the Korean-text one is ~80% two
+artists), and the shared corpus dwarfs it, so repeats buy tag presence at the
+cost of style presence.
 
 ### Inference settings
 
