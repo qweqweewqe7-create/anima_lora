@@ -118,6 +118,30 @@ def test_build_optimizer_default_is_single_group():
     assert opt.param_groups[0]["weight_decay"] == 0.01
 
 
+def test_build_optimizer_exempts_logit_scale_from_decay():
+    """A label-embed head's logit_scale (log-temperature) must never be
+    weight-decayed — decay drags the cosine scale toward 1 and flattens every
+    logit. It rides a wd=0 group in both the single-group and split paths;
+    linear-head models have none, so their grouping is unchanged."""
+    from tests.test_anima_tagger_label_embed import _full_emb, _le_cfg
+
+    m = AnimaTaggerHead(_le_cfg())
+    m.load_label_embeddings(_full_emb(m.cfg))
+    id_to_name = {id(p): n for n, p in m.named_parameters()}
+    for args in (_base_args(), _base_args(lr_spatial=1e-3, wd_spatial=0.02)):
+        opt = _build_optimizer(m, args, spatial_names=spatial_param_names(m))
+        nd = [g for g in opt.param_groups if g["weight_decay"] == 0.0]
+        assert len(nd) == 1
+        names = {id_to_name[id(p)] for p in nd[0]["params"]}
+        assert names == {n for n in id_to_name.values() if n.endswith("logit_scale")}
+        for g in opt.param_groups:
+            if g is not nd[0]:
+                assert not any(
+                    id_to_name[id(p)].endswith("logit_scale") for p in g["params"]
+                )
+        assert sum(len(g["params"]) for g in opt.param_groups) == len(id_to_name)
+
+
 def test_build_optimizer_splits_spatial_group():
     m = _make_model()
     spatial = spatial_param_names(m)

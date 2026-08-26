@@ -552,10 +552,16 @@ class CachedDualDataset(Dataset):
         spec_aux: Optional[BucketSpec],
         stems_subset: Optional[Sequence[str]] = None,
         ram_resident: bool = False,
+        resident_backing: str = "mmap",
     ):
         self._ram_resident_req = bool(ram_resident)
         self._ram_resident = False
         self._ram: Dict[tuple, torch.Tensor] = {}
+        if resident_backing not in ("ram", "mmap"):
+            raise ValueError(
+                f"resident_backing must be 'ram' or 'mmap', got {resident_backing!r}"
+            )
+        self._resident_backing = resident_backing
         if pool_kind not in ("mean", "map"):
             raise ValueError(f"pool_kind must be 'mean' or 'map', got {pool_kind!r}")
         if pool_kind_aux not in ("mean", "map"):
@@ -726,9 +732,10 @@ class CachedDualDataset(Dataset):
         self._ram_resident = True
         total = sum(t.numel() * t.element_size() for t in self._ram.values())
         logger.info(
-            "CachedDualDataset: %d stems resident in RAM (%.1f GB) — "
-            "loader is now disk-free",
+            "CachedDualDataset: %d stems resident (%s-backed, %.1f GB) — "
+            "loader reads no per-stem files",
             len(self.stems),
+            self._resident_backing,
             total / 1024**3,
         )
 
@@ -738,6 +745,15 @@ class CachedDualDataset(Dataset):
         Returns a per-item ``(bucket_key, row)`` map; rows are assigned in
         ascending dataset-index order within each bucket so a chunked-shuffle
         epoch reads contiguous windows of the resident tensor.
+
+        ``resident_backing="mmap"`` (default) backs each stacked tensor with a
+        consolidated file under ``<cache_dir>/_resident/`` instead of anonymous
+        RAM: it's built once (one sequential pass over the sidecars, same as the
+        RAM path) and later runs just map it. Pages live in the kernel page
+        cache, so a box with spare RAM serves it exactly like the RAM path
+        while a tight one degrades to SSD reads instead of OOM-ing — the
+        resident set is ~42 GB for the shipped PE + PE-Spatial caches.
+        ``"ram"`` is the original anonymous-allocation path.
         """
         groups: Dict[str, List[int]] = defaultdict(list)
         for i, b in enumerate(buckets):
@@ -746,15 +762,85 @@ class CachedDualDataset(Dataset):
         for bk, idxs in groups.items():
             for row, i in enumerate(idxs):
                 row_of[i] = (bk, row)
-            first = self._load_one(paths[idxs[0]], kind)
-            out = torch.empty((len(idxs),) + tuple(first.shape), dtype=first.dtype)
-            out[0] = first
-            for row, i in enumerate(
-                tqdm(idxs[1:], desc=f"load {side} {bk}", leave=False), start=1
-            ):
-                out[row] = self._load_one(paths[i], kind)
+            if self._resident_backing == "mmap":
+                out = self._mmap_resident_group(side, bk, kind, paths, idxs)
+            else:
+                out = self._fill_resident_group(None, side, bk, kind, paths, idxs)
             self._ram[(side, bk)] = out
         return row_of
+
+    def _fill_resident_group(
+        self,
+        out: Optional[torch.Tensor],
+        side: str,
+        bk: str,
+        kind: str,
+        paths: Sequence[Path],
+        idxs: Sequence[int],
+    ) -> torch.Tensor:
+        """Stack ``paths[idxs]`` row-by-row into ``out`` (allocated from the
+        first sidecar's shape/dtype when ``None``)."""
+        first = self._load_one(paths[idxs[0]], kind)
+        if out is None:
+            out = torch.empty((len(idxs),) + tuple(first.shape), dtype=first.dtype)
+        out[0] = first
+        for row, i in enumerate(
+            tqdm(idxs[1:], desc=f"load {side} {bk}", leave=False), start=1
+        ):
+            out[row] = self._load_one(paths[i], kind)
+        return out
+
+    def _mmap_resident_group(
+        self,
+        side: str,
+        bk: str,
+        kind: str,
+        paths: Sequence[Path],
+        idxs: Sequence[int],
+    ) -> torch.Tensor:
+        """Return the (side, bucket) group as a file-backed tensor, building
+        the consolidated file on first use.
+
+        The file is keyed by the exact ordered stem list + shape/dtype, so any
+        change to the split, the cache, or the pool kind lands on a fresh
+        file; a ``.done`` marker guards against a half-written build.
+        """
+        first = self._load_one(paths[idxs[0]], kind)
+        shape = (len(idxs),) + tuple(first.shape)
+        dtype = first.dtype
+        h = hashlib.sha1()
+        h.update(f"{side}|{bk}|{kind}|{list(shape)}|{dtype}|".encode())
+        for i in idxs:
+            h.update(paths[i].stem.encode())
+            h.update(b"\0")
+        root = Path(paths[idxs[0]]).parent / "_resident"
+        root.mkdir(parents=True, exist_ok=True)
+        base = root / f"{side}-{bk}-{h.hexdigest()[:16]}"
+        bin_path, done_path = base.with_suffix(".bin"), base.with_suffix(".done")
+        numel = int(math.prod(shape))
+        if not done_path.exists():
+            logger.info(
+                "CachedDualDataset: building mmap-resident %s/%s (%d rows, %.1f GB) "
+                "→ %s",
+                side,
+                bk,
+                len(idxs),
+                numel * first.element_size() / 1024**3,
+                bin_path,
+            )
+            with open(bin_path, "wb") as f:
+                f.truncate(numel * first.element_size())
+            out = torch.from_file(
+                str(bin_path), shared=True, size=numel, dtype=dtype
+            ).view(shape)
+            self._fill_resident_group(out, side, bk, kind, paths, idxs)
+            del out  # unmap so the flush below sees every page
+            done_path.write_text(
+                json.dumps({"shape": list(shape), "dtype": str(dtype)})
+            )
+        return torch.from_file(
+            str(bin_path), shared=True, size=numel, dtype=dtype
+        ).view(shape)
 
     def __getitem__(self, idx: int):
         if self._ram_resident:

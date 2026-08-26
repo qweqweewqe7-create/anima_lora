@@ -107,13 +107,36 @@ def test_forward_shape_matches_linear_head():
 
 
 def test_embedding_rows_slice_by_routing_partition():
-    cfg = _le_cfg()
+    cfg = _le_cfg(label_emb_center=False)
     model = AnimaTaggerHead(cfg)
     full = _full_emb(cfg)
     model.load_label_embeddings(full)
     # Side-local row k must be the vocab row the partition scatters back from.
     assert torch.equal(model.tag_head_core.emb, full[model.tag_idx_core])
     assert torch.equal(model.tag_head_spatial.emb, full[model.tag_idx_spatial])
+
+
+def test_label_emb_center_removes_common_component():
+    """Default ``label_emb_center`` subtracts the full-vocab mean of the unit-
+    normalized rows (both sides share one origin), so a matrix with a big
+    shared offset — the sentence-embedding regime — no longer scores every
+    tag with nearly the same cosine. Neighbour order is preserved."""
+    cfg = _le_cfg()
+    torch.manual_seed(0)
+    full = torch.randn(cfg.n_tags, cfg.d_label_emb) + 5.0 * torch.ones(cfg.d_label_emb)
+    model = AnimaTaggerHead(cfg)
+    model.load_label_embeddings(full)
+    got = torch.cat([model.tag_head_core.emb, model.tag_head_spatial.emb])
+    assert torch.allclose(got.mean(dim=0), torch.zeros(cfg.d_label_emb), atol=1e-6)
+    raw_n = torch.nn.functional.normalize(full, dim=-1)
+    cen_n = torch.nn.functional.normalize(raw_n - raw_n.mean(0), dim=-1)
+    off = ~torch.eye(cfg.n_tags, dtype=torch.bool)
+    assert (raw_n @ raw_n.T)[off].mean() > 0.9  # uncentered: everything alike
+    assert abs((cen_n @ cen_n.T)[off].mean()) < 0.1
+    # scale_init lands in the head and round-trips through the config dict.
+    assert torch.isclose(model.tag_head_spatial.logit_scale.exp(), torch.tensor(30.0))
+    rt = AnimaTaggerConfig.from_dict(_le_cfg(label_emb_scale_init=12.0).to_dict())
+    assert rt.label_emb_scale_init == 12.0 and rt.label_emb_center is True
 
 
 def test_load_shape_and_kind_guards():
@@ -175,3 +198,45 @@ def test_prior_bias_init():
     lin = AnimaTaggerHead(_cfg())
     with pytest.raises(ValueError, match="linear"):
         lin.init_tag_bias_from_prior(prior)
+
+
+def test_label_embed_forward_under_bf16_autocast():
+    """Regression: under bf16 autocast ``F.normalize`` promotes to fp32, and the
+    head used to hand fp32 logits to the parent's bf16 ``index_copy_`` scatter
+    (``self and source expected to have the same dtype``) — every label_embed
+    training run died on its first step. The routed forward must run and
+    return logits in the autocast dtype like the linear head does."""
+    # CUDA only: CPU autocast keeps ``normalize`` in bf16 and never reproduces.
+    if not torch.cuda.is_available():
+        pytest.skip("needs CUDA autocast semantics")
+    dev = torch.device("cuda")
+    torch.manual_seed(0)
+    feat, feat_aux = torch.randn(3, 32, device=dev), torch.randn(3, 16, device=dev)
+    lin = AnimaTaggerHead(_cfg()).to(dev)
+    le = AnimaTaggerHead(_le_cfg()).to(dev)
+    le.load_label_embeddings(_full_emb(le.cfg))
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        t_lin, _, _ = lin(feat, feat_aux)
+        t_le, _, _ = le(feat, feat_aux)
+    assert t_le.dtype == t_lin.dtype == torch.bfloat16
+    assert t_le.shape == (3, 24) and torch.isfinite(t_le.float()).all()
+
+
+def test_svd_reduce_label_matrix():
+    from scripts.anima_tagger.train_cached import svd_reduce_label_matrix
+
+    torch.manual_seed(0)
+    # Rank-8 structure + noise + a big shared offset (the sentence-embedding regime).
+    base = torch.randn(40, 8) @ torch.randn(8, 64)
+    full = base + 0.05 * torch.randn(40, 64) + 3.0
+    red = svd_reduce_label_matrix(full, 8)
+    assert red.shape == (40, 8)
+    assert torch.allclose(red.mean(0), torch.zeros(8), atol=1e-5)  # centered
+    # Rank-k copy reproduces the centered unit-row geometry (Gram matrix).
+    e = torch.nn.functional.normalize(full, dim=-1)
+    e = e - e.mean(0)
+    assert torch.allclose(red @ red.T, e @ e.T, atol=5e-2)
+    # k >= d is a pass-through; the head accepts the reduced width.
+    assert svd_reduce_label_matrix(full, 64) is full
+    cfg = _cfg(n_tags=40, n_core=10, tag_head_kind="label_embed", d_label_emb=8)
+    AnimaTaggerHead(cfg).load_label_embeddings(red)

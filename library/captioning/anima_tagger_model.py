@@ -88,6 +88,17 @@ class AnimaTaggerConfig:
     tag_head_kind: str = "linear"
     d_label_emb: int = 0
     label_emb_trainable: bool = False
+    # Mean-center the label matrix on load: a sentence-embedding model's rows
+    # share a large common component (Qwen3-Embedding: |mean row| ≈ 0.58, all-
+    # pairs cos ≈ 0.34), so uncentered cosines put nearly the same logit on
+    # every tag and the discriminative spread is a thin residual. Centering
+    # keeps the neighbour structure and removes the offset.
+    label_emb_center: bool = True
+    # Initial exp(logit_scale). At 10 a unit z spreads logits across the vocab
+    # by only ~0.25 std — BCE needs gaps of several logits — and logit_scale is
+    # a log-param that AdamW moves at ~lr/step, so it never catches up in a
+    # 32-epoch run. 30 is the CLIP-style working range (clamped at SCALE_MAX).
+    label_emb_scale_init: float = 30.0
 
     def __post_init__(self) -> None:
         if self.tag_head_kind not in ("linear", "label_embed"):
@@ -168,6 +179,8 @@ class AnimaTaggerConfig:
             "tag_head_kind": self.tag_head_kind,
             "d_label_emb": self.d_label_emb,
             "label_emb_trainable": self.label_emb_trainable,
+            "label_emb_center": self.label_emb_center,
+            "label_emb_scale_init": self.label_emb_scale_init,
         }
 
     @classmethod
@@ -207,6 +220,8 @@ class AnimaTaggerConfig:
             tag_head_kind=str(d.get("tag_head_kind", "linear")),
             d_label_emb=int(d.get("d_label_emb", 0)),
             label_emb_trainable=bool(d.get("label_emb_trainable", False)),
+            label_emb_center=bool(d.get("label_emb_center", True)),
+            label_emb_scale_init=float(d.get("label_emb_scale_init", 30.0)),
         )
 
 
@@ -284,13 +299,17 @@ class LabelEmbedHead(nn.Module):
             self.register_buffer("emb", emb, persistent=True)
 
     def forward(self, h: torch.Tensor) -> torch.Tensor:
+        # Under bf16 autocast ``F.normalize`` promotes to fp32 (its vector_norm
+        # is on the fp32 list), so ``z.dtype`` is NOT the compute dtype — the
+        # only reliable anchor is the trunk output ``h`` (bf16 under autocast,
+        # fp32 eager), and the routed ``index_copy_`` scatter in the parent
+        # requires the logits to come back in exactly that dtype.
+        out_dtype = h.dtype
         z = F.normalize(self.proj(h), dim=-1)
-        # Normalize in the buffer's (fp32) precision, then match compute dtype.
         e = F.normalize(self.emb, dim=-1).to(z.dtype)
-        # Keep every term in z.dtype: fp32 scale/bias would promote the output
-        # and break the bf16 index_copy_ scatter under autocast.
         scale = self.logit_scale.exp().clamp(max=self.SCALE_MAX).to(z.dtype)
-        return scale * (z @ e.T) + self.bias.to(z.dtype)
+        logits = scale * (z @ e.T) + self.bias.to(z.dtype)
+        return logits.to(out_dtype)
 
 
 class AnimaTaggerHead(nn.Module):
@@ -359,6 +378,7 @@ class AnimaTaggerHead(nn.Module):
                     n_side,
                     cfg.d_label_emb,
                     trainable=cfg.label_emb_trainable,
+                    scale_init=cfg.label_emb_scale_init,
                 )
             return nn.Linear(cfg.d_hidden, n_side)
 
@@ -399,6 +419,12 @@ class AnimaTaggerHead(nn.Module):
                 f"({self.cfg.n_tags}, {self.cfg.d_label_emb})"
             )
         full_emb = full_emb.float()
+        if self.cfg.label_emb_center:
+            # Center in unit-norm space (the forward re-normalizes rows), over
+            # the full vocab so both sides share one origin. The centered rows
+            # are what persists in the state_dict — inference never re-centers.
+            full_emb = F.normalize(full_emb, dim=-1)
+            full_emb = full_emb - full_emb.mean(dim=0, keepdim=True)
         if self.tag_head_core is not None:
             self.tag_head_core.emb.data.copy_(full_emb[self.tag_idx_core.cpu()])
         if self.tag_head_spatial is not None:

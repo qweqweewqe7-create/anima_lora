@@ -789,9 +789,20 @@ class BaseDataset(torch.utils.data.Dataset):
             return False
         for info in self.image_data.values():
             subset = self.image_to_subset.get(info.image_key)
+            # Same resolution order the reader uses (`new_cache_text_encoder_
+            # outputs` / `_load_text_encoder_outputs`): text_cache_dir, when
+            # set, redirects the TE cache and cache_dir holds only latents/PE.
+            # Probing cache_dir alone reports a redirected subset as incomplete
+            # unless cache_dir *also* happens to carry a TE cache — which is
+            # what masked this for colorize's first subset (cache_dir = the
+            # shared lora/ cache) until a subset arrived whose cache_dir has no
+            # TE sidecars of its own.
             npz_path = caching_strategy.get_outputs_npz_path(
                 info.absolute_path,
-                cache_dir=getattr(subset, "cache_dir", None),
+                cache_dir=(
+                    getattr(subset, "text_cache_dir", None)
+                    or getattr(subset, "cache_dir", None)
+                ),
                 image_dir=getattr(subset, "image_dir", None),
             )
             if not caching_strategy.is_disk_cached_outputs_expected(npz_path):

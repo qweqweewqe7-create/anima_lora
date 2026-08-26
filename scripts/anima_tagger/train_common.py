@@ -77,6 +77,41 @@ def spatial_mean_ap(
     return float(ap.nanmean().item())
 
 
+# Train-positive-count bins for the frequency-sliced val metrics. Flat macro-F1
+# is dominated by the head of the distribution; the long-tail bucket is where
+# a label-sharing head (e.g. label_embed) is supposed to win, so every
+# val pass reports the same metrics per bin. Bin = [lo, hi) on the number of
+# train-split positives.
+FREQ_BINS: Tuple[Tuple[str, int, float], ...] = (
+    ("lt50", 0, 50),
+    ("50_199", 50, 200),
+    ("200_999", 200, 1000),
+    ("ge1000", 1000, float("inf")),
+)
+
+
+def freq_sliced_metrics(
+    per_tag: torch.Tensor,  # [n] per-tag metric (NaN = undefined for that tag)
+    train_pos: torch.Tensor,  # [n] train-split positive count per tag, same order
+    prefix: str,
+) -> Dict[str, float]:
+    """Nan-mean ``per_tag`` inside each ``FREQ_BINS`` bucket of ``train_pos``.
+
+    Returns ``{"<prefix>_<bin>": mean, "n_<prefix>_<bin>": n_tags_scored}``;
+    an empty bucket reports NaN with ``n=0`` so the key set is stable.
+    """
+    out: Dict[str, float] = {}
+    per_tag = per_tag.float()
+    train_pos = train_pos.to(per_tag.device).float()
+    for name, lo, hi in FREQ_BINS:
+        sel = (train_pos >= lo) & (train_pos < hi)
+        vals = per_tag[sel]
+        n = int((~torch.isnan(vals)).sum().item())
+        out[f"{prefix}_{name}"] = float(vals.nanmean().item()) if n else float("nan")
+        out[f"n_{prefix}_{name}"] = n
+    return out
+
+
 def build_warmup_cosine_scheduler(
     opt: torch.optim.Optimizer,
     *,

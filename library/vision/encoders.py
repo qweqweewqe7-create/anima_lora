@@ -5,7 +5,7 @@ Two Meta Perception Encoder variants are registered:
 
 * ``pe`` — PE-Core-L14-336. Global / CLIP-aligned features. Used by IP-Adapter
   and the Anima Tagger's primary encoder.
-* ``pe_spatial`` — PE-Spatial-B16-512. Spatial-fine-tuned variant from the same
+* ``pe_spatial`` — PE-Spatial-B16-512 (``pe_spatial_l`` — PE-Spatial-L14-448, d=1024). Spatial-fine-tuned variant from the same
   paper. Patch=16, native 32×32 grid. No CLIP projection / no LN-post / no
   pool head — only the patch token sequence is meaningful. Used by the Anima
   Tagger as the auxiliary encoder for spatial detail / long-tail tags.
@@ -54,6 +54,10 @@ def _default_pe_model_id() -> str:
 
 def _default_pe_spatial_model_id() -> str:
     return str(REPO_ROOT / "models" / "pe" / "PE-Spatial-B16-512.pt")
+
+
+def _default_pe_spatial_l_model_id() -> str:
+    return str(REPO_ROOT / "models" / "pe" / "PE-Spatial-L14-448.pt")
 
 
 class _PEProcessor:
@@ -195,6 +199,20 @@ def _load_pe_spatial_encoder(
     )
 
 
+def _load_pe_spatial_l_encoder(
+    device: torch.device, model_id: str, *, dtype: torch.dtype = torch.bfloat16
+) -> _PEEncoder:
+    return _load_pe_variant(
+        device,
+        model_id,
+        config_name="PE-Spatial-L14-448",
+        repo_id="facebook/PE-Spatial-L14-448",
+        filename="PE-Spatial-L14-448.pt",
+        download_make_target="download-pe-spatial",
+        dtype=dtype,
+    )
+
+
 @dataclass(frozen=True)
 class EncoderInfo:
     name: str
@@ -230,6 +248,17 @@ _REGISTRY: dict[str, EncoderInfo] = {
         default_model_id=_default_pe_spatial_model_id,
         processor_factory=_PEProcessor,
         loader=_load_pe_spatial_encoder,
+    ),
+    # PE-Spatial-L14-448: the large spatial tower (d=1024, 24 layers), same
+    # 1024-patch grid as B16 — drop-in ``--aux_encoder pe_spatial_l``.
+    "pe_spatial_l": EncoderInfo(
+        name="pe_spatial_l",
+        bucket_spec=get_bucket_spec("pe_spatial_l"),
+        d_enc=1024,
+        d_pool=1024,
+        default_model_id=_default_pe_spatial_l_model_id,
+        processor_factory=_PEProcessor,
+        loader=_load_pe_spatial_l_encoder,
     ),
 }
 

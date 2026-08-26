@@ -25,10 +25,12 @@ from typing import Dict, List, Optional, Tuple
 import torch
 
 from .caches import cache_dir_for, feature_cache_root
+from .eval_metrics import per_tag_average_precision
 from .train_common import (
     GroupRouter,
     build_warmup_cosine_scheduler,
     compute_grouped_loss,
+    freq_sliced_metrics,
     maxsup_term,
     people_class_weights,
     rating_class_weights,
@@ -99,7 +101,28 @@ def _load_label_embeddings(args, out_dir: Path, n_tags: int):
             f"{emb_path} has {emb.shape[0]} rows but the vocab has {n_tags} "
             f"tags — rebuild with `--mode embed_tags` against this vocab."
         )
+    k = int(getattr(args, "tag_emb_svd_k", 0) or 0)
+    if k > 0:
+        emb = svd_reduce_label_matrix(emb, k)
+        logger.info("label matrix SVD-reduced to k=%d (d_label_emb=%d)", k, k)
     return emb
+
+
+def svd_reduce_label_matrix(emb: torch.Tensor, k: int) -> torch.Tensor:
+    """Unit-normalize, mean-center, and keep the top-``k`` right-singular
+    directions of the label matrix (``U_k S_k``, so row geometry is the
+    least-squares best rank-k copy). Sentence-embedding label matrices put
+    ~90% of their centered energy in ~1/4 of the dims and the tail is prose
+    noise; a random unit projection spreads logits across the vocab ~3-4×
+    wider at k=64-128 than at 1024, i.e. the cosine head gets a usable
+    gradient from the first step. The result is already centered, so the
+    head's ``label_emb_center`` is a no-op on it."""
+    if k >= emb.shape[1]:
+        return emb
+    e = torch.nn.functional.normalize(emb.float(), dim=-1)
+    e = e - e.mean(dim=0, keepdim=True)
+    u, s, _ = torch.linalg.svd(e, full_matrices=False)
+    return u[:, :k] * s[:k]
 
 
 def _make_cfg_from_args(
@@ -139,10 +162,12 @@ def _make_cfg_from_args(
         tag_head_kind=getattr(args, "tag_head_kind", "linear"),
         d_label_emb=d_label_emb,
         label_emb_trainable=bool(getattr(args, "label_emb_trainable", False)),
+        label_emb_center=bool(getattr(args, "label_emb_center", True)),
+        label_emb_scale_init=float(getattr(args, "label_emb_scale_init", 30.0)),
     )
 
 
-def _save_cfg_dict(args, cfg, d_in, best_f1, best_ap=None):
+def _save_cfg_dict(args, cfg, d_in, best_f1, best_ap=None, freq_sliced=None):
     return {
         "model": cfg.to_dict(),
         "encoder": args.encoder,
@@ -171,6 +196,7 @@ def _save_cfg_dict(args, cfg, d_in, best_f1, best_ap=None):
         "n_tag_indices_spatial": len(cfg.tag_indices_spatial),
         "tag_head_kind": cfg.tag_head_kind,
         "tag_emb": getattr(args, "tag_emb", None),
+        "freq_sliced": freq_sliced,
     }
 
 
@@ -187,6 +213,7 @@ def _eval_via_token_loader(
     lambda_people: float,
     threshold: float = 0.5,
     spatial_idx: Optional[torch.Tensor] = None,
+    train_pos: Optional[torch.Tensor] = None,
 ) -> Dict[str, float]:
     """Run val through the paired-token DataLoader and compute the macro
     metrics. Logits are concatenated across buckets before metric reduction
@@ -197,6 +224,11 @@ def _eval_via_token_loader(
     mean AP over the spatial-routed tags (softmax-inclusive). That is the
     model-selection signal the deployed macro-F1 was blind to (macro-F1 drops
     softmax-group tags and mixes in the near-solved core slices).
+
+    When ``train_pos`` (per-tag train-split positive counts, vocab order) is
+    given, macro-F1 and spatial AP are additionally reported per train-frequency
+    bucket (``f1_<bin>`` / ``spatial_ap_<bin>``, bins in ``FREQ_BINS``) — the
+    long-tail bucket is the scoreboard for any label-sharing head.
     """
     model.eval()
     tag_chunks: List[torch.Tensor] = []
@@ -240,6 +272,7 @@ def _eval_via_token_loader(
         f1_logits = tag_logits.index_select(1, kept_idx)
         f1_target = multi_hot.index_select(1, kept_idx)
     else:
+        kept_idx = torch.arange(tag_logits.shape[1], device=tag_logits.device)
         f1_logits = tag_logits
         f1_target = multi_hot
     pred = (f1_logits.sigmoid() > threshold).float()
@@ -272,6 +305,18 @@ def _eval_via_token_loader(
     out["val_loss"] = val_l_total.item()
     if spatial_idx is not None:
         out["spatial_ap"] = spatial_mean_ap(tag_logits, multi_hot, spatial_idx)
+    if train_pos is not None:
+        train_pos = train_pos.to(tag_logits.device)
+        # Tags with no val positives have an undefined F1 — NaN them out so a
+        # sparse bucket isn't dragged to zero by unscorable rows.
+        f1_scored = torch.where(f1_target.sum(dim=0) > 0, f1, torch.nan)
+        out.update(freq_sliced_metrics(f1_scored, train_pos[kept_idx], "f1"))
+        if spatial_idx is not None:
+            sp = spatial_idx.to(tag_logits.device)
+            ap = per_tag_average_precision(
+                tag_logits.index_select(1, sp).float(), multi_hot.index_select(1, sp)
+            )
+            out.update(freq_sliced_metrics(ap, train_pos[sp], "spatial_ap"))
 
     # Per-softmax-group argmax accuracy.
     if router.is_active():
@@ -312,6 +357,11 @@ def _eval_via_token_loader(
     return out
 
 
+def _no_decay_param_names(model) -> set:
+    """Parameter names that must not be weight-decayed (label-embed logit_scale)."""
+    return {n for n, _ in model.named_parameters() if n.endswith("logit_scale")}
+
+
 def _build_optimizer(
     model,
     args,
@@ -330,16 +380,36 @@ def _build_optimizer(
     lr_spatial = getattr(args, "lr_spatial", None)
     wd_spatial = getattr(args, "wd_spatial", None)
     fused = torch.cuda.is_available()
+    # The label-embed heads' logit_scale is a log-temperature: weight decay on
+    # it pulls the cosine scale toward exp(0)=1 and flattens every logit, so it
+    # rides its own no-decay group. Linear-head models have none → the group
+    # is empty and the single-group path stays bit-identical.
+    no_decay = _no_decay_param_names(model)
     if (lr_spatial is None and wd_spatial is None) or not spatial_names:
+        if not no_decay:
+            return torch.optim.AdamW(
+                model.parameters(),
+                lr=args.lr,
+                weight_decay=args.weight_decay,
+                fused=fused,
+            )
+        decay_p = [p for n, p in model.named_parameters() if n not in no_decay]
+        nd_p = [p for n, p in model.named_parameters() if n in no_decay]
         return torch.optim.AdamW(
-            model.parameters(),
-            lr=args.lr,
-            weight_decay=args.weight_decay,
+            [
+                {"params": decay_p, "lr": args.lr, "weight_decay": args.weight_decay},
+                {"params": nd_p, "lr": args.lr, "weight_decay": 0.0},
+            ],
             fused=fused,
         )
-    spatial_params, rest_params = [], []
+    spatial_params, rest_params, nd_params = [], [], []
     for name, p in model.named_parameters():
-        (spatial_params if name in spatial_names else rest_params).append(p)
+        if name in no_decay:
+            nd_params.append(p)
+        elif name in spatial_names:
+            spatial_params.append(p)
+        else:
+            rest_params.append(p)
     groups = [
         {"params": rest_params, "lr": args.lr, "weight_decay": args.weight_decay},
         {
@@ -348,6 +418,8 @@ def _build_optimizer(
             "weight_decay": (args.weight_decay if wd_spatial is None else wd_spatial),
         },
     ]
+    if nd_params:
+        groups.append({"params": nd_params, "lr": args.lr, "weight_decay": 0.0})
     logger.info(
         "spatial param-group: lr=%.2e wd=%.4g (core lr=%.2e wd=%.4g)",
         groups[1]["lr"],
@@ -376,6 +448,7 @@ def _run_train_stage(
     stage: str,
     start_epoch: int = 0,
     also_track: Tuple[str, ...] = (),
+    train_pos: Optional[torch.Tensor] = None,
 ) -> Tuple[
     Dict[str, torch.Tensor],
     Dict[str, float],
@@ -483,6 +556,7 @@ def _run_train_stage(
             lambda_rating=args.lambda_rating,
             lambda_people=args.lambda_people,
             spatial_idx=spatial_idx,
+            train_pos=train_pos,
         )
         people_acc = val_metrics.get("people_acc", float("nan"))
         people_loss = val_metrics.get("val_people_loss", float("nan"))
@@ -606,6 +680,7 @@ def _train_cached_dual(args: argparse.Namespace) -> None:
     # at startup so the loader stops opening ~30k tiny files per epoch; the train
     # loop then touches zero disk. --no-ram_resident keeps the lazy per-file path.
     ram_resident = bool(getattr(args, "ram_resident", True))
+    resident_backing = str(getattr(args, "resident_backing", "mmap"))
     train_ds = CachedDualDataset(
         manifest,
         cache_dir,
@@ -616,6 +691,7 @@ def _train_cached_dual(args: argparse.Namespace) -> None:
         spec_aux,
         stems_subset=manifest.train_stems,
         ram_resident=ram_resident,
+        resident_backing=resident_backing,
     )
     val_ds = CachedDualDataset(
         manifest,
@@ -627,6 +703,7 @@ def _train_cached_dual(args: argparse.Namespace) -> None:
         spec_aux,
         stems_subset=manifest.val_stems,
         ram_resident=ram_resident,
+        resident_backing=resident_backing,
     )
     d_in_aux = train_ds.d_in_aux
     logger.info(
@@ -692,6 +769,7 @@ def _train_cached_dual(args: argparse.Namespace) -> None:
     train_mh_full = train_ds.multi_hot.to(device)
     train_rate_full = train_ds.rating_idx.to(device)
     train_people_full = train_ds.people_idx.to(device)
+    train_pos = train_mh_full.sum(dim=0)  # per-tag train positives → freq slices
     if label_emb is not None:
         model.init_tag_bias_from_prior(train_mh_full.mean(dim=0).cpu())
     router = GroupRouter.from_vocab(vocab_dict, train_mh_full, device=device)
@@ -813,6 +891,7 @@ def _train_cached_dual(args: argparse.Namespace) -> None:
         select_metric=select_metric,
         stage="joint",
         also_track=also,
+        train_pos=train_pos,
     )
     if not best_state:
         raise SystemExit("no epochs ran — empty training set?")
@@ -852,15 +931,31 @@ def _train_cached_dual(args: argparse.Namespace) -> None:
         for name, p in model.named_parameters():
             p.requires_grad_(name in spatial_names)
         refit_lr = getattr(args, "spatial_refit_lr", None) or args.lr
+        refit_wd = (
+            args.wd_spatial
+            if getattr(args, "wd_spatial", None) is not None
+            else args.weight_decay
+        )
+        no_decay = _no_decay_param_names(model)
+        refit_groups = [
+            {
+                "params": [
+                    p
+                    for n, p in model.named_parameters()
+                    if n in spatial_names and n not in no_decay
+                ],
+                "weight_decay": refit_wd,
+            }
+        ]
+        nd_refit = [
+            p
+            for n, p in model.named_parameters()
+            if n in spatial_names and n in no_decay
+        ]
+        if nd_refit:
+            refit_groups.append({"params": nd_refit, "weight_decay": 0.0})
         refit_opt = torch.optim.AdamW(
-            [p for n, p in model.named_parameters() if n in spatial_names],
-            lr=refit_lr,
-            weight_decay=(
-                args.wd_spatial
-                if getattr(args, "wd_spatial", None) is not None
-                else args.weight_decay
-            ),
-            fused=torch.cuda.is_available(),
+            refit_groups, lr=refit_lr, fused=torch.cuda.is_available()
         )
         refit_sched = build_warmup_cosine_scheduler(
             refit_opt,
@@ -883,6 +978,7 @@ def _train_cached_dual(args: argparse.Namespace) -> None:
             spatial_idx=spatial_idx,
             select_metric="spatial_ap",
             stage="refit",
+            train_pos=train_pos,
             start_epoch=args.epochs,
         )
         history = history + refit_history
@@ -916,7 +1012,20 @@ def _train_cached_dual(args: argparse.Namespace) -> None:
     st_save(best_state, str(ckpt_path))
     with open(cfg_path, "w") as f:
         json.dump(
-            _save_cfg_dict(args, cfg, train_ds.d_in, best_f1, best_ap), f, indent=2
+            _save_cfg_dict(
+                args,
+                cfg,
+                train_ds.d_in,
+                best_f1,
+                best_ap,
+                freq_sliced={
+                    k: v
+                    for k, v in best_metrics.items()
+                    if k.startswith(("f1_", "n_f1_", "spatial_ap_", "n_spatial_ap_"))
+                },
+            ),
+            f,
+            indent=2,
         )
     with open(history_path, "w") as f:
         json.dump(history, f, indent=2)

@@ -176,6 +176,17 @@ def parse_args() -> argparse.Namespace:
         "shuffle + prefetch workers (default: on).",
     )
     p.add_argument(
+        "--resident_backing",
+        choices=["mmap", "ram"],
+        default="mmap",
+        help="Storage behind --ram_resident. 'mmap' (default): stack each "
+        "(encoder, bucket) group once into <feature_cache>/_resident/*.bin and "
+        "memory-map it — served from the page cache, so it's as fast as RAM "
+        "when RAM is free and falls back to SSD reads (never OOM) when it "
+        "isn't; costs the resident-set size on disk (~42 GB for PE+PE-Spatial). "
+        "'ram': anonymous in-process allocation (needs the full set in RAM).",
+    )
+    p.add_argument(
         "--shuffle_chunk_size",
         type=int,
         default=2048,
@@ -586,6 +597,32 @@ def parse_args() -> argparse.Namespace:
         help="Make the label embeddings a trainable Parameter (description "
         "init as a prior) instead of a frozen buffer (description as the "
         "geometry; default). Frozen is the safer long-tail choice.",
+    )
+    p.add_argument(
+        "--label_emb_center",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Mean-center the label matrix on load (default on). Sentence "
+        "embeddings share a big common component (Qwen3: all-pairs cos ~0.34); "
+        "uncentered, every tag gets nearly the same cosine and the head can't "
+        "rank. Neighbour structure is preserved.",
+    )
+    p.add_argument(
+        "--label_emb_scale_init",
+        type=float,
+        default=30.0,
+        help="Initial exp(logit_scale) of the label-embed head (default 30; "
+        "the old 10 spread logits by ~0.25 std across the vocab and never "
+        "learned to rank in 32 epochs).",
+    )
+    p.add_argument(
+        "--tag_emb_svd_k",
+        type=int,
+        default=0,
+        help="label_embed: keep only the top-k SVD directions of the (centered) "
+        "label matrix, so d_label_emb=k. 0 (default) = use the full matrix. "
+        "~90%% of the Qwen3 matrix's energy sits in ~270 of 1024 dims; "
+        "k=64-128 sharpens the cosine geometry the head ranks against.",
     )
     p.add_argument(
         "--tag_desc_csv",

@@ -51,7 +51,9 @@ def _manifest(stems, n_tags):
     )
 
 
-def _build(manifest, cd, cda, spec, spec_aux, ram_resident=False, subset=None):
+def _build(
+    manifest, cd, cda, spec, spec_aux, ram_resident=False, subset=None, backing="mmap"
+):
     return CachedDualDataset(
         manifest,
         cd,
@@ -62,6 +64,7 @@ def _build(manifest, cd, cda, spec, spec_aux, ram_resident=False, subset=None):
         spec_aux,
         stems_subset=subset if subset is not None else manifest.stems,
         ram_resident=ram_resident,
+        resident_backing=backing,
     )
 
 
@@ -188,3 +191,44 @@ def test_lazy_dataloader_workers(tmp_path: Path):
             assert tok_aux.dim() == 3
             seen += tok.shape[0]
     assert seen == 2 * len(stems)
+
+
+def test_mmap_resident_builds_once_and_matches_ram(tmp_path: Path):
+    """``resident_backing="mmap"`` (the default) consolidates each (side,
+    bucket) group into ``<cache>/_resident/*.bin`` on first use, reuses it on
+    the next build (same key → no rewrite), and serves rows bit-identical to
+    the anonymous-RAM backing."""
+    stems = [f"s{i:03d}" for i in range(24)]
+    spec, spec_aux = _spec("pe"), _spec("pe_spatial")
+    cd, cda = tmp_path / "tokens-main", tmp_path / "tokens-aux"
+    hw = lambda s: (2, 3) if int(s[1:]) % 2 == 0 else (2, 4)  # noqa: E731
+    _write_caches(cd, stems, 16, hw, "tokens")
+    _write_caches(cda, stems, 8, hw, "tokens")
+    manifest = _manifest(stems, 6)
+
+    ram = _build(manifest, cd, cda, spec, spec_aux, ram_resident=True, backing="ram")
+    mm = _build(manifest, cd, cda, spec, spec_aux, ram_resident=True, backing="mmap")
+    bins = sorted((cd / "_resident").glob("*.bin")) + sorted(
+        (cda / "_resident").glob("*.bin")
+    )
+    dones = list((cd / "_resident").glob("*.done")) + list(
+        (cda / "_resident").glob("*.done")
+    )
+    assert len(bins) == 4 and len(dones) == 4  # 2 buckets × 2 sides
+    for i in range(len(mm)):
+        a, b = ram[i], mm[i]
+        assert torch.equal(a[0], b[0]) and torch.equal(a[1], b[1]) and a[5] == b[5]
+
+    # Rebuild: the consolidated files are reused, not rewritten.
+    mtimes = {p: p.stat().st_mtime_ns for p in bins}
+    mm2 = _build(manifest, cd, cda, spec, spec_aux, ram_resident=True, backing="mmap")
+    assert {p: p.stat().st_mtime_ns for p in bins} == mtimes
+    assert torch.equal(mm2[3][0], ram[3][0])
+
+    # A different stem subset keys a different file — never a stale read.
+    sub = _build(
+        manifest, cd, cda, spec, spec_aux, ram_resident=True, subset=stems[:12]
+    )
+    assert len(sub) == 12
+    assert len(list((cd / "_resident").glob("*.bin"))) > 2
+    assert torch.equal(sub[0][0], ram[0][0])
