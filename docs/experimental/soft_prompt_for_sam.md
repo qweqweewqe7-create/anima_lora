@@ -187,7 +187,64 @@ the dbv4 tagger*.
    file ran (`prompt_embed_sha256`); `sam_mask.yaml` rules will need the same
    once Part B lands per-concept prompt files.
 
-## 7. Usage
+## 7. Part B — text / SFX row: can a soft prompt replace MIT? **NO** (2026-08-27)
+
+The proposal's only row with an *independent* label source (MIT = UNet++
+strokes gated by comictextdetector blocks, what `make mask` runs). Gate:
+MIT box recall ≥ 0.9 at ≤ 0.1 FP/img on a held-out split.
+
+**Setup.** `build_text_targets.py` ran MIT over the 3 008 resized images:
+770 text-positive (2 001 CTD blocks; box = tight stroke bbox, mask = strokes
+closed into a glyph blob at 288²), 638 clean negatives, 1 600 ambiguous
+(UNet++ or CTD fires alone — excluded). Stable 1/8 hash holdout = 105 pos +
+66 neg. `train_soft_prompt.py` gained zero-target rows (negatives push the
+presence head to "absent"); `--init text`, defaults (2 000 steps × 4, lr
+2e-3), 1 114 train / 123 val, 21 min.
+
+**Phase 0 — plain text prompts are blind.** On the holdout, `text` reaches
+box recall 0.02 @0.3 (px recall 0.03); `sound effect text` / `written text`
+0.00 at every floor; `handwritten text` 0.03 @0.2. SAM3 simply does not
+ground text in this corpus with any phrase.
+
+**Soft prompt — learns presence, not localisation.** Val presence loss
+1.09 → 0.16 and objectness 1.21 → 0.40, but box L1 / GIoU and the mask loss
+were flat from step 0 (0.013 / 0.13 / 0.25 → 0.012 / 0.11 / 0.25); the
+clean-recall proxy plateaued at 0.61 by step 750. Holdout
+(`results/20260827-1055-eval-text-soft/`):
+
+| floor | box recall | FP / img | neg-img FP rate | px recall | over-mask × | gate |
+|---|---|---|---|---|---|---|
+| 0.2 | 0.76 | 3.70 | 0.05 | 0.95 | 4.2 | ✗ |
+| 0.3 | 0.67 | 2.08 | 0.05 | 0.90 | 3.5 | ✗ |
+| 0.4 | 0.53 | 1.06 | 0.03 | 0.71 | 2.3 | ✗ |
+| 0.5 | 0.35 | 0.50 | 0.02 | 0.44 | 1.2 | ✗ |
+| 0.6 | 0.15 | 0.16 | 0.02 | 0.20 | 0.4 | ✗ |
+
+The two halves of the gate never meet: ≥ 0.9 pixel recall only at floors
+where it emits 2–4 spurious boxes per image and 3–4× MIT's masked area;
+≤ 0.1 FP/img only where recall is ≤ 0.2. Negatives are fine (≤ 5 % of
+text-free images get any box) — the failure is *on* text images: 38 % of
+the FP boxes are extra fragments on images whose targets were all hit, the
+rest are non-text regions near the text; small text (< 1 500 MIT px, 20/105
+images) recalls only 0.66; 14/105 images are below 0.5 px recall. Sheets
+(`sheets/…soft_prompt.safetensors/`) show a typical SFX-heavy frame where the
+prompt boxes nothing at 0.5 while MIT catches the four bubbles it does.
+
+**Why it is a capacity verdict, not a label verdict.** The prompt is 1 k
+parameters in front of a frozen detector whose 288² mask head and DETR
+queries were never trained on glyphs; the loss curve says the prompt found
+the direction ("text-like region present") and had nothing left to move for
+*where*. The kill condition in the proposal ("no second attempt without a
+new label source") does not even apply — the label source is fine. Trunk
+LoRA is off the table by the proposal's own rule. **MIT stays the text
+backend; `RUN_MIT_MASK=0` is not viable.** Do not re-propose without a
+detector that has a text prior (the CTD block head already is one).
+
+Reusable: `build_text_targets.py` / `eval_text_prompt.py` are the generic
+"independent-detector label + gate" harness the other Part B rows need
+(`--prompts` takes any mix of text and `.safetensors`).
+
+## 8. Usage
 
 ```
 make daemon-run ARGS="bench/sam3_soft_prompt/build_targets.py"          # pseudo-labels + splits
@@ -199,7 +256,7 @@ make daemon-run ARGS="bench/sam3_soft_prompt/pair_negatives.py build [--count_fi
 make caption-position ARGS="--prompt_embed none"                        # back to the text prompt
 ```
 
-## 8. Code map
+## 9. Code map
 
 | file | role |
 |---|---|
@@ -207,6 +264,8 @@ make caption-position ARGS="--prompt_embed none"                        # back t
 | `bench/sam3_soft_prompt/build_targets.py` | pseudo-labels + `train` / `zero_girl` / `disagree` splits → `post_image_dataset/captions/sam3_soft_prompt/targets/` |
 | `bench/sam3_soft_prompt/train_soft_prompt.py` | the 1024-param optimisation; `--extra_manifest` appends train rows from another manifest (pair negatives) |
 | `bench/sam3_soft_prompt/ab_sam3_prompt.py` | text-vs-text / text-vs-soft contact sheets + numeric report |
+| `bench/sam3_soft_prompt/build_text_targets.py` | MIT (UNet++ + CTD gate) → DETR targets + negatives + 1/8 hash holdout for the text row |
+| `bench/sam3_soft_prompt/eval_text_prompt.py` | box recall / FP-per-img / px recall / over-mask vs MIT per floor for any prompt spec; `--sheets` |
 | `bench/sam3_soft_prompt/pair_negatives.py` | `build`: tagger-labelled boy / girl boxes on boy-tagged images; `eval`: boy-box rate + girl recall on held-out rows |
 | `library/preprocess/instance_detection.py` | `DEFAULT_SUBJECT_PROMPT_EMBED`, `resolve_prompt_embed`, `prompt_embed_sha256` |
 | `scripts/preprocess/position_captions.py::build_detect_fn` | installs the prompt on the subject pass; accepts a loaded `model`/`processor` so the A/B can build a second detector |

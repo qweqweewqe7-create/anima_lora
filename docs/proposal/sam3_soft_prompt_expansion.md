@@ -1,6 +1,6 @@
 # SAM3 soft prompts — generalise the trick to every concept we ask SAM3 for by text
 
-Status: **PROPOSED (2026-08-27)**. Part A of the original proposal — ship the
+Status: **PROPOSED (2026-08-27)**; the **text/SFX row ran and FAILED** the same day (`soft_prompt_for_sam.md` §9 — SAM3 cannot replace MIT; its harness `build_text_targets.py` / `eval_text_prompt.py` is reusable for the remaining rows). Part A of the original proposal — ship the
 learned `anime girl` prompt into `caption-position` with the caformer tagger —
 is **done** and documented in
 [`docs/experimental/soft_prompt_for_sam.md`](../experimental/soft_prompt_for_sam.md)
@@ -50,7 +50,7 @@ target filter, and the eval set change. Run as one sweep (`--concept` flag on
 | concept | init phrase(s) | pseudo-target source | negatives | eval / gate | consumer |
 |---|---|---|---|---|---|
 | **speech bubble** | `speech bubble`, `text bubble` | current `sam_mask.yaml` union @0.7 on images where MIT *also* fires inside the box (agreement filter) | images with no MIT text at all | 60 hand-checked bubble images: mask IoU vs hand mask ≥ 0.85, false bubbles ≤ 2 | `make mask` SAM backend |
-| **free text / SFX** | `text`, `sound effect text`, `handwritten text` | MIT boxes (independent detector = real labels, not self-labels) | clean images | MIT recall ≥ 0.9 at ≤ 0.1 FP/img → `RUN_MIT_MASK=0` becomes viable | `make mask`, drop a backend |
+| ~~**free text / SFX**~~ | `text` | MIT boxes | clean images | **FAILED 2026-08-27** — plain text prompts blind (recall 0.02); soft prompt px-recall 0.90 only at 2.1 FP/img + 3.5× over-mask, box/mask losses never moved. Capacity, not labels. `soft_prompt_for_sam.md` §9 | MIT stays |
 | **face** | `face`, `anime face` | current part-prompt survivors with fill ≥ 0.3 inside a subject box | — | headless-crop hair attribution: fewer `None` from the tagger's solo gate | `caption-position` part fallback |
 | **boy** | `boy`, `anime boy` | tagger-verified boy boxes (`pair_negatives.py`, 11 today) + region-task crops | pure-girl images | held-out boy set: boy recall ≥ 0.9, girl-box FP ≤ 0.05 | region v5 partner masks (today `person − girl`) |
 | **girl (region)** | the shipped prompt | — | — | region v5 slack/pair recipe re-run: found-rate vs 88 % baseline | `project/region/` |

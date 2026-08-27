@@ -120,6 +120,23 @@ def detr_loss(out: dict, tgt_boxes: torch.Tensor, tgt_masks: torch.Tensor, a) ->
     presence = out["presence_logit_dec"].float().flatten()  # (1,)
     n = tgt_boxes.shape[0]
 
+    if n == 0:
+        # Negative image (build_text_targets.py): every query is background and
+        # the presence head must say "absent". No boxes / masks to match.
+        loss_ce = focal(logits, torch.zeros_like(logits), a.focal_alpha, a.focal_gamma)
+        loss_presence = F.binary_cross_entropy_with_logits(
+            presence, torch.zeros_like(presence)
+        )
+        zero = logits.new_zeros(())
+        return {
+            "total": a.w_ce * loss_ce + a.w_presence * loss_presence,
+            "ce": loss_ce.detach(),
+            "presence": loss_presence.detach(),
+            "l1": zero,
+            "giou": zero,
+            "mask": zero,
+        }
+
     with torch.no_grad():
         prob = logits.sigmoid()
         cost = (
@@ -182,8 +199,12 @@ def evaluate(model, processor, prompt, items, dst, a) -> dict:
         losses = detr_loss(out, tb, tm, a)
         for k, v in losses.items():
             tot[k] = tot.get(k, 0.0) + float(v.detach())
-        surv = nms([r for r in proposals(out, 0.5) if r["area_frac"] >= 0.005])
-        hits += int(len(surv) == tb.shape[0] and all(r["fill"] >= 0.2 for r in surv))
+        surv = nms([r for r in proposals(out, 0.5) if r["area_frac"] >= 0.0005])
+        hits += int(
+            len(surv) == tb.shape[0]
+            and all(r["fill"] >= 0.2 for r in surv)
+            and (tb.shape[0] > 0 or float(out["presence_logit_dec"]) < 0)
+        )
     m = {k: v / max(1, len(items)) for k, v in tot.items()}
     m["clean_recall"] = hits / max(1, len(items))
     return m
