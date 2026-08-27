@@ -712,6 +712,19 @@ poisoned): hair-per-crop **10/10** on dbv4 vs 8/10 on v5 today and 3/10 at the
 2026-08-17 freeze; character-position 6/6 vs 4/6; binding side accuracy 1.0
 (48/48) with dbv4 as judge.
 
+### Detector swapped to the SAM3 soft prompt (2026-08-27) — shipped default
+
+The subject pass now runs the learned `anime girl` soft prompt
+(`networks/calibration/sam3_girl_prompt.safetensors`, default `--prompt_embed`;
+`--prompt_embed none` restores the text `girl`). Detector A/B on the dbv4
+tagger, corpus-wide (480 candidates): proposed 433 → 439, 17 newly proposed
+(all clauses correct on eyeball — the headless/ass-focus panel beside a
+full-body view is the recovered population), 11 lost (mostly the old prompt's
+own double-boxing junk: `feet` / `close-up` / `foot focus` clauses), 345/361
+shared images keep identical position words. `_EDGE_CLEAR` does not flap.
+`report.json` now stamps `prompt_embed` + `prompt_embed_sha256`. Read-outs and
+gates: [`soft_prompt_for_sam.md`](soft_prompt_for_sam.md) §4.
+
 ## How clauses behave downstream
 
 - **Caption variants** (`library/preprocess/caption_variants.py`) parse through
