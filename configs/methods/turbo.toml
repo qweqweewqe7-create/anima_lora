@@ -1,9 +1,9 @@
-output_name = "anima_turbo_U"
+output_name = "anima_turbo_v3_longer"
 dit_path = "models/diffusion_models/anima-base-v1.0.safetensors"
 data_dir = "post_image_dataset/lora"
 output_dir = "output/ckpt"
 
-iterations = 4000
+iterations = 10000
 batch_size = 1
 seed = 42
 use_masked_loss = true
@@ -16,9 +16,9 @@ base_loss = "dpdmd"
 
 [network]
 student_rank = 64
-student_alpha = 192
+student_alpha = 180
 fake_rank = 64
-fake_alpha = 192
+fake_alpha = 180
 attn_mode = "flash"
 
 train_adaln = true
@@ -29,8 +29,8 @@ fake_tau_boundary = 0.5
 
 per_step_expert = false
 
-student_init_weights = "models/extracted/anima_turboV10_delta_r80_asvd_adaln.safetensors"
-fake_init_weights = "models/extracted/anima_turboV10_delta_r80_asvd_adaln.safetensors"
+student_init_weights = "models/extracted/anima_turbo_v1.1_delta_r96_asvd_adaln.safetensors"
+fake_init_weights = "models/extracted/anima_turbo_v1.1_delta_r96_asvd_adaln.safetensors"
 
 [dmd]
 student_steps = 4
@@ -41,7 +41,7 @@ norm_floor = 0.05
 grad_step = "random"
 
 [cdm]
-weight = 0.0
+weight = 1.0
 
 [optim]
 student_lr = 5e-5
@@ -54,7 +54,7 @@ grad_clip = 1.0
 [dpdmd]
 k_anchor = 6
 teacher_anchor_steps = 12
-div_weight = 0.05
+div_weight = 0.1
 detach_after_first = true
 
 [sampling]
@@ -67,7 +67,7 @@ weight_gen = 0.03
 feature_block_idx = -1
 disc_lr = 1e-5
 disc_hidden = 0
-disc_head = "pooled"
+disc_head = "token"
 delay_steps = 0
 warmup_steps = 0
 r1_weight = 0.0
@@ -92,7 +92,7 @@ pool_size = 2
 warmup_ratio = 1.0
 
 [io]
-save_every = 500
+save_every = 1000
 log_interval = 5
 log_dir = "output/logs/turbo"
 validate_every_n_steps = 1000
