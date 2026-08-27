@@ -1,10 +1,10 @@
 # Anima Tagger — label-sharing heads REFUTED (issue #94), 2026-08-26
 
-**Status: CLOSED / archived.** The factored head (`FactoredHead`,
-`library/captioning/tag_factors.py`, `--tag_head_kind_core/_spatial`,
+**Status: CLOSED / archived.** The factored head (`FactoredHead`, formerly
+`tag_factors.py` under `library/captioning/`, `--tag_head_kind_core/_spatial`,
 `--factored_rank`, `--factored_min_tags_per_word`) was removed from the tree;
 the code, its unit test, and the full working-tree patch live in
-`_archive/tagger_factored_head/`. The shipped tagger keeps the flat linear
+`_archive/tagger_factored_head/tag_factors.py` and its siblings. The shipped tagger keeps the flat linear
 head. What *did* stay in tree from this line is listed at the bottom.
 
 Question: does sharing statistical strength across tags (label-embed cosine

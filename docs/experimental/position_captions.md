@@ -661,6 +661,57 @@ falls back to the box rules, so `merge_part_detections` is unaffected.
 | `--flatten` | off | Inverse pass — merge clauses back into the bag and drop them. Text only (no models). The undo, and the clause-free A/B corpus |
 | `--qwen3` / `--max_tokens` | — / 512 | Token-budget column + over-budget flag |
 
+### Re-swept on the dbv4 tagger (2026-08-27) — defaults held
+
+The bag-relax defaults above were calibrated against the v5 PE tagger, so they
+were re-measured after `DEFAULT_TAGGER_DIR` flipped to dbv4. Three
+`ab_position_captions.py` A/Bs on 146 images (`ama_mitsuki/*|ie_(raarami)/*`,
+83 candidates) against the shipped arm. **Nothing changed; two facts are worth
+not re-deriving:**
+
+- **`--bag_relax` is near-inert at the shipped operating point.**
+  `--bag_relax_min_score 0.3` is an *absolute* floor, and at relax 0.35 it binds
+  **96 %** of the vocabulary's per-tag thresholds — so the multiplier only
+  decides the remaining few percent. If you want to move the relaxation, move
+  the min-score.
+- **dbv4 needs relaxation less than v5 did.** Its calibrated thresholds sit
+  systematically lower (median 0.32 vs v5's 0.50, ratio 0.62), so there is less
+  sub-threshold bag material to recover: turning relax fully off costs 48 binds
+  here, against the ~188 the 2026-08-19 v5 A/B recovered.
+
+Swept arms, all vs shipped `0.35 / 0.85 / min 0.3`:
+
+| arm | images differing | tag-binds ± | caption-grounded | verdict |
+|---|---|---|---|---|
+| `--bag_relax_min_score 0.2` | 48 / 83 | +63 / −48 (**net +15**) | 58 of 63 gains | better, **not shipped** |
+| `--bag_relax_min_score 0.4` | 33 / 83 | +22 / −40 (net −18) | 16 of 22 gains | worse |
+| relax off (`1.0 / 1.0`) | 37 / 83 | +27 / −48 (net −21) | 19 of 27 gains | worse |
+
+Read by the same criterion the v5 sweep used — gains should skew *specific* and
+suppressions *generic* — only 0.2 has the right sign (gains median corpus
+base-rate 3.07 % vs losses 5.35 %); 0.4 and relax-off invert it. 0.2 is left
+unshipped because the floor exists to block near-noise fires (the measured
+`white gloves` bound to a hands-free crop at a ~0.16 relaxed floor), so it wants
+a sheet eyeball before it moves.
+
+**`_EDGE_CLEAR` was NOT part of this sweep, by construction.** `_end_word`
+(`library/captioning/position_clauses.py`) reads only box geometry, so no tagger
+change can move its operating point — it is coupled to *detection*, and belongs
+to a soft-prompt (`--prompt_embed`) arm instead.
+
+**Known cost of the swap:** 21 non-artist tags are threshold > 1.0 ("never
+emit") on dbv4 — deprecated danbooru aliases, several of them hair
+(`silver hair`, `light brown hair`, `light blue hair`, `dark blue hair`,
+`light purple hair`, `french braid`). They can never enter a clause, which
+silently drops those bindings for ~63 corpus captions. None occur in the
+146-image sweep pattern, so the gate below is uncontaminated by them.
+
+Gate, measured on the hand-GT 12 (**pass `--images`** — see
+`bench/position_captions/README.md` for why the default GT discovery is
+poisoned): hair-per-crop **10/10** on dbv4 vs 8/10 on v5 today and 3/10 at the
+2026-08-17 freeze; character-position 6/6 vs 4/6; binding side accuracy 1.0
+(48/48) with dbv4 as judge.
+
 ## How clauses behave downstream
 
 - **Caption variants** (`library/preprocess/caption_variants.py`) parse through

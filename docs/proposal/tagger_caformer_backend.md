@@ -1,10 +1,14 @@
 # Anima Tagger on the dbv4 backbone — remaining phases
 
-Status: **backend SHIPPED 2026-08-27; open = Phases 5–6 + one knob resweep.**
+Status: **backend SHIPPED 2026-08-27; open = Phases 5–6.**
 
 Phases 0–4 landed and their write-up moved to
 [`docs/experimental/anima_tagger.md`](../experimental/anima_tagger.md)
-(§*dbv4 backend*) — the only proposal-level facts worth keeping here:
+(§*dbv4 backend*); the **A3 knob resweep came back green 2026-08-27** with no
+knob change, and its write-up moved to
+[`docs/experimental/position_captions.md`](../experimental/position_captions.md)
+(§*Re-swept on the dbv4 tagger*). The only proposal-level facts worth keeping
+here:
 
 - `config.json["backend"]="dbv4"` swaps the in-house PE dual-encoder head for
   `animetimm/caformer_b36.dbv4-full` (GPL-3.0, gated → fetched under the
@@ -13,8 +17,10 @@ Phases 0–4 landed and their write-up moved to
   generals / people-count. **`@artist` is out of scope by decision** (the 92
   artist tags stay unsupported).
 - Gates passed: copyright macro-F1 0.638 → 0.815; people-count 0.885 → 0.943
-  (count-tag rule, authoritative); hair-position 0.566 → 0.750,
-  character-position 0.822 → 0.911; head-tier ECE 0.019 (card thresholds kept
+  (count-tag rule, authoritative); position hair-per-crop 10/10 and
+  character-position 6/6 on the hand-GT 12, binding 48/48 (**pass `--images`**
+  — the default GT discovery scores the pipeline's own output, see
+  `bench/position_captions/README.md`); head-tier ECE 0.019 (card thresholds kept
   — zero mean bias vs val-optimal, do not recalibrate on 791 images);
   readback win-rate 1.000 / AUROC 1.000 (v3-era 0.991 / 0.98).
 - Default flipped (`DEFAULT_TAGGER_DIR` → `models/captioners/anima-tagger-dbv4`,
@@ -25,9 +31,8 @@ Phases 0–4 landed and their write-up moved to
 
 | Phase | What | Gate | Cost |
 |---|---|---|---|
-| **A3** (soft-prompt proposal) | `caption-position` knobs are v5-calibrated: resweep `bag_relax 0.35 / bag_word_relax 0.85` and `_EDGE_CLEAR 0.47` on the dbv4 tagger with `ab_position_captions.py` (same 146-image pattern as the bag-relax A/Bs) | hair-per-crop ≥ 8/10 on the 12 GT sheets end-to-end, 48/48 binding, sheets read ≥ the shipped v5 ones | ~2 h GPU + eyeball |
 | **5** | RWR artist LoRA per `tag_readback_reward.md` with the new (stronger) judge — `TagReadback` already runs on dbv4 | that proposal's gates (CMMD non-regression + held-out read-back lift + eyeball); **not** FM-val | as budgeted there |
-| **6** | archive the PE training pipeline (below) | after A3 is green (v5 no longer needed as a fallback anywhere) | ~1 day |
+| **6** | archive the PE training pipeline (below) | **unblocked** — A3 is green, v5 is no longer needed as a fallback | ~1 day |
 
 ### Training-time use — "tag adherence boost" (Phase 5 rationale)
 

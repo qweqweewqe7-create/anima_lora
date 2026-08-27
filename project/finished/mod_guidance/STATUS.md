@@ -26,7 +26,7 @@ and its doc stays canonical: [`docs/inference/mod-guidance.md`](../../../docs/in
 
 ## Why it's finished
 
-The bench (`bench/mod_guidance/`) was archived 2026-07-12 →
+The bench dir was archived 2026-07-12 →
 `_archive/bench/mod_guidance/` because every axis it probed came back
 terminal. Verdicts, with evidence in
 [`docs/findings/mod_guidance_quality_tag_axis.md`](../../../docs/findings/mod_guidance_quality_tag_axis.md):
