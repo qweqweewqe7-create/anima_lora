@@ -12,7 +12,7 @@ user's own token at first ``AnimaTagger`` use.
 ::
 
     uv run python -m scripts.anima_tagger.build_dbv4_ckpt \\
-        --src models/captioners/anima-tagger-v5 \\
+        --src _archive/anima_tagger_training/checkpoints/anima-tagger-v5 \\
         --out models/captioners/anima-tagger-dbv4
 
 Then ``AnimaTagger("models/captioners/anima-tagger-dbv4")`` works anywhere a
@@ -49,7 +49,7 @@ COPIED = ("vocab.json", "rules.yaml", "groups.yaml", "dataset.json")
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    p.add_argument("--src", default="models/captioners/anima-tagger-v5")
+    p.add_argument("--src", default="_archive/anima_tagger_training/checkpoints/anima-tagger-v5")
     p.add_argument("--out", default="models/captioners/anima-tagger-dbv4")
     p.add_argument("--repo", default=DEFAULT_DBV4_REPO)
     p.add_argument("--arch", default=DEFAULT_DBV4_ARCH)

@@ -107,27 +107,39 @@ ground — softens the long-tail without overshoot.
 
 | File | Role |
 |---|---|
-| `anima_tagger.py` | `AnimaTagger` — public inference class. Exposes `predict`/`predict_caption`. Loads checkpoint, encoder, vocab, thresholds, rules, optional groups, optional PE-LoRA delta from one directory. Implements all post-prediction refinements (group argmax, character floor, original-fallback, girls-count cap, top-1 artist/copyright). |
-| `anima_tagger_model.py` | `AnimaTaggerConfig` + `AnimaTaggerHead` (trunk + tag head + rating head). |
-| `anima_tagger_data.py` | `TaggerManifest`, `FeatureCacheBuilder`, `CachedFeatureDataset`, `ImageCacheBuilder`, `CachedImageDataset`, `BucketBatchSampler`, `pil_resize_to_bucket`. |
+| `anima_tagger.py` | `AnimaTagger` — public inference class. Exposes `predict`/`predict_caption`. Reads `config.json["backend"]` and routes to the dbv4 backend (default) or the legacy PE dual-encoder head. Implements all post-prediction refinements (group argmax, character floor, original-fallback, girls-count cap, top-1 artist/copyright). |
+| `dbv4_backend.py` | `animetimm/caformer_b36.dbv4-full` loader + `align_vocab` (the single vocab join point) + `SidecarHead` (our linear head over the backbone's hidden state). |
+| `group_router.py` | `GroupRouter` + `compute_grouped_loss` — typed tag-group routing (softmax / softmax_when_solo / multilabel, sentinel + escape semantics). Promoted out of the archived trainer because the inference rule, calibrator and benches still resolve groups through it. |
+| `feature_cache.py` | `feature_cache_root` / `cache_dir_for` — path layout under `post_image_dataset/anima_tagger/` (dbv4 hidden-state cache + legacy token caches). |
+| `anima_tagger_model.py` | `AnimaTaggerConfig` + `AnimaTaggerHead` — the **legacy** PE dual-encoder head (load-only; its trainer is archived). |
+| `anima_tagger_data.py` | `TaggerManifest` (+ the legacy cached-feature datasets / bucket sampler, load-only). |
 | `tag_rules.py` | `tag_rules.yaml` loader/applier (replacements, always-remove, clothing dedup, `category_overrides`, `coverage_ignore`). |
 | `tag_groups.py` | `tag_groups.yaml` loader; `TagGroup`/`TagGroups`/`ResolvedGroup`; modes `softmax`, `softmax_when_solo`, `multilabel`. |
+| `taxonomy.py` / `readback.py` / `correction.py` | Danbooru category taxonomy + count-tag regex; Read-It-Back tag-adherence instrument; caption correction helpers. |
 
-`scripts/anima_tagger/` (CLI + training pipeline — invoke as
-`python -m scripts.anima_tagger.cli`):
+`scripts/anima_tagger/` (CLI — invoke as `python -m scripts.anima_tagger.cli`):
 
 | File | Role |
 |---|---|
-| `cli.py` | Argparse + 7-mode dispatcher (`build_vocab`, `build_features`, `build_resized`, `train`, `calibrate`, `predict`, `scan_role_markers`). Loads `.env` so `CAPTION_CORPUS_DIR` resolves before defaults are computed. |
+| `cli.py` | Argparse + 4-mode dispatcher (`build_vocab`, `predict`, `scan_role_markers`, `derive_groups`). Loads `.env` so `CAPTION_CORPUS_DIR` resolves before defaults are computed. |
 | `vocab.py` | Caption discovery, tag categorization (rating literal → `@` artist → count regex → `category_overrides` → tag cache → `general` fallback), `min_freq` cut, train/val split, manifest build, group resolution against the kept vocab, coverage scan. |
-| `caches.py` | `cmd_build_features` (pooled PE features → `.cache/pooled-pe/`) and `cmd_build_resized` (LANCZOS-resized uint8 images → `.cache/resized-pe/`). |
-| `train_cached.py` | Frozen-encoder fast path: full train/val features pushed to VRAM once, sliced by index — no DataLoader. |
-| `train_pe_lora.py` | End-to-end PE-LoRA path: bucket-grouped image batches, two AdamW param groups (head at `--lr`, LoRA at `--pe_lora_lr`). |
-| `train_common.py` | `GroupRouter`, `compute_grouped_loss` (BCE + per-group CE with mask-out so each (sample, tag) is supervised by exactly one term), `eval_split` (residual macro-F1 + per-group argmax accuracy), `pos_weight_sqrt`, `rating_class_weights`, `save_history_plot`. |
-| `calibrate.py` | Per-tag F1-optimal threshold sweep on val (skips softmax-group tags). |
-| `predict.py` | Single-image debug entry; samples a random val stem when `--image` is omitted. |
-| `role_markers.py` | Read-only curator helper — scans the trained vocab + manifest for character-typed tags that behave like affiliation markers and emits a YAML stub ready to paste into `tag_rules.yaml`. |
-| `constants.py` | Tag-type ID map, `RATINGS`, `SLOT_ORDER`, count-tag regex, `find_image_for_caption`. |
+| `derive_groups.py` | Taxonomy-driven tag-group candidates (folded into `build_vocab` by default). |
+| `build_dbv4_ckpt.py` | Assemble the dbv4 checkpoint dir (`make tagger-dbv4`): copies vocab / rules / groups / split next to the backend descriptor. |
+| `train_sidecar.py` | Sidecar linear-head trainer on cached dbv4 hidden states (`make daemon-run ARGS="scripts/anima_tagger/train_sidecar.py"`); calls `calibrate.calibrate_thresholds`. |
+| `calibrate.py` | `calibrate_thresholds` — per-tag F1-optimal threshold sweep on val (skips softmax-group tags). Library function only; the old `--mode calibrate` driver is archived. |
+| `eval_metrics.py` | Shared eval + `predict_with_inference_rule` (group argmax / count-tag rule). |
+| `predict.py` / `autotag.py` / `autotag_server.py` | Single-image debug entry; CLI one-shot autotag; resident GUI worker. |
+| `role_markers.py` | Read-only curator helper — scans the vocab + manifest for character-typed tags that behave like affiliation markers and emits a YAML stub ready to paste into `tag_rules.yaml`. |
+| `constants.py` | `find_image_for_caption`, image extensions; re-exports the taxonomy count-tag regex. |
+
+**Archived 2026-08-27** (`_archive/anima_tagger_training/`, untracked): the
+PE dual-encoder training pipeline — `train_cached.py`, `train_common.py`
+(minus `GroupRouter`), `caches.py` (`build_features`), `embed_tags.py`, the
+`build_features` / `train` / `calibrate` / `embed_tags` CLI modes, `make
+preprocess-tagger`, the v2–v6 + ab94 checkpoints, and the training tests.
+The PE feature caches (`post_image_dataset/anima_tagger/tokens-*`,
+`anima_tagger_stroked/`, 158 GB) were reclaimed; only `anima_tagger/dbv4/`
+(the sidecar hidden-state cache, ≈170 MB) remains.
 
 ## Configuration via `.env`
 
@@ -157,80 +169,62 @@ runtime dependency on the corpus dir.
 
 ## Training pipeline
 
-Seven modes, run independently via `python -m scripts.anima_tagger.cli`:
+Since 2026-08-27 the shipped tagger is **not trained end-to-end here**: the
+backbone is the external `caformer_b36.dbv4-full`, and the only trained
+piece is the sidecar linear head. The vocab build is still ours.
 
 ```bash
 # 1. Build the vocabulary + train/val split + per-stem manifest +
-#    resolved typed groups.
-python -m scripts.anima_tagger.cli --mode build_vocab --min_freq 5
+#    resolved typed groups (derive_groups folded in).
+make tagger ARGS="--min_freq 5"          # == --mode build_vocab
 
-# 2a. Frozen-encoder path: cache pooled PE-Core features per stem.
-python -m scripts.anima_tagger.cli --mode build_features
+# 2. Assemble the dbv4 checkpoint dir (vocab / rules / groups / split +
+#    backend descriptor).
+make tagger-dbv4
 
-# 2b. End-to-end PE-LoRA path: cache LANCZOS-resized uint8 images instead.
-python -m scripts.anima_tagger.cli --mode build_resized
+# 3. Cache dbv4 hidden states + train / calibrate the sidecar head.
+make daemon-run ARGS="scripts/anima_tagger/train_sidecar.py --ckpt_dir models/captioners/anima-tagger-dbv4"
 
-# 3a. Train the head on cached features (frozen encoder; default).
-python -m scripts.anima_tagger.cli --mode train --epochs 100
+# 4. Single-image sanity check.
+make test-tagger ARGS="--image foo.png --show_scores"
 
-# 3b. End-to-end PE-LoRA training (requires --mode build_resized first).
-python -m scripts.anima_tagger.cli --mode train \
-    --pe_lora_rank 16 --pe_lora_layers 4 --pe_lora_lr 1e-4 --epochs 30
-
-# 4. Sweep per-tag F1-optimal thresholds on val (skips softmax-group tags).
-python -m scripts.anima_tagger.cli --mode calibrate
-
-# 5. Single-image sanity check.
-python -m scripts.anima_tagger.cli --mode predict --image foo.png --show_scores
-
-# 6. Curator helper — find character tags that behave like affiliation markers.
+# 5. Curator helper — find character tags that behave like affiliation markers.
 python -m scripts.anima_tagger.cli --mode scan_role_markers --out_yaml stub.yaml
 ```
 
-All artifacts go to `--out_dir` (default
-`models/captioners/anima-tagger-v5/`):
+All artifacts go to `--out_dir` (default `models/captioners/anima-tagger-dbv4/`):
 
 ```
-models/captioners/anima-tagger-v5/
+models/captioners/anima-tagger-dbv4/
 ├── vocab.json              # tag list + category + median emit pos + groups
 ├── rules.yaml              # snapshot of tag_rules.yaml at vocab-build time
-├── groups.yaml             # snapshot of tag_groups.yaml (optional)
+├── groups.yaml             # snapshot of tag_groups.yaml
 ├── dataset.json            # per-stem (image_path, multi_hot, rating) manifest
-├── .cache/pooled-pe/       # per-stem [d_enc] safetensors  (frozen path)
-├── .cache/resized-pe/      # per-stem uint8 [C, H, W] safetensors  (PE-LoRA path)
-├── model.safetensors       # AnimaTaggerHead state_dict
-├── pe_lora.safetensors     # PE-LoRA delta (only when trained with --pe_lora_rank > 0)
-├── config.json             # model + training metadata (incl. pe_lora flags)
-├── thresholds.safetensors  # per-tag F1-calibrated thresholds + val_f1
-├── train_history.json      # per-epoch loss + val metrics
-└── train_history.png       # 2-panel loss + val-F1 / rating-acc plot
+├── config.json             # backend="dbv4" descriptor (repo / arch / vocab map)
+├── sidecar.safetensors     # our linear head (the only trained weights shipped)
+└── thresholds.safetensors  # per-tag F1-calibrated thresholds (sidecar tags)
 ```
 
-The checkpoint is **fully self-contained** — no runtime dependency on
-`CAPTION_CORPUS_DIR`, moveable across machines.
+The dbv4 weights are fetched at runtime under the user's HF token (GPL-3.0,
+gated) and never bundled; the checkpoint dir holds only our files, so it
+stays moveable across machines. The dbv4 hidden-state cache lives at
+`post_image_dataset/anima_tagger/dbv4/<arch>_hidden.safetensors`
+(`feature_cache.py`), read by `train_sidecar.py`, `bench/readback` and
+`bench/tagger_external/calibration_check.py`.
 
-### Frozen-encoder path (`train_cached.py`)
+### Legacy PE dual-encoder path (archived)
 
-The whole train/val feature tensor (~50 MB at 12k × 1024 × float32) lives
-in VRAM after one push — no per-step dataloader. Rating-CE is class-weighted
-(inverse frequency normalized to mean=1); tag-BCE uses
-`sqrt(n_neg/n_pos)` per-tag pos-weight. Best macro-F1 on val saved.
-
-### End-to-end PE-LoRA path (`train_pe_lora.py`)
-
-Set `--pe_lora_rank > 0` and the trainer ignores the pooled cache,
-reads pre-resized `uint8 [C,H,W]` from `.cache/resized-pe/`, and runs
-PE-Core + mean-pool + head per step. `inject_pe_lora` (from
-`networks/methods/ip_adapter_pe_lora.py`) injects a low-rank delta on the
-trailing `--pe_lora_layers` resblocks (default 4) targeting QKV / attn-out
-/ MLP (each toggleable). `BucketBatchSampler` groups same-shape images
-into shape-homogeneous batches so the encoder forwards stay
-recompile-free.
-
-Two AdamW param groups — head at `--lr`, LoRA at `--pe_lora_lr` (default
-`1e-4`). `pe_lora.safetensors` is saved alongside `model.safetensors`,
-and `config.json` records every PE-LoRA flag so inference can reconstruct
-the encoder state exactly.
+The frozen PE-Core + PE-Spatial hard-routed head (`train_cached.py`,
+`build_features`, stroke augmentation, label-embed / spatial-headroom levers)
+is archived at `_archive/anima_tagger_training/` together with its
+checkpoints (v2 … v6-spatialL, ab94 ablations) and the pre-archive version of
+this doc (`_archive/anima_tagger_training/docs/anima_tagger.pre_archive.md`). `AnimaTagger` still **loads**
+those checkpoints (`anima_tagger_model.py` / `anima_tagger_data.py` are
+load-only), and `bench/tagger_external` defaults to the archived v5 for the
+ours-vs-external comparison. Why it was retired: the external dbv4 backbone
+crushes it (mAP 0.72 vs 0.30, position crops hair 8–10/10 vs 3/10), and the
+spatial-headroom line was **superseded**, not refuted — its premise (the PE
+trunk is the ceiling) is confirmed from the other direction.
 
 ### Group routing (`GroupRouter`)
 
@@ -248,22 +242,23 @@ the encoder state exactly.
 * **`multilabel`** — left in BCE; the group only exists for
   introspection / UI grouping.
 
-`compute_grouped_loss` runs BCE on every (sample, tag) and masks off the
-positions where CE supervises that pair, so each cell is supervised by
-exactly one term. `eval_split` reports macro-F1 over **residual**
-(BCE-supervised) tags only and per-group argmax accuracy separately —
-softmax-group tags' sigmoid scores are untrained noise, so the
-flat macro-F1 the cached path reports is conservatively low (best 0.192
-on the shipped checkpoint, with 5 active softmax groups).
+`library/captioning/group_router.py` holds the router and
+`compute_grouped_loss` (BCE on every (sample, tag), masking the positions CE
+supervises so each cell has exactly one term). At inference the same router
+drives group argmax via `eval_metrics.predict_with_inference_rule`; the
+sidecar trainer does not use the grouped loss (its tags are plain BCE), but
+the semantics stay pinned by `tests/test_tagger_sentinel_groups.py` and
+`tests/test_grouped_loss_negweight.py`.
 
 ### Calibration
 
-`calibrate.py` sweeps thresholds in `[0.05, 0.95]` step `0.05` per tag and
-picks the F1-maximizing one on val. Tags with no positive val examples,
-zero achievable F1, or membership in a softmax group keep `default=0.5`
-(softmax-group tags are routed by argmax at inference, so a
-sigmoid-threshold value never fires for them). Tag-block size of 256
-caps memory.
+`calibrate.calibrate_thresholds` sweeps thresholds in `[0.05, 0.95]` step
+`0.05` per tag and picks the F1-maximizing one on val. Tags with fewer than
+`min_support` val positives, zero achievable F1, or membership in a softmax
+group keep `default=0.5` (softmax-group tags are routed by argmax at
+inference). Tag-block size of 256 caps memory. dbv4-native tags keep the
+card thresholds (head-tier ECE 0.019 — do not recalibrate on 791 images);
+only sidecar tags are swept.
 
 ### Role-marker scan
 
@@ -382,9 +377,9 @@ Anima Tagger on the source image to seed `--prompt_src`:
 make exp-test-directedit PROMPT='glasses'
 ```
 
-Requires `models/captioners/anima-tagger-v5/model.safetensors`. The
-driver exits with a clear error if the checkpoint is missing — train it
-via `python -m scripts.anima_tagger.cli`.
+Requires `models/captioners/anima-tagger-dbv4/` (auto-downloaded on first
+use; `make tagger-dbv4` rebuilds it locally). The driver exits with a clear
+error if the checkpoint is missing.
 
 `scripts/edit.py` itself doesn't tag — it takes `--prompt_src` directly.
 Tagging only happens in the make-target driver (CLI) or the ComfyUI node

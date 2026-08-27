@@ -1,10 +1,12 @@
-"""Anima Tagger task entry-points: preprocess (vocab + dual feature cache),
-train (dual-encoder hard-routed head), predict (single-image debug).
+"""Anima Tagger task entry-points: vocab build / curation modes (``tagger``),
+predict (``test-tagger``), autotag, and the dbv4 checkpoint builder.
 
-All three invoke ``python -m scripts.anima_tagger.cli`` with the appropriate
-``--mode`` flag. Extra args are forwarded verbatim, so per-mode knobs
-(``--epochs``, ``--image``, ``--show_scores``, …) work as documented in
-``scripts/anima_tagger/cli.py``.
+``make tagger`` / ``make test-tagger`` invoke ``python -m scripts.anima_tagger.cli``
+with the appropriate ``--mode``; extra args are forwarded verbatim. The PE-head
+training targets (``make preprocess-tagger`` / ``make tagger`` as a trainer)
+were archived 2026-08-27 with the dbv4 backend migration
+(``_archive/anima_tagger_training/``); sidecar training runs via
+``make daemon-run ARGS="scripts/anima_tagger/train_sidecar.py"``.
 """
 
 from __future__ import annotations
@@ -31,65 +33,22 @@ def _mode_in(extra):
     return None, extra
 
 
-def cmd_preprocess_tagger(extra):
-    """Build the tagger vocab/manifest + cache both encoders' PE features.
-
-    Two idempotent stages:
-
-    1. ``--mode build_vocab`` — scans caption sources, emits ``vocab.json`` +
-       ``dataset.json``.
-    2. ``--mode build_features`` — encodes each manifest image through both
-       PE-Core (``--encoder`` / ``--pool_kind``) and PE-Spatial
-       (``--aux_encoder`` / ``--pool_kind_aux``), writing per-stem safetensors
-       (token sequence for ``map`` / pooled vector for ``mean``).
-
-    Requires ``CAPTION_CORPUS_DIR`` set in ``anima_lora/.env`` (or the relevant
-    paths passed via flags). Extra args are forwarded to both stages — pass
-    only flags they share (e.g. ``--out_dir``, ``--encoder``, ``--device``).
-    """
-    _tagger("build_vocab", extra)
-    _tagger("build_features", extra)
-
-
 def cmd_tagger(extra):
-    """Run the Anima Tagger CLI — trains by default, or any mode via ``--mode``.
+    """Run a vocab / curation mode of the Anima Tagger CLI.
 
-    ``make tagger`` (no ``--mode``) trains the dual-encoder hard-routed head:
-    PE-Core drives rating / people-count / identity tags, PE-Spatial drives
-    localized tags (both pooled per ``--pool_kind`` / ``--pool_kind_aux``);
-    encoders are frozen, reading the caches from ``make preprocess-tagger`` and
-    saving to ``<out_dir>/model.safetensors``. The training defaults (epochs,
-    batch_size, lr, pool kinds) are applied first so ``extra`` flags override.
-
-    ``make tagger ARGS="--mode build_vocab"`` (or any other ``--mode``) forwards
-    straight to that mode with the CLI's own defaults — no training knobs
-    injected. ``build_vocab`` derives + bakes tag-groups by default
-    (``--no-derive_groups`` to opt out). Hyphenated modes (``build-vocab``) are
-    accepted.
+    ``make tagger`` (no ``--mode``) runs ``build_vocab`` — scans caption
+    sources, emits ``vocab.json`` + ``dataset.json`` and derives + bakes
+    tag-groups by default (``--no-derive_groups`` to opt out). Any other mode
+    (``predict`` / ``scan_role_markers`` / ``derive_groups``) forwards via
+    ``ARGS="--mode <name>"``; hyphenated spellings (``build-vocab``) are
+    accepted. Requires ``CAPTION_CORPUS_DIR`` in ``anima_lora/.env`` for
+    ``build_vocab`` (or the relevant paths passed via flags).
     """
     mode, extra = _mode_in(extra)
-    if mode is not None and mode != "train":
-        run([PY, "-m", "scripts.anima_tagger.cli", *extra])
-        return
-    defaults = [
-        "--epochs",
-        "32",
-        "--batch_size",
-        "64",
-        "--lr",
-        "1.5e-4",
-        "--label_smooth",
-        "0.0",
-        "--pool_kind",
-        "map",
-        "--pool_kind_aux",
-        "map",
-    ]
-    # mode is None (→ train) or explicitly "train" (already in extra).
     if mode is None:
-        _tagger("train", [*defaults, *extra])
+        _tagger("build_vocab", extra)
     else:
-        run([PY, "-m", "scripts.anima_tagger.cli", *defaults, *extra])
+        run([PY, "-m", "scripts.anima_tagger.cli", *extra])
 
 
 def cmd_test_tagger(extra):

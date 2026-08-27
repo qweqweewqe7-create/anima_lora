@@ -59,7 +59,7 @@ RATING_MAP = {  # external danbooru rating name -> our vocab rating name
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    p.add_argument("--model_dir", default="models/captioners/anima-tagger-v5")
+    p.add_argument("--model_dir", default="_archive/anima_tagger_training/checkpoints/anima-tagger-v5")
     p.add_argument(
         "--external_repo",
         default="animetimm/convnextv2_huge.dbv4-full",
@@ -106,7 +106,7 @@ def collect_ours(args, model_dir: Path, cfg_d: dict, split_stems: List[str]):
     from library.captioning.anima_tagger_model import AnimaTaggerConfig, AnimaTaggerHead
     from library.vision.encoders import get_encoder_info
     from safetensors.torch import load_file as st_load
-    from scripts.anima_tagger.caches import cache_dir_for, feature_cache_root
+    from library.captioning.feature_cache import cache_dir_for, feature_cache_root
 
     cfg = AnimaTaggerConfig.from_dict(cfg_d["model"])
     model = AnimaTaggerHead(cfg)
@@ -355,7 +355,7 @@ def main() -> None:
 
     from library.captioning import tag_rules as tr
     from scripts.anima_tagger.eval_metrics import predict_with_inference_rule
-    from scripts.anima_tagger.train_common import GroupRouter
+    from library.captioning.group_router import GroupRouter
 
     rules_path = model_dir / "rules.yaml"
     rename_recovery: Dict[str, str] = {}

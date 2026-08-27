@@ -532,7 +532,7 @@ class CachedDualDataset(Dataset):
     batches are grouped by aux bucket only.
 
     ``cache_dir`` / ``cache_dir_aux`` should be the per-side outputs of
-    :func:`scripts.anima_tagger.caches.cache_dir_for` (i.e.
+    :func:`library.captioning.feature_cache.cache_dir_for` (i.e.
     ``.cache/pooled-<encoder>/`` for mean, ``.cache/tokens-<encoder>/`` for
     map). Spec is only used when the side is map (to map T → bucket); pass
     ``None`` for the spec on a mean side.

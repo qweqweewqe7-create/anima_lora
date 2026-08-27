@@ -15,7 +15,7 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 
-from scripts.anima_tagger.train_common import GroupRouter, compute_grouped_loss
+from library.captioning.group_router import GroupRouter, compute_grouped_loss
 
 
 def _router(mh: torch.Tensor) -> GroupRouter:

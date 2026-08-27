@@ -13,14 +13,14 @@ Modes (selected by ``--mode``):
                        cache, snapshot ``tag_rules.yaml``, emit ``vocab.json``
                        (label space) plus a per-stem ``dataset.json`` manifest
                        that carries the fixed train/val split.
-* ``build_features`` — encode every manifest image through frozen PE-Core +
-                       PE-Spatial and write per-stem caches. Each side's
-                       layout follows ``--pool_kind`` / ``--pool_kind_aux``
-                       (``map`` = full token sequence, ``mean`` = pooled vector).
-* ``train``          — train the dual-encoder hard-routed head: multi-label
-                       tags + 3-class rating + 8-class people-count.
-* ``calibrate``      — sweep per-tag F1-optimal thresholds on the val split.
-* ``predict``        — single-image debug entry.
+* ``predict``        — single-image debug entry (any backend).
+* ``scan_role_markers`` / ``derive_groups`` — vocab curation helpers.
+
+The PE-head training modes (``build_features`` / ``train`` / ``calibrate`` /
+``embed_tags``) were archived 2026-08-27 with the dbv4 backend migration —
+see ``_archive/anima_tagger_training/`` and
+``docs/experimental/anima_tagger.md``. Sidecar training is
+``scripts/anima_tagger/train_sidecar.py``.
 """
 
 from __future__ import annotations
@@ -71,57 +71,24 @@ def _default_tag_cache():
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Anima tagger trainer")
+    p = argparse.ArgumentParser(
+        description="Anima tagger vocab / predict / curation CLI"
+    )
     p.add_argument(
         "--mode",
         choices=[
             "build_vocab",
-            "build_features",
-            "train",
-            "calibrate",
             "predict",
             "scan_role_markers",
             "derive_groups",
-            "embed_tags",
         ],
         default="build_vocab",
     )
     p.add_argument(
-        "--encoder",
-        default="pe",
-        help="Vision encoder registry name (passed to load_pe_encoder). "
-        "Default: pe (PE-Core-L14-336).",
-    )
-    p.add_argument(
-        "--aux_encoder",
-        default="pe_spatial",
-        help="Spatial vision encoder for the dual-encoder head (default: "
-        "'pe_spatial' for PE-Spatial-B16-512). build_features builds a "
-        "parallel cache; train routes localized tags through this encoder's "
-        "trunk. Dual encoder is mandatory — this must name a real encoder "
-        "different from --encoder.",
-    )
-    p.add_argument(
         "--device",
         default=None,
-        help="Torch device for build_features / train (default: cuda if available).",
+        help="Torch device for predict (default: cuda if available).",
     )
-    p.add_argument(
-        "--feature_cache_workers",
-        type=int,
-        default=5,
-        help="DataLoader workers for build_features CPU-side decode + LANCZOS "
-        "resize (default: 4). Set to 0 to run inline on the main process.",
-    )
-    p.add_argument(
-        "--feature_cache_batch_size",
-        type=int,
-        default=8,
-        help="Images per encoder forward during build_features. Stems are "
-        "grouped by aspect bucket so each batch is shape-homogeneous; raise "
-        "for more GPU throughput / lower for less VRAM (default: 8).",
-    )
-
     # Vocab-build inputs default to subpaths of ``$CAPTION_CORPUS_DIR``.
     raw_default = _corpus_default("retrieved")
     curated_default = _corpus_default("selected")
@@ -162,276 +129,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--val_frac", type=float, default=0.05)
     p.add_argument("--seed", type=int, default=42)
 
-    p.add_argument("--epochs", type=int, default=40)
-    p.add_argument("--batch_size", type=int, default=96)
-    p.add_argument(
-        "--ram_resident",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Load the whole feature set into RAM once at startup (stacking the "
-        "per-stem sidecars into per-bucket CPU tensors) and serve batches from "
-        "memory (no per-epoch disk IO; runs the loader inline with a free global "
-        "shuffle). Needs ~feature-set-sized RAM (~40 GB here). Use "
-        "--no-ram_resident to fall back to the lazy per-stem path with chunked "
-        "shuffle + prefetch workers (default: on).",
-    )
-    p.add_argument(
-        "--resident_backing",
-        choices=["mmap", "ram"],
-        default="mmap",
-        help="Storage behind --ram_resident. 'mmap' (default): stack each "
-        "(encoder, bucket) group once into <feature_cache>/_resident/*.bin and "
-        "memory-map it — served from the page cache, so it's as fast as RAM "
-        "when RAM is free and falls back to SSD reads (never OOM) when it "
-        "isn't; costs the resident-set size on disk (~42 GB for PE+PE-Spatial). "
-        "'ram': anonymous in-process allocation (needs the full set in RAM).",
-    )
-    p.add_argument(
-        "--shuffle_chunk_size",
-        type=int,
-        default=2048,
-        help="IO-locality knob for the cached-feature loader (--no-ram_resident "
-        "path only). Each epoch shuffles within contiguous chunks of this many "
-        "samples (snapped to a multiple of --batch_size) and shuffles chunk "
-        "order, instead of a global shuffle — keeps sidecar reads inside a "
-        "cache-resident window so the ~40 GB token set doesn't thrash on a "
-        "RAM-bound box. Larger = closer to a "
-        "full global shuffle (more random IO); smaller = more sequential IO, "
-        "slightly more correlated batch composition (default: 2048).",
-    )
-    p.add_argument(
-        "--postfix_every",
-        type=int,
-        default=8,
-        help="PE-LoRA training: refresh the tqdm postfix (and force a "
-        "host-device sync) every N steps. Higher = fewer syncs / faster "
-        "training; lower = more responsive progress bar (default: 10).",
-    )
-    p.add_argument("--lr", type=float, default=2e-4)
-    p.add_argument("--weight_decay", type=float, default=0.01)
-    p.add_argument(
-        "--warmup_steps",
-        type=int,
-        default=50,
-        help="Linear lr warmup over the first N optimizer steps before cosine "
-        "decay takes over. 0 (default) disables warmup and runs pure cosine "
-        "on a per-step schedule. Typical values: 200-1000 for fresh-head "
-        "training on this scale.",
-    )
-    p.add_argument("--d_hidden", type=int, default=1024)
-    p.add_argument("--dropout", type=float, default=0.05)
-    p.add_argument(
-        "--label_smooth",
-        type=float,
-        default=0.05,
-        help="Label-smoothing ε for the tag head (train only). Softens the "
-        "multi-label BCE targets to [ε/2, 1−ε/2] and feeds the same ε to the "
-        "softmax-group cross-entropy, regularizing against the overconfidence "
-        "that drives the train/val tag-loss gap. 0.0 (default) is inert; "
-        "0.05–0.1 is the usual range. Val loss is always reported unsmoothed.",
-    )
-    p.add_argument(
-        "--ce_maxsup",
-        action="store_true",
-        help="Swap the softmax-group CE regularizer from label smoothing to "
-        "MaxSup (arXiv:2502.15798): hard CE + ε·(z_max − mean z) with ε = "
-        "--label_smooth. Also adds the same ε-weighted MaxSup term to the "
-        "rating and people-count heads (which carry no smoothing otherwise). "
-        "Keeps LS's overconfidence regularization but drops its "
-        "error-amplification term on misclassified samples (ambiguous "
-        "exclusive groups). BCE-target smoothing is unaffected — MaxSup has "
-        "no per-tag sigmoid analog. Inert when --label_smooth is 0.",
-    )
-    p.add_argument(
-        "--inactive_neg_weight",
-        type=float,
-        default=0.6,
-        help="Group-conditional negative weighting λ (train only). A negative "
-        "tag whose group has NO tags on that image (annotator likely skipped "
-        "the category → possible missing label) gets its BCE scaled by λ. "
-        "Positives / active-group negatives / ungrouped tags untouched. 1.0 "
-        "(default) is bit-inert; 0.6–0.75 is the intended range (_archive/bench/"
-        "tagger_groups gold-check: inactive-group negatives only mildly less "
-        "reliable, so don't mask). Trades long-tail recall↑ vs precision↓ — "
-        "A/B on val. Val loss is always reported at λ=1.",
-    )
-    # build_features / train / calibrate all read --pool_kind to pick the cache
-    # subdir and head shape — they must agree.
-    p.add_argument(
-        "--pool_kind",
-        choices=["map", "mean"],
-        default="map",
-        help="Pool head over the PE-Core encoder's tokens. 'map' (default): "
-        "K-query attention pool + CLS + mean concat → trunk. 'mean': "
-        "single-vector mean-pool. Selects cache subdir "
-        "(tokens-<encoder>/ vs pooled-<encoder>/ under --feature_cache_dir) "
-        "and head arch.",
-    )
-    p.add_argument(
-        "--pool_kind_aux",
-        choices=["map", "mean"],
-        default="map",
-        help="Pool kind for the auxiliary encoder. Default 'map' pairs with "
-        "PE-Spatial's full attention pool. Set 'mean' to swap for a cheap "
-        "mean-pool on the aux side (rare — defeats the point of PE-Spatial).",
-    )
-    p.add_argument(
-        "--pool_n_queries",
-        type=int,
-        default=4,
-        help="MAP pool: number of learnable queries (default 4). Each query "
-        "produces one [d_enc] vector; trunk input is "
-        "(K + use_cls + use_mean) * d_enc.",
-    )
-    p.add_argument(
-        "--pool_n_heads",
-        type=int,
-        default=8,
-        help="MAP pool: number of attention heads (default 8). Must divide "
-        "the encoder dim (d_enc=1024 for PE-Core).",
-    )
-    p.add_argument(
-        "--pool_use_cls",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="MAP pool: concat the encoder's CLS token as an aux channel (default on).",
-    )
-    p.add_argument(
-        "--pool_use_mean",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="MAP pool: concat the patch-token mean as an aux channel "
-        "(default on — gives the legacy baseline as a residual).",
-    )
-
-    # Aux encoder MAP-pool knobs (PE-Spatial's d=768 admits more head divisors,
-    # so a bigger n_heads_aux is fine).
-    p.add_argument(
-        "--pool_n_queries_aux",
-        type=int,
-        default=16,
-        help="Aux MAP pool: number of learnable queries (default 4). Each "
-        "query produces one [d_in_aux] vector.",
-    )
-    p.add_argument(
-        "--pool_n_heads_aux",
-        type=int,
-        default=16,
-        help="Aux MAP pool: attention heads (default 8). Must divide d_in_aux "
-        "(768 for PE-Spatial-B16-512 — divisors include 8, 12, 16, 24).",
-    )
-    p.add_argument(
-        "--pool_use_cls_aux",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Aux MAP pool: concat the encoder's CLS token (default on).",
-    )
-    p.add_argument(
-        "--pool_use_mean_aux",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Aux MAP pool: concat the patch-token mean (default on).",
-    )
-    p.add_argument(
-        "--lambda_rating",
-        type=float,
-        default=0.1,
-        help="Weight on the rating CE loss relative to multi-label BCE.",
-    )
-    p.add_argument(
-        "--lambda_people",
-        type=float,
-        default=0.1,
-        help="Weight on the people-count CE loss relative to multi-label BCE. "
-        "0 disables the head's gradient contribution (still runs forward "
-        "if the manifest carries labels).",
-    )
-
-    # ── Spatial-branch headroom levers (docs/proposal/tagger_spatial_head_headroom.md) ──
-    # _archive/bench/tagger_ceiling showed the spatial branch floors ~0.12 AP below an
-    # isolated same-arch head. The trunks are disjoint, so the fix is selection +
-    # optimization, not loss-scaling (AdamW cancels a uniform spatial up-weight).
-    p.add_argument(
-        "--select_metric",
-        choices=["macro_f1", "spatial_ap"],
-        default="macro_f1",
-        help="Which val metric selects the best checkpoint. 'macro_f1' (default, "
-        "legacy) EXCLUDES softmax-group tags and mixes in the near-solved core "
-        "slices, so it is blind to the spatial branch's floor. 'spatial_ap' — "
-        "threshold-free mean AP over the PE-Spatial-routed tags "
-        "(softmax-inclusive), matching _archive/bench/tagger_ceiling — is the right "
-        "selection signal for the localized-semantic slices.",
-    )
-    p.add_argument(
-        "--spatial_refit_epochs",
-        type=int,
-        default=0,
-        help="If > 0, run a second stage after joint training that FREEZES the "
-        "core / rating / people params and refits only the spatial branch "
-        "(pool_spatial + trunk_spatial + tag_head_spatial) for N epochs, "
-        "selecting on val spatial_ap. Reproduces the isolated-branch ceiling "
-        "(_archive/bench/tagger_ceiling dep_arch__nobal, +0.123 AP) while guaranteeing "
-        "the identity/core slices cannot regress. The refit is kept only if it "
-        "beats the joint checkpoint's spatial_ap. 0 (default) = joint-only, "
-        "bit-identical to the pre-refit path.",
-    )
-    p.add_argument(
-        "--spatial_refit_lr",
-        type=float,
-        default=None,
-        help="LR for the spatial refit stage (default: reuse --lr). Only read "
-        "when --spatial_refit_epochs > 0.",
-    )
-    p.add_argument(
-        "--lr_spatial",
-        type=float,
-        default=None,
-        help="Override LR for the spatial branch param-group in the JOINT stage. "
-        "None (default) = single param-group, bit-identical to the pre-lever "
-        "path. A higher spatial LR is a real lever (the trunks are disjoint, so "
-        "unlike a loss up-weight it is not cancelled by AdamW normalization).",
-    )
-    p.add_argument(
-        "--wd_spatial",
-        type=float,
-        default=None,
-        help="Override weight-decay for the spatial branch param-group (joint "
-        "stage) and the refit optimizer. None (default) = inherit "
-        "--weight_decay.",
-    )
-
-    p.add_argument(
-        "--stroke_frac",
-        type=float,
-        default=0.0,
-        help="build_features: paint random white brush strokes onto this "
-        "fraction of TRAIN-split images before encoding (val stays clean). "
-        "Domain alignment for the position-caption serving path, whose "
-        "mask-blanked crops put flat white voids through the subject — a "
-        "distribution full-image training never contains (white-garment "
-        "false fires, eaten white clothing). Strokes are small enough that "
-        "labels stay valid, and deterministic in --stroke_seed. 0 (default) "
-        "= off. Use a separate --feature_cache_dir for a stroked cache — the "
-        "builder skips already-cached stems, so it will NOT restroke an "
-        "existing clean cache in place.",
-    )
-    p.add_argument(
-        "--stroke_seed",
-        type=int,
-        default=1234,
-        help="build_features: seed for --stroke_frac stem selection and "
-        "per-stem stroke geometry (default: 1234).",
-    )
-    p.add_argument(
-        "--calib_min_support",
-        type=int,
-        default=5,
-        help="calibrate: minimum val-split positives a tag needs before its "
-        "F1-swept threshold is trusted; below this the tag keeps the 0.5 "
-        "default. With ~800 val images 62%% of the vocab has <5 positives and "
-        "the sweep lands on hair-trigger thresholds that over-fire at "
-        "inference. 1 restores the old trust-any-positive behaviour.",
-    )
     p.add_argument(
         "--image",
         default=None,
@@ -574,90 +271,11 @@ def parse_args() -> argparse.Namespace:
         "preserved verbatim and claim their tags first (no regression).",
     )
 
-    # Label-embedding tag head (embed_tags builds the matrix; train consumes it).
-    p.add_argument(
-        "--tag_head_kind",
-        choices=["linear", "label_embed"],
-        default="linear",
-        help="Tag sub-head architecture. 'linear' (default): free per-tag "
-        "weight vectors (the v2 baseline). 'label_embed': cosine against "
-        "per-tag text-description embeddings (run --mode embed_tags first) — "
-        "related tags share geometry, which mainly helps the long tail.",
-    )
-    p.add_argument(
-        "--tag_emb",
-        default=None,
-        help="Label-embedding matrix for --tag_head_kind label_embed "
-        "(default: <out_dir>/tag_text_emb.safetensors).",
-    )
-    p.add_argument(
-        "--label_emb_trainable",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Make the label embeddings a trainable Parameter (description "
-        "init as a prior) instead of a frozen buffer (description as the "
-        "geometry; default). Frozen is the safer long-tail choice.",
-    )
-    p.add_argument(
-        "--label_emb_center",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Mean-center the label matrix on load (default on). Sentence "
-        "embeddings share a big common component (Qwen3: all-pairs cos ~0.34); "
-        "uncentered, every tag gets nearly the same cosine and the head can't "
-        "rank. Neighbour structure is preserved.",
-    )
-    p.add_argument(
-        "--label_emb_scale_init",
-        type=float,
-        default=30.0,
-        help="Initial exp(logit_scale) of the label-embed head (default 30; "
-        "the old 10 spread logits by ~0.25 std across the vocab and never "
-        "learned to rank in 32 epochs).",
-    )
-    p.add_argument(
-        "--tag_emb_svd_k",
-        type=int,
-        default=0,
-        help="label_embed: keep only the top-k SVD directions of the (centered) "
-        "label matrix, so d_label_emb=k. 0 (default) = use the full matrix. "
-        "~90%% of the Qwen3 matrix's energy sits in ~270 of 1024 dims; "
-        "k=64-128 sharpens the cosine geometry the head ranks against.",
-    )
-    p.add_argument(
-        "--tag_desc_csv",
-        default="models/danbooru_tags_classified.en.csv",
-        help="embed_tags: English KB CSV with per-tag wiki descriptions "
-        "(make download-danbooru-tags builds it via build_english_tag_csv).",
-    )
-    p.add_argument(
-        "--embed_model",
-        default="Qwen/Qwen3-Embedding-0.6B",
-        help="embed_tags: HF text-embedding model (last-token pooling).",
-    )
-    p.add_argument("--embed_batch_size", type=int, default=32)
-    p.add_argument(
-        "--embed_max_tokens",
-        type=int,
-        default=256,
-        help="embed_tags: tokenizer truncation length per description.",
-    )
-
-    # --out_dir holds the checkpoint + vocab; bulky feature caches are decoupled
-    # into --feature_cache_dir under post_image_dataset/.
+    # --out_dir holds the checkpoint + vocab (build_vocab writes here, the
+    # other modes read from it).
     p.add_argument(
         "--out_dir",
-        default="models/captioners/anima-tagger-v2",
-    )
-    p.add_argument(
-        "--feature_cache_dir",
-        default=None,
-        help="Root dir for build_features caches (per-stem token sidecars). "
-        "Decoupled from --out_dir so these bulky "
-        "dataset-derived caches live under post_image_dataset/. Default "
-        "(unset): post_image_dataset/anima_tagger/. "
-        "Read by build_features / train / calibrate — they must all agree, "
-        "so pass the same value (or none) to every mode.",
+        default="models/captioners/anima-tagger-dbv4",
     )
 
     args = p.parse_args()
@@ -680,20 +298,6 @@ def parse_args() -> argparse.Namespace:
                 "to anima_lora/.env, or pass the paths via CLI flags."
             )
 
-    # Dual encoder is mandatory here; calibrate / predict read it from
-    # config.json so they skip this check.
-    if args.mode in ("train", "build_features"):
-        if not args.aux_encoder:
-            raise SystemExit(
-                "--aux_encoder is required (dual encoder is the only mode). "
-                "Pass e.g. --aux_encoder pe_spatial."
-            )
-        if args.aux_encoder == args.encoder:
-            raise SystemExit(
-                f"--aux_encoder={args.aux_encoder!r} matches --encoder; aux must "
-                f"be a different encoder (e.g. --encoder pe --aux_encoder pe_spatial)."
-            )
-
     return args
 
 
@@ -703,18 +307,6 @@ def main() -> None:
         from .vocab import cmd_build_vocab
 
         cmd_build_vocab(args)
-    elif args.mode == "build_features":
-        from .caches import cmd_build_features
-
-        cmd_build_features(args)
-    elif args.mode == "train":
-        from .train_cached import cmd_train_cached
-
-        cmd_train_cached(args)
-    elif args.mode == "calibrate":
-        from .calibrate import cmd_calibrate
-
-        cmd_calibrate(args)
     elif args.mode == "predict":
         from .predict import cmd_predict
 
@@ -727,10 +319,6 @@ def main() -> None:
         from .derive_groups import cmd_derive_groups
 
         cmd_derive_groups(args)
-    elif args.mode == "embed_tags":
-        from .embed_tags import cmd_embed_tags
-
-        cmd_embed_tags(args)
     else:
         raise SystemExit(f"unknown --mode={args.mode!r}")
 

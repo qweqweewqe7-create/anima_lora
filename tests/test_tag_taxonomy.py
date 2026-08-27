@@ -115,7 +115,7 @@ def test_index_and_tagger_agree_on_tag_shape():
 
 
 def test_constants_reexports_for_back_compat():
-    # train_common imports _COUNT_RE from scripts.anima_tagger.constants.
+    # group_router imports _COUNT_RE from library.captioning.taxonomy; constants re-exports it.
     from scripts.anima_tagger import constants as c
 
     assert c.is_count_tag is tx.is_count_tag

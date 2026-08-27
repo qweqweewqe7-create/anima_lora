@@ -25,7 +25,7 @@ import torch.nn.functional as F
 
 from library.captioning import tag_groups as tg
 from scripts.anima_tagger.eval_metrics import predict_with_inference_rule
-from scripts.anima_tagger.train_common import (
+from library.captioning.group_router import (
     GroupRouter,
     compute_grouped_loss,
     maxsup_term,

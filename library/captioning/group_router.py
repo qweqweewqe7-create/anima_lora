@@ -1,20 +1,34 @@
-"""Shared training helpers — loss weights, eval, history plot, group router.
+"""Typed tag-group routing for the Anima Tagger — ``GroupRouter`` + grouped loss.
 
-Used by ``train_cached.py`` (the dual-encoder frozen-encoder path): loss
-weighting (sqrt pos-weight BCE, class-weighted rating / people CE), the
-group-routing logic, and per-epoch eval helpers.
+Promoted out of the archived PE-head trainer (``_archive/anima_tagger_training/
+scripts/train_common.py``, 2026-08-27) because the router outlives it: the
+dbv4 backend's inference rule (``scripts/anima_tagger/eval_metrics.py``), the
+threshold calibrator, and ``bench/tagger_external`` all resolve softmax groups
+through it. ``compute_grouped_loss`` stays with it so the sentinel / escape /
+inactive-negative semantics remain testable (``tests/test_tagger_sentinel_groups.py``,
+``tests/test_grouped_loss_negweight.py``) even though no shipped trainer calls
+it today.
+
+A vocab built without ``--groups`` produces an empty router: BCE applies
+everywhere.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
 
-from .constants import _COUNT_RE
+from library.captioning.taxonomy import _COUNT_RE
+
+__all__ = [
+    "GroupRouter",
+    "compute_grouped_loss",
+    "maxsup_term",
+    "pos_weight_sqrt",
+]
 
 
 def maxsup_term(logits: torch.Tensor) -> torch.Tensor:
@@ -32,143 +46,6 @@ def pos_weight_sqrt(multi_hot: torch.Tensor) -> torch.Tensor:
     n_pos = multi_hot.sum(dim=0).clamp_min(1.0)
     n_neg = multi_hot.shape[0] - n_pos
     return torch.sqrt(n_neg / n_pos)
-
-
-# Spatial-branch submodule prefixes (see AnimaTaggerHead): the PE-Spatial pool,
-# its projection trunk, and the localized-tag sub-head. Disjoint from the core /
-# rating / people params, which is what makes the spatial-only refit stage a
-# clean freeze and the spatial param-group a real (non-loss-scaling) lever.
-_SPATIAL_PARAM_PREFIXES = ("pool_spatial.", "trunk_spatial.", "tag_head_spatial.")
-
-
-def spatial_param_names(model: torch.nn.Module) -> set[str]:
-    """Names of the parameters that belong to the PE-Spatial branch.
-
-    A parameter is spatial iff its dotted name starts with one of the spatial
-    submodule prefixes. Everything else (core pool/trunk, tag_head_core,
-    rating_head, people_head) is the "rest" partition.
-    """
-    return {
-        name
-        for name, _ in model.named_parameters()
-        if name.startswith(_SPATIAL_PARAM_PREFIXES)
-    }
-
-
-def spatial_mean_ap(
-    tag_logits: torch.Tensor,  # [B, n_tags]
-    multi_hot: torch.Tensor,  # [B, n_tags]
-    spatial_idx: torch.Tensor,  # LongTensor [n_spatial]
-) -> float:
-    """Threshold-free mean AP over the spatial-routed tags (softmax-inclusive).
-
-    This is the metric the ceiling probe optimizes and the one the deployed
-    macro-F1 was blind to: it (a) restricts to ``tag_indices_spatial`` (the
-    branch that floors) and (b) unlike the trainer's macro-F1, does NOT drop
-    softmax-group tags — AP is threshold-free, so eye/hair-color group tags
-    count. NaN per-tag APs (no positives in the split) are ignored by the
-    nan-mean, matching ``_archive/bench/tagger_ceiling``.
-    """
-    from .eval_metrics import per_tag_average_precision
-
-    sub_logits = tag_logits.index_select(1, spatial_idx.to(tag_logits.device))
-    sub_target = multi_hot.index_select(1, spatial_idx.to(multi_hot.device))
-    ap = per_tag_average_precision(sub_logits.float(), sub_target)
-    return float(ap.nanmean().item())
-
-
-# Train-positive-count bins for the frequency-sliced val metrics. Flat macro-F1
-# is dominated by the head of the distribution; the long-tail bucket is where
-# a label-sharing head (e.g. label_embed) is supposed to win, so every
-# val pass reports the same metrics per bin. Bin = [lo, hi) on the number of
-# train-split positives.
-FREQ_BINS: Tuple[Tuple[str, int, float], ...] = (
-    ("lt50", 0, 50),
-    ("50_199", 50, 200),
-    ("200_999", 200, 1000),
-    ("ge1000", 1000, float("inf")),
-)
-
-
-def freq_sliced_metrics(
-    per_tag: torch.Tensor,  # [n] per-tag metric (NaN = undefined for that tag)
-    train_pos: torch.Tensor,  # [n] train-split positive count per tag, same order
-    prefix: str,
-) -> Dict[str, float]:
-    """Nan-mean ``per_tag`` inside each ``FREQ_BINS`` bucket of ``train_pos``.
-
-    Returns ``{"<prefix>_<bin>": mean, "n_<prefix>_<bin>": n_tags_scored}``;
-    an empty bucket reports NaN with ``n=0`` so the key set is stable.
-    """
-    out: Dict[str, float] = {}
-    per_tag = per_tag.float()
-    train_pos = train_pos.to(per_tag.device).float()
-    for name, lo, hi in FREQ_BINS:
-        sel = (train_pos >= lo) & (train_pos < hi)
-        vals = per_tag[sel]
-        n = int((~torch.isnan(vals)).sum().item())
-        out[f"{prefix}_{name}"] = float(vals.nanmean().item()) if n else float("nan")
-        out[f"n_{prefix}_{name}"] = n
-    return out
-
-
-def build_warmup_cosine_scheduler(
-    opt: torch.optim.Optimizer,
-    *,
-    warmup_steps: int,
-    total_steps: int,
-    eta_min: float,
-) -> torch.optim.lr_scheduler.LRScheduler:
-    """Linear warmup (1e-3 → 1.0) then cosine decay to ``eta_min``.
-
-    Stepped per batch — callers must call ``sched.step()`` after every
-    ``opt.step()``, not per epoch. When ``warmup_steps == 0`` returns a
-    plain ``CosineAnnealingLR`` (drop-in for the legacy schedule, just on
-    a per-step cadence).
-    """
-    if total_steps <= 0:
-        raise ValueError(f"total_steps must be > 0, got {total_steps}")
-    if not 0 <= warmup_steps < total_steps:
-        raise ValueError(
-            f"warmup_steps must be in [0, total_steps); got "
-            f"warmup_steps={warmup_steps} total_steps={total_steps}"
-        )
-    cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
-        opt, T_max=total_steps - warmup_steps, eta_min=eta_min
-    )
-    if warmup_steps == 0:
-        return cosine
-    warmup = torch.optim.lr_scheduler.LinearLR(
-        opt, start_factor=1e-3, end_factor=1.0, total_iters=warmup_steps
-    )
-    return torch.optim.lr_scheduler.SequentialLR(
-        opt, schedulers=[warmup, cosine], milestones=[warmup_steps]
-    )
-
-
-def rating_class_weights(rating_idx: torch.Tensor, n_ratings: int) -> torch.Tensor:
-    """Inverse-frequency weights, normalized so mean weight = 1."""
-    counts = torch.bincount(rating_idx, minlength=n_ratings).float().clamp_min(1.0)
-    inv = 1.0 / counts
-    inv = inv * n_ratings / inv.sum()
-    return inv
-
-
-def people_class_weights(people_idx: torch.Tensor, n_people: int) -> torch.Tensor:
-    """Sqrt-inverse-frequency weights for the people-count head.
-
-    Sqrt-inverse (vs the rating head's straight inverse) is the right choice
-    here because the people-count distribution is much heavier-tailed than
-    rating: ``1girl`` typically dominates 60–80 % of an anime corpus while
-    ``1girl_1boy`` / ``2girls_1boy`` may sit at <2 %. Inverse-frequency would
-    weight rare classes ~30× the dominant one and make CE volatile. Sqrt
-    softens that to ~5×, comparable to ``pos_weight_sqrt`` for the BCE head.
-    Normalized so mean weight = 1 (same convention as ``rating_class_weights``).
-    """
-    counts = torch.bincount(people_idx, minlength=n_people).float().clamp_min(1.0)
-    inv = 1.0 / counts.sqrt()
-    inv = inv * n_people / inv.sum()
-    return inv
 
 
 @dataclass
@@ -199,7 +76,7 @@ class GroupRouter:
     * ``softmax_groups`` — per-group ``(mode, tag_indices, escape_indices)``;
       CE applies on these, gated by solo/escape for ``softmax_when_solo``.
     * ``softmax_member_indices`` — union of all softmax-group tag indices.
-      Used by :func:`eval_split` and the calibrator to skip those tags
+      Used by the calibrator + the inference rule to skip those tags
       from sigmoid-threshold F1 / threshold sweep (they're argmax-only at
       inference, so per-tag thresholds don't apply).
     * ``solo_indices`` / ``multi_indices`` — vocab indices used to detect
@@ -510,215 +387,3 @@ def compute_grouped_loss(
     metrics["bce"] = float(l_bce.detach().item())
 
     return l_bce + ce_total, metrics
-
-
-@torch.no_grad()
-def eval_split(
-    model: torch.nn.Module,
-    feats: torch.Tensor,
-    multi_hot: torch.Tensor,
-    rating_idx: torch.Tensor,
-    threshold: float = 0.5,
-    ce: Optional[torch.nn.Module] = None,
-    lambda_rating: float = 0.0,
-    router: Optional[GroupRouter] = None,
-    people_idx: Optional[torch.Tensor] = None,
-    ce_people: Optional[torch.nn.Module] = None,
-    lambda_people: float = 0.0,
-) -> Dict[str, float]:
-    """Macro-F1 over tags + rating accuracy + people-count accuracy.
-
-    When ``router`` carries softmax groups, F1 is computed over residual
-    (BCE-supervised) tags only — softmax-group tags are evaluated by
-    per-group argmax accuracy instead, since their sigmoid scores are
-    untrained noise. The rating-CE / people-CE losses are reported when
-    their CE modules are given. The combined val tag-loss matches the
-    training objective: ``residual BCE + Σ ce_per_softmax_group``.
-
-    People-head metrics (``people_acc`` / ``val_people_loss``) are
-    reported only when the model has a people head (i.e. ``forward``
-    returned a third tensor) AND ``people_idx`` is supplied. Backwards-
-    compatible: omitting these arguments matches the pre-people behavior
-    exactly.
-    """
-    model.eval()
-    tag_logits, rating_logits, people_logits = model(feats)
-
-    if (
-        router is not None
-        and router.is_active()
-        and router.softmax_member_indices is not None
-    ):
-        # Macro-F1 excludes softmax-group tags (argmax-only at inference, so
-        # per-tag thresholds don't apply); per-group accuracy reported below.
-        keep_mask = torch.ones(
-            tag_logits.shape[1], dtype=torch.bool, device=tag_logits.device
-        )
-        keep_mask[router.softmax_member_indices] = False
-        kept_idx = keep_mask.nonzero(as_tuple=False).squeeze(1)
-        f1_logits = tag_logits.index_select(1, kept_idx)
-        f1_target = multi_hot.index_select(1, kept_idx)
-        pred = (f1_logits.sigmoid() > threshold).float()
-        tp = (pred * f1_target).sum(dim=0)
-        fp = (pred * (1 - f1_target)).sum(dim=0)
-        fn = ((1 - pred) * f1_target).sum(dim=0)
-    else:
-        pred = (tag_logits.sigmoid() > threshold).float()
-        tp = (pred * multi_hot).sum(dim=0)
-        fp = (pred * (1 - multi_hot)).sum(dim=0)
-        fn = ((1 - pred) * multi_hot).sum(dim=0)
-    prec = tp / (tp + fp).clamp_min(1.0)
-    rec = tp / (tp + fn).clamp_min(1.0)
-    f1 = 2 * prec * rec / (prec + rec).clamp_min(1e-8)
-    rating_pred = rating_logits.argmax(dim=-1)
-    rating_acc = (rating_pred == rating_idx).float().mean().item()
-    out = {
-        "macro_f1": f1.mean().item(),
-        "macro_precision": prec.mean().item(),
-        "macro_recall": rec.mean().item(),
-        "rating_acc": rating_acc,
-    }
-
-    # Per-group argmax accuracy (only samples where gating applies AND a label fires).
-    if router is not None and router.is_active():
-        solo_mask = router.solo_mask(multi_hot)
-        for g in router.softmax_groups:
-            if g.escape_indices.numel() > 0:
-                has_escape = multi_hot.index_select(1, g.escape_indices).any(dim=1)
-            else:
-                has_escape = torch.zeros_like(solo_mask)
-            applicable = (
-                (solo_mask & ~has_escape)
-                if g.mode == "softmax_when_solo"
-                else ~has_escape
-            )
-            group_logits = tag_logits.index_select(1, g.tag_indices)
-            group_target = multi_hot.index_select(1, g.tag_indices)
-            has_label = group_target.sum(dim=1) > 0
-            keep = applicable & has_label
-            n_keep = int(keep.sum().item())
-            if n_keep == 0:
-                out[f"acc_{g.name}"] = 0.0
-                out[f"n_{g.name}"] = 0
-                continue
-            pred_idx = group_logits[keep].argmax(dim=1)
-            true_idx = group_target[keep].argmax(dim=1)
-            acc = (pred_idx == true_idx).float().mean().item()
-            out[f"acc_{g.name}"] = acc
-            out[f"n_{g.name}"] = n_keep
-
-    # People-head accuracy (independent of the CE-loss reporting branch below).
-    if people_logits is not None and people_idx is not None:
-        people_pred = people_logits.argmax(dim=-1)
-        out["people_acc"] = (people_pred == people_idx).float().mean().item()
-
-    if ce is not None:
-        l_rate = ce(rating_logits, rating_idx)
-        if router is not None:
-            l_tag, _per_group = compute_grouped_loss(tag_logits, multi_hot, router)
-        else:
-            # No router: skip tag-loss reporting (BCE alone wouldn't match training).
-            l_tag = tag_logits.new_zeros(())
-        out["val_tag_loss"] = l_tag.item()
-        out["val_rate_loss"] = l_rate.item()
-        l_total = l_tag + lambda_rating * l_rate
-        if (
-            ce_people is not None
-            and people_logits is not None
-            and people_idx is not None
-        ):
-            l_people = ce_people(people_logits, people_idx)
-            out["val_people_loss"] = l_people.item()
-            l_total = l_total + lambda_people * l_people
-        out["val_loss"] = l_total.item()
-    return out
-
-
-def save_history_plot(history: List[Dict[str, float]], path: Path) -> None:
-    """Two-panel matplotlib figure: loss curves on top, val F1 / rating-acc below.
-
-    Tolerates missing keys so it works for both the cached and PE-LoRA paths
-    and any partial future variants.
-    """
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    epochs = [h["epoch"] for h in history]
-    fig, (ax_loss, ax_acc) = plt.subplots(2, 1, figsize=(8, 7), sharex=True)
-
-    ax_loss.plot(epochs, [h["loss"] for h in history], label="train total", color="C0")
-    if all("tag_loss" in h for h in history):
-        ax_loss.plot(
-            epochs,
-            [h["tag_loss"] for h in history],
-            label="train tag (BCE)",
-            color="C0",
-            alpha=0.4,
-            linestyle=":",
-        )
-        ax_loss.plot(
-            epochs,
-            [h["rate_loss"] for h in history],
-            label="train rate (CE)",
-            color="C0",
-            alpha=0.4,
-            linestyle="--",
-        )
-    if all("val_loss" in h for h in history):
-        ax_loss.plot(
-            epochs, [h["val_loss"] for h in history], label="val total", color="C1"
-        )
-        if all("val_tag_loss" in h for h in history):
-            ax_loss.plot(
-                epochs,
-                [h["val_tag_loss"] for h in history],
-                label="val tag (BCE)",
-                color="C1",
-                alpha=0.4,
-                linestyle=":",
-            )
-            ax_loss.plot(
-                epochs,
-                [h["val_rate_loss"] for h in history],
-                label="val rate (CE)",
-                color="C1",
-                alpha=0.4,
-                linestyle="--",
-            )
-        if all("val_people_loss" in h for h in history):
-            ax_loss.plot(
-                epochs,
-                [h["val_people_loss"] for h in history],
-                label="val people (CE)",
-                color="C4",
-                alpha=0.4,
-                linestyle="--",
-            )
-    ax_loss.set_ylabel("loss")
-    ax_loss.legend(loc="best", fontsize=8)
-    ax_loss.grid(alpha=0.3)
-
-    ax_acc.plot(
-        epochs, [h["macro_f1"] for h in history], label="val macro F1", color="C2"
-    )
-    ax_acc.plot(
-        epochs, [h["rating_acc"] for h in history], label="val rating acc", color="C3"
-    )
-    if all("people_acc" in h for h in history):
-        ax_acc.plot(
-            epochs,
-            [h["people_acc"] for h in history],
-            label="val people acc",
-            color="C4",
-        )
-    ax_acc.set_xlabel("epoch")
-    ax_acc.set_ylabel("metric")
-    ax_acc.set_ylim(0, 1)
-    ax_acc.legend(loc="best", fontsize=8)
-    ax_acc.grid(alpha=0.3)
-
-    fig.tight_layout()
-    fig.savefig(path, dpi=120)
-    plt.close(fig)

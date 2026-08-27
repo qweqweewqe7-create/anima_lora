@@ -51,7 +51,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--artist", required=True, help="Artist trigger, e.g. '@mignon' (the @ is optional).")
     p.add_argument("--caption_index", default=DEFAULT_INDEX)
     p.add_argument("--src", default=DEFAULT_SRC, help="Root the caption sidecar paths resolve under.")
-    p.add_argument("--model_dir", default="models/captioners/anima-tagger-v3-refit",
+    p.add_argument("--model_dir", default="models/captioners/anima-tagger-dbv4",
                    help="Tagger dir — supplies the vocab/category typing (no forward run).")
     p.add_argument("--freq_floor", type=float, default=0.25,
                    help="A tag joins the characteristic set if present in >= this fraction of the artist's images.")

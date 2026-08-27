@@ -25,7 +25,7 @@ when present.
 Read-only. Usage::
 
     python -m scripts.anima_tagger.cli --mode derive_groups \\
-        --out_dir models/captioners/anima-tagger-v2 \\
+        --out_dir models/captioners/anima-tagger-dbv4 \\
         --tag_cache models/danbooru_tags_classified.csv \\
         --out_yaml /tmp/groups.candidate.yaml --report
 """

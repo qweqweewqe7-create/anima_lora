@@ -68,7 +68,7 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     p.add_argument(
         "--model_dir",
-        default="models/captioners/anima-tagger-v3-refit",
+        default="models/captioners/anima-tagger-dbv4",
         help="Tagger checkpoint dir (model.safetensors + config.json + vocab.json "
         "+ dataset.json [+ thresholds.safetensors]).",
     )
@@ -137,7 +137,7 @@ def collect_logits(
     from library.captioning.anima_tagger_model import AnimaTaggerConfig, AnimaTaggerHead
     from library.vision.encoders import get_encoder_info
     from safetensors.torch import load_file as st_load
-    from scripts.anima_tagger.caches import cache_dir_for, feature_cache_root
+    from library.captioning.feature_cache import cache_dir_for, feature_cache_root
 
     cfg = AnimaTaggerConfig.from_dict(cfg_d["model"])
     model = AnimaTaggerHead(cfg)

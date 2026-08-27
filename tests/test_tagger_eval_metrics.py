@@ -20,7 +20,7 @@ from scripts.anima_tagger.eval_metrics import (
     per_tag_prf,
     predict_with_inference_rule,
 )
-from scripts.anima_tagger.train_common import GroupRouter, _SoftmaxGroup
+from library.captioning.group_router import GroupRouter, _SoftmaxGroup
 
 
 def _logits(p: torch.Tensor) -> torch.Tensor:
@@ -176,29 +176,3 @@ def test_aggregate_slices_masks_unsupported():
     assert abs(by["a"]["macro_f1"] - 1.0) < 1e-6
     # slice b: nothing supported → NaN macro, defined micro (no cells fired)
     assert math.isnan(by["b"]["macro_f1"])
-
-
-def test_freq_sliced_metrics_bins_and_nan_handling():
-    import math
-
-    import torch
-
-    from scripts.anima_tagger.train_common import FREQ_BINS, freq_sliced_metrics
-
-    per_tag = torch.tensor([0.5, float("nan"), 0.2, 0.8, 0.9, 0.7])
-    train_pos = torch.tensor([10, 30, 100, 500, 5000, 1000])
-    out = freq_sliced_metrics(per_tag, train_pos, "f1")
-    # Stable key set: every bin reports a mean and a scored-tag count.
-    for name, _lo, _hi in FREQ_BINS:
-        assert f"f1_{name}" in out and f"n_f1_{name}" in out
-    # NaN rows are excluded from both the mean and the count.
-    assert out["n_f1_lt50"] == 1 and out["f1_lt50"] == 0.5
-    assert out["n_f1_50_199"] == 1 and math.isclose(out["f1_50_199"], 0.2, abs_tol=1e-6)
-    # Bins are [lo, hi): 1000 lands in ge1000, not 200_999.
-    assert out["n_f1_200_999"] == 1 and math.isclose(
-        out["f1_200_999"], 0.8, abs_tol=1e-6
-    )
-    assert out["n_f1_ge1000"] == 2 and math.isclose(out["f1_ge1000"], 0.8, abs_tol=1e-6)
-    # An empty bin is NaN with n=0, never a silent zero.
-    empty = freq_sliced_metrics(torch.tensor([0.3]), torch.tensor([5]), "x")
-    assert empty["n_x_ge1000"] == 0 and math.isnan(empty["x_ge1000"])

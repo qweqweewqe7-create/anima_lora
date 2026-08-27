@@ -77,7 +77,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lora", action="append", default=[], metavar="NAME:PATH",
                    help="An arm 'name:relpath'. Repeatable. Path relative to repo root.")
     p.add_argument("--include_base", action="store_true", help="Add a no-LoRA 'base' arm.")
-    p.add_argument("--model_dir", default="models/captioners/anima-tagger-v3-refit",
+    p.add_argument("--model_dir", default="models/captioners/anima-tagger-dbv4",
                    help="Tagger checkpoint dir (the frozen judge).")
     p.add_argument("--seeds", type=int, nargs="+", default=[42, 43])
     p.add_argument("--infer_steps", type=int, default=24)

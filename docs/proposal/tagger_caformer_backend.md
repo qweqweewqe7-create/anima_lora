@@ -1,6 +1,6 @@
 # Anima Tagger on the dbv4 backbone — remaining phases
 
-Status: **backend SHIPPED 2026-08-27; open = Phases 5–6.**
+Status: **backend SHIPPED 2026-08-27; Phase 6 (archive) DONE 2026-08-27; open = Phase 5 (RWR).**
 
 Phases 0–4 landed and their write-up moved to
 [`docs/experimental/anima_tagger.md`](../experimental/anima_tagger.md)
@@ -24,15 +24,15 @@ here:
   — zero mean bias vs val-optimal, do not recalibrate on 791 images);
   readback win-rate 1.000 / AUROC 1.000 (v3-era 0.991 / 0.98).
 - Default flipped (`DEFAULT_TAGGER_DIR` → `models/captioners/anima-tagger-dbv4`,
-  HF subfolder `dbv4/` holds our files only); v5 stays on disk as the PE
-  fallback. Commit `2e519f03`.
+  HF subfolder `dbv4/` holds our files only); v5 moved to
+  `_archive/anima_tagger_training/checkpoints/` with Phase 6. Commit `2e519f03`.
 
 ## Open phases
 
 | Phase | What | Gate | Cost |
 |---|---|---|---|
 | **5** | RWR artist LoRA per `tag_readback_reward.md` with the new (stronger) judge — `TagReadback` already runs on dbv4 | that proposal's gates (CMMD non-regression + held-out read-back lift + eyeball); **not** FM-val | as budgeted there |
-| **6** | archive the PE training pipeline (below) | **unblocked** — A3 is green, v5 is no longer needed as a fallback | ~1 day |
+| **6** | archive the PE training pipeline (below) | **DONE 2026-08-27** — see `_archive/anima_tagger_training/README.md`; `GroupRouter` → `library/captioning/group_router.py`, path helpers → `feature_cache.py` | — |
 
 ### Training-time use — "tag adherence boost" (Phase 5 rationale)
 

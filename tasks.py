@@ -275,16 +275,13 @@ COMMANDS = {
         'Dataset tab reads it to filter by group. ARGS="--threshold 0.95".',
     ),
     # ── Anima Tagger ──────────────────────────────────────────────────
-    "preprocess-tagger": (
-        tagger.cmd_preprocess_tagger,
-        "Build the Anima Tagger vocab/manifest + cache PE-Core & PE-Spatial "
-        "features (build_vocab + build_features). Needs CAPTION_CORPUS_DIR "
-        "in .env.",
-    ),
     "tagger": (
         tagger.cmd_tagger,
-        "Train the dual-encoder hard-routed tagger head on cached PE-Core + "
-        "PE-Spatial features. Requires `make preprocess-tagger` first.",
+        "Build the Anima Tagger vocab/manifest (build_vocab; needs "
+        "CAPTION_CORPUS_DIR in .env), or any other CLI mode via "
+        'ARGS="--mode predict|scan_role_markers|derive_groups". PE-head '
+        "training was archived 2026-08-27 — sidecar training runs via "
+        "daemon-run scripts/anima_tagger/train_sidecar.py.",
     ),
     "test-tagger": (
         tagger.cmd_test_tagger,
@@ -294,7 +291,7 @@ COMMANDS = {
     "tagger-dbv4": (
         tagger.cmd_tagger_dbv4,
         "Build the dbv4-backed (external caformer_b36) tagger checkpoint dir "
-        "from anima-tagger-v5's vocab; sidecar training runs separately via "
+        "from the archived anima-tagger-v5's vocab; sidecar training runs via "
         "daemon-run scripts/anima_tagger/train_sidecar.py.",
     ),
     "autotag": (

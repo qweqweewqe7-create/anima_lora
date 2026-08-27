@@ -101,7 +101,7 @@ def predict_with_inference_rule(
        tags are cleared and the argmax winner is always emitted, even if no
        group tag passed threshold.
 
-    ``router`` is a :class:`scripts.anima_tagger.train_common.GroupRouter`
+    ``router`` is a :class:`library.captioning.group_router.GroupRouter`
     (only its index sets are read, so any object with the same attributes
     works in tests).
     """

@@ -16,7 +16,7 @@ from typing import Optional, Tuple
 
 # Count-tag detection lives in the shared torch-free tag-shape module so the
 # vocab build and caption-index builder can't drift. Re-exported here
-# (``_COUNT_RE`` is imported by ``train_common``); ``classify_people`` moved
+# (``_COUNT_RE`` is also used by ``library.captioning.group_router``); ``classify_people`` moved
 # there too so the torch-free inference path (dbv4 backend without a sidecar)
 # can bucket people-counts from count tags.
 from library.captioning.taxonomy import (

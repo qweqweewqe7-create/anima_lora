@@ -41,7 +41,7 @@ def parse_args():
     p.add_argument("--external_arch", default="convnextv2_huge")
     p.add_argument("--external_img_size", type=int, default=512)
     p.add_argument("--external_batch_size", type=int, default=8)
-    p.add_argument("--model_dir", default="models/captioners/anima-tagger-v5")
+    p.add_argument("--model_dir", default="_archive/anima_tagger_training/checkpoints/anima-tagger-v5")
     p.add_argument(
         "--autocaption_run",
         default="bench/position_captions/results/20260817-1122-autocaption",
