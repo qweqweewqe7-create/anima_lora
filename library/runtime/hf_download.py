@@ -79,3 +79,27 @@ def hf_download(*, what: str, hint: str = "make download-models", **kwargs):
                 f"re-run `{hint}`."
             ) from exc
         raise
+
+
+def hf_file_cached(repo_id: str, filename: str, revision: str | None = None) -> bool:
+    """True when ``filename`` from ``repo_id`` is already in the local hub cache.
+
+    A pure presence check — never touches the network, so it is safe to call
+    from UI code. Needed because not every model we depend on lands under
+    ``models/``: assets fetched through plain ``hf_hub_download`` (the gated
+    dbv4 tagger backbone) live in the hub cache, so a path check against the
+    repo tree would report them missing forever.
+    """
+    try:
+        from huggingface_hub import try_to_load_from_cache
+    except ImportError:
+        return False
+    try:
+        hit = try_to_load_from_cache(
+            repo_id=repo_id, filename=filename, revision=revision
+        )
+    except Exception:  # noqa: BLE001 — a broken/unreadable cache is just "missing"
+        return False
+    # Returns the path on a hit, ``None`` when absent, and a sentinel object
+    # when the cache remembers a 404 — only the path counts as installed.
+    return isinstance(hit, str)

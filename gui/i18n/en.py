@@ -683,13 +683,16 @@ STRINGS: dict[str, str] = {
     "model_mit": "MIT — manga text masking",
     "model_pe": "PE-Core-L14-336 — vision encoder (CMMD validation)",
     "model_danbooru_tags": "Danbooru tag DB — caption order correction",
+    "model_tagger": "Anima Tagger — caformer_b36 backbone (gated)",
     # HuggingFace authentication (Models dialog)
     "models_hf_token_placeholder": "Paste your HuggingFace token (hf_…)",
     "models_hf_authenticate": "Authenticate",
     "models_hf_token_hint": "Needed for gated / rate-limited downloads (e.g. SAM3). "
     'Create a token at <a href="https://huggingface.co/settings/tokens">'
     "huggingface.co/settings/tokens</a> · request SAM3 access at "
-    '<a href="https://huggingface.co/facebook/sam3">huggingface.co/facebook/sam3</a>.',
+    '<a href="https://huggingface.co/facebook/sam3">huggingface.co/facebook/sam3</a>. '
+    "The Anima Tagger backbone is gated too — accept its terms at "
+    '<a href="https://huggingface.co/animetimm/caformer_b36.dbv4-full">animetimm/caformer_b36.dbv4-full</a>.',
     "models_hf_token_present": "✓ A HuggingFace token is already saved.",
     "models_hf_not_authenticated": "Not authenticated — paste a token to enable gated downloads.",
     "models_hf_token_empty": "Paste a token first.",

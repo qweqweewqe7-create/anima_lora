@@ -45,6 +45,18 @@ def load_sam3(checkpoint: str | Path, device: str = "cuda"):
     )
     for p in model.parameters():
         p.requires_grad_(False)
+    # SAM3 leaves two activation-checkpoint paths on even in eval mode (the
+    # maskformer pixel decoder + the MHA in `model_misc`); they recompute the
+    # forward inside our backward for nothing — the trunk is frozen and VRAM
+    # is not the bottleneck at the batch sizes the prompt trainer uses.
+    n = 0
+    for m in model.modules():
+        for attr in ("act_ckpt", "use_act_checkpoint"):
+            if getattr(m, attr, False) is True:
+                setattr(m, attr, False)
+                n += 1
+    if n:
+        print(f"sam3: disabled activation checkpointing on {n} modules", flush=True)
     processor = Sam3Processor(model, confidence_threshold=0.0)
     return model, processor
 
@@ -74,16 +86,59 @@ def install_prompt(backbone_out: dict, prompt: dict[str, torch.Tensor]) -> dict:
     return backbone_out
 
 
+def preprocess_image(processor, image) -> torch.Tensor:
+    """CPU side of `Sam3Processor.set_image`: PIL → transformed `(3, S, S)` tensor.
+    Safe to run in DataLoader workers; `encode_images` stacks and moves them."""
+    from torchvision.transforms import v2
+
+    return processor.transform(v2.functional.to_image(image))
+
+
+@torch.no_grad()
+def encode_images(model, processor, batch: torch.Tensor) -> dict:
+    """One trunk forward over a pre-transformed `(B, 3, S, S)` batch."""
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        return model.backbone.forward_image(
+            batch.to(processor.device, non_blocking=True)
+        )
+
+
+def _find_stage(processor, n: int):
+    """`processor.find_stage` for a batch of `n` images sharing prompt 0."""
+    if n == 1:
+        return processor.find_stage
+    from sam3.model.data_misc import FindStage
+
+    dev = processor.device
+    return FindStage(
+        img_ids=torch.arange(n, device=dev, dtype=torch.long),
+        text_ids=torch.zeros(n, device=dev, dtype=torch.long),
+        input_boxes=None,
+        input_boxes_mask=None,
+        input_boxes_label=None,
+        input_points=None,
+        input_points_mask=None,
+    )
+
+
 def ground(model, processor, backbone_out: dict) -> dict:
     """Raw DETR outputs for the prompt already installed in ``backbone_out``.
-    Differentiable w.r.t. ``language_features`` (no `inference_mode` here)."""
+    Differentiable w.r.t. ``language_features`` (no `inference_mode` here).
+    Batched: every image in ``vision_features`` is grounded against prompt 0."""
+    n = backbone_out["vision_features"].shape[0]
     with torch.autocast("cuda", dtype=torch.bfloat16):
         return model.forward_grounding(
             backbone_out=backbone_out,
-            find_input=processor.find_stage,
-            geometric_prompt=model._get_dummy_prompt(),
+            find_input=_find_stage(processor, n),
+            geometric_prompt=model._get_dummy_prompt(num_prompts=n),
             find_target=None,
         )
+
+
+def slice_out(out: dict, i: int) -> dict:
+    """Image ``i`` of a batched grounding output as a batch-1 output."""
+    keys = ("pred_logits", "pred_boxes", "pred_masks", "presence_logit_dec")
+    return {k: out[k][i : i + 1] for k in keys}
 
 
 def scores_from(out: dict) -> torch.Tensor:

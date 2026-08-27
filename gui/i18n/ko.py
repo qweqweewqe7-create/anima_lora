@@ -663,13 +663,16 @@ STRINGS: dict[str, str] = {
     "model_mit": "MIT — 만화 텍스트 마스킹",
     "model_pe": "PE-Core-L14-336 — 비전 인코더 (CMMD 검증)",
     "model_danbooru_tags": "Danbooru 태그 DB — 캡션 순서 교정",
+    "model_tagger": "Anima Tagger — caformer_b36 백본 (접근 승인 필요)",
     # HuggingFace 인증 (모델 다이얼로그)
     "models_hf_token_placeholder": "HuggingFace 토큰을 붙여넣으세요 (hf_…)",
     "models_hf_authenticate": "인증",
     "models_hf_token_hint": "게이트/속도 제한 다운로드(예: SAM3)에 필요합니다. "
     '<a href="https://huggingface.co/settings/tokens">'
     "huggingface.co/settings/tokens</a> 에서 토큰을 생성하고 "
-    '<a href="https://huggingface.co/facebook/sam3">huggingface.co/facebook/sam3</a> 에서 SAM3 접근을 요청하세요.',
+    '<a href="https://huggingface.co/facebook/sam3">huggingface.co/facebook/sam3</a> 에서 SAM3 접근을 요청하세요. '
+    "Anima Tagger 백본도 게이트되어 있으므로 "
+    '<a href="https://huggingface.co/animetimm/caformer_b36.dbv4-full">animetimm/caformer_b36.dbv4-full</a> 에서 약관에 동의해야 합니다.',
     "models_hf_token_present": "✓ HuggingFace 토큰이 이미 저장되어 있습니다.",
     "models_hf_not_authenticated": "인증되지 않음 — 토큰을 붙여넣어 게이트 다운로드를 활성화하세요.",
     "models_hf_token_empty": "먼저 토큰을 붙여넣으세요.",

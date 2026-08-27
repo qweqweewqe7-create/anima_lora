@@ -18,6 +18,9 @@ missing; `v5/` is the last in-house PE dual-encoder head (val macro-F1
 ~0.236). `DEFAULT_TAGGER_DIR` / `TAGGER_HF_SUBFOLDER` in
 `library/captioning/anima_tagger.py` are the single source of truth for both;
 the ComfyUI node and `make download-tagger` track them. Requires `timm`.
+`make download-tagger-model` (GUI: **Models** dialog → *Anima Tagger*)
+pre-fetches both halves — our checkpoint dir *and* the gated backbone —
+instead of waiting for the lazy first-use fetch.
 
 > **Doc drift.** Sections below still describe the pre-v3 single-encoder +
 > PE-LoRA stack, which no longer loads — the tagger is dual-encoder
@@ -207,7 +210,12 @@ models/captioners/anima-tagger-dbv4/
 
 The dbv4 weights are fetched at runtime under the user's HF token (GPL-3.0,
 gated) and never bundled; the checkpoint dir holds only our files, so it
-stays moveable across machines. The dbv4 hidden-state cache lives at
+stays moveable across machines. The gate is *auto-approve*: `hf auth login`
+(or the GUI Models dialog's token field) plus one click on
+[the repo page](https://huggingface.co/animetimm/caformer_b36.dbv4-full) is
+all it takes, and `make download-tagger-model` then pulls them eagerly. They
+land in the **HF hub cache**, not under `models/` — that is where
+`Dbv4Backend._load_model` looks. The dbv4 hidden-state cache lives at
 `post_image_dataset/anima_tagger/dbv4/<arch>_hidden.safetensors`
 (`feature_cache.py`), read by `train_sidecar.py`, `bench/readback` and
 `bench/tagger_external/calibration_check.py`.

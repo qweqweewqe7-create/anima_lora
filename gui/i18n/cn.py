@@ -597,13 +597,16 @@ STRINGS: dict[str, str] = {
     "model_mit": "MIT — 漫画文字蒙版",
     "model_pe": "PE-Core-L14-336 — 视觉编码器 (CMMD 验证)",
     "model_danbooru_tags": "Danbooru 标签 DB — 标注顺序校正",
+    "model_tagger": "Anima Tagger — caformer_b36 主干 (受限)",
     # HuggingFace 认证（模型对话框）
     "models_hf_token_placeholder": "粘贴你的 HuggingFace 令牌 (hf_…)",
     "models_hf_authenticate": "认证",
     "models_hf_token_hint": "用于受限/限速下载（例如 SAM3）。"
     '请在 <a href="https://huggingface.co/settings/tokens">'
     "huggingface.co/settings/tokens</a> 创建令牌，并在 "
-    '<a href="https://huggingface.co/facebook/sam3">huggingface.co/facebook/sam3</a> 申请 SAM3 访问权限。',
+    '<a href="https://huggingface.co/facebook/sam3">huggingface.co/facebook/sam3</a> 申请 SAM3 访问权限。'
+    "Anima Tagger 主干同样受限，"
+    '请在 <a href="https://huggingface.co/animetimm/caformer_b36.dbv4-full">animetimm/caformer_b36.dbv4-full</a> 同意其条款。',
     "models_hf_token_present": "✓ 已保存 HuggingFace 令牌。",
     "models_hf_not_authenticated": "未认证 — 粘贴令牌以启用受限下载。",
     "models_hf_token_empty": "请先粘贴令牌。",

@@ -322,6 +322,11 @@ COMMANDS = {
         downloads.cmd_download_tagger,
         "Download Anima Tagger v2 vocab.json (caption-index dependency; not the full model)",
     ),
+    "download-tagger-model": (
+        downloads.cmd_download_tagger_model,
+        "Download the full Anima Tagger (our head + the gated GPL-3.0 caformer_b36 "
+        "dbv4 backbone); needs `hf auth login` and accepting the upstream repo terms",
+    ),
     "download-danbooru-tags": (
         downloads.cmd_download_danbooru_tags,
         "Download danbooru tag tables (KR base + EN sibling) for caption correction",

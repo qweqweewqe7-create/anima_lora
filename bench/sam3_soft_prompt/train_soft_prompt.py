@@ -43,7 +43,9 @@ from bench._common import make_run_dir, write_result  # noqa: E402
 from bench.sam3_soft_prompt.common import (  # noqa: E402
     PROMPT_KEYS,
     box_cxcywh_to_xyxy,
-    encode_image,
+    encode_images,
+    preprocess_image,
+    slice_out,
     encode_text,
     ground,
     install_prompt,
@@ -70,7 +72,9 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--init", default="anime girl", help="phrase the prompt starts from")
     p.add_argument("--steps", type=int, default=2000)
-    p.add_argument("--accum", type=int, default=4, help="images per optimizer step")
+    p.add_argument("--batch", type=int, default=4, help="images per forward")
+    p.add_argument("--accum", type=int, default=1, help="batches per optimizer step")
+    p.add_argument("--workers", type=int, default=4, help="DataLoader workers")
     p.add_argument("--lr", type=float, default=2e-3)
     p.add_argument("--val_frac", type=float, default=0.1)
     p.add_argument(
@@ -86,6 +90,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--focal_alpha", type=float, default=0.25)
     p.add_argument("--focal_gamma", type=float, default=2.0)
     p.add_argument("--l2", type=float, default=0.0, help="pull toward the init prompt")
+    p.add_argument(
+        "--n_tokens",
+        type=int,
+        default=0,
+        help="capacity lever: unmask the first K of the 32 language slots (0 = keep the "
+        "init phrase's own valid tokens). Extra slots start from the tower's pad-token "
+        "features and are trained like the rest of the delta.",
+    )
     p.add_argument("--checkpoint", default="models/sam3/sam3.pt")
     p.add_argument("--device", default="cuda")
     p.add_argument("--label", default=None)
@@ -180,33 +192,76 @@ def detr_loss(out: dict, tgt_boxes: torch.Tensor, tgt_masks: torch.Tensor, a) ->
 def load_target(path: Path, device: str) -> tuple[torch.Tensor, torch.Tensor]:
     z = np.load(path)
     return (
-        torch.as_tensor(z["boxes"], device=device),
-        torch.as_tensor(z["masks"], device=device).float(),
+        torch.as_tensor(z["boxes"], dtype=torch.float32, device=device),
+        torch.as_tensor(z["masks"], dtype=torch.float32, device=device),
     )
 
 
-@torch.no_grad()
-def evaluate(model, processor, prompt, items, dst, a) -> dict:
+class _Items(torch.utils.data.Dataset):
+    """Decode + SAM3 transform + target load in workers."""
+
+    def __init__(self, items, dst: Path, processor):
+        self.items, self.dst, self.processor = items, dst, processor
+
+    def __len__(self):
+        return len(self.items)
+
+    def __getitem__(self, i):
+        rel, tpath = self.items[i]
+        with Image.open(self.dst / rel) as h:
+            x = preprocess_image(self.processor, h.convert("RGB"))
+        tb, tm = load_target(tpath, "cpu")
+        return x, tb, tm
+
+
+def _collate(rows):
+    return torch.stack([r[0] for r in rows]), [r[1] for r in rows], [r[2] for r in rows]
+
+
+def make_loader(items, dst, processor, a, shuffle: bool):
+    return torch.utils.data.DataLoader(
+        _Items(items, dst, processor),
+        batch_size=a.batch,
+        shuffle=shuffle,
+        drop_last=shuffle,
+        num_workers=a.workers,
+        collate_fn=_collate,
+        pin_memory=True,
+        persistent_workers=a.workers > 0,
+    )
+
+
+def batch_loss(out: dict, tbs, tms, a, device) -> dict:
+    """Mean of `detr_loss` over the images of one batched grounding pass."""
+    tot: dict[str, torch.Tensor] = {}
+    for i, (tb, tm) in enumerate(zip(tbs, tms)):
+        li = detr_loss(slice_out(out, i), tb.to(device), tm.to(device), a)
+        for k, v in li.items():
+            tot[k] = tot.get(k, 0) + v / len(tbs)
+    return tot
+
+
+def evaluate(model, processor, prompt, loader, a) -> dict:
     """Val loss + a recall proxy: survivors@0.5 == n with every fill ≥ 0.2."""
     tot: dict[str, float] = {}
-    hits = 0
-    for rel, tpath in items:
-        with Image.open(dst / rel) as h:
-            image = h.convert("RGB")
-        bo = install_prompt(encode_image(model, processor, image), prompt)
+    hits = n_img = 0
+    for x, tbs, tms in loader:
+        bo = install_prompt(encode_images(model, processor, x), prompt)
         out = ground(model, processor, bo)
-        tb, tm = load_target(tpath, a.device)
-        losses = detr_loss(out, tb, tm, a)
+        losses = batch_loss(out, tbs, tms, a, a.device)
         for k, v in losses.items():
-            tot[k] = tot.get(k, 0.0) + float(v.detach())
-        surv = nms([r for r in proposals(out, 0.5) if r["area_frac"] >= 0.0005])
-        hits += int(
-            len(surv) == tb.shape[0]
-            and all(r["fill"] >= 0.2 for r in surv)
-            and (tb.shape[0] > 0 or float(out["presence_logit_dec"]) < 0)
-        )
-    m = {k: v / max(1, len(items)) for k, v in tot.items()}
-    m["clean_recall"] = hits / max(1, len(items))
+            tot[k] = tot.get(k, 0.0) + float(v.detach()) * len(tbs)
+        for i, tb in enumerate(tbs):
+            oi = slice_out(out, i)
+            surv = nms([r for r in proposals(oi, 0.5) if r["area_frac"] >= 0.0005])
+            hits += int(
+                len(surv) == tb.shape[0]
+                and all(r["fill"] >= 0.2 for r in surv)
+                and (tb.shape[0] > 0 or float(oi["presence_logit_dec"]) < 0)
+            )
+        n_img += len(tbs)
+    m = {k: v / max(1, n_img) for k, v in tot.items()}
+    m["clean_recall"] = hits / max(1, n_img)
     return m
 
 
@@ -239,39 +294,44 @@ def main() -> None:
     feats0 = init["language_features"].float().clone()
     delta = torch.zeros_like(feats0, requires_grad=True)
     prompt = {k: init[k] for k in PROMPT_KEYS}
+    if a.n_tokens:
+        mask = init["language_mask"].clone()
+        mask[:, : a.n_tokens] = False
+        prompt["language_mask"] = mask
     opt = torch.optim.Adam([delta], lr=a.lr)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, a.steps)
     print(
-        f"init |feats| = {feats0.norm():.3f}  valid tokens = {int((~init['language_mask']).sum())}"
+        f"init |feats| = {feats0.norm():.3f}  valid tokens = {int((~prompt['language_mask']).sum())}"
     )
 
     def current_prompt():
         return {**prompt, "language_features": feats0 + delta}
 
     log: list[dict] = []
-    metrics_val = evaluate(model, processor, current_prompt(), val, dst, a)
+    val_loader = make_loader(val, dst, processor, a, shuffle=False)
+    train_loader = make_loader(train, dst, processor, a, shuffle=True)
+
+    def batches():
+        while True:
+            yield from train_loader
+
+    stream = batches()
+    metrics_val = evaluate(model, processor, current_prompt(), val_loader, a)
     print(
         f"[0] val {json.dumps({k: round(v, 4) for k, v in metrics_val.items()})}",
         flush=True,
     )
     log.append({"step": 0, "val": metrics_val})
 
-    order: list = []
     t0 = time.time()
     run_loss: dict[str, float] = {}
     for step in range(1, a.steps + 1):
         opt.zero_grad(set_to_none=True)
         for _ in range(a.accum):
-            if not order:
-                order = train[:]
-                random.shuffle(order)
-            rel, tpath = order.pop()
-            with Image.open(dst / rel) as h:
-                image = h.convert("RGB")
-            bo = install_prompt(encode_image(model, processor, image), current_prompt())
+            x, tbs, tms = next(stream)
+            bo = install_prompt(encode_images(model, processor, x), current_prompt())
             out = ground(model, processor, bo)
-            tb, tm = load_target(tpath, a.device)
-            losses = detr_loss(out, tb, tm, a)
+            losses = batch_loss(out, tbs, tms, a, a.device)
             loss = losses["total"] / a.accum
             if a.l2:
                 loss = loss + a.l2 * delta.pow(2).sum() / a.accum
@@ -288,7 +348,7 @@ def main() -> None:
             log.append({"step": step, "train": avg})
             run_loss = {}
         if step % a.eval_every == 0 or step == a.steps:
-            metrics_val = evaluate(model, processor, current_prompt(), val, dst, a)
+            metrics_val = evaluate(model, processor, current_prompt(), val_loader, a)
             print(
                 f"[{step}] val {json.dumps({k: round(v, 4) for k, v in metrics_val.items()})}",
                 flush=True,

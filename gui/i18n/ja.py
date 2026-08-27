@@ -624,13 +624,16 @@ STRINGS: dict[str, str] = {
     "model_mit": "MIT — 漫画テキストマスキング",
     "model_pe": "PE-Core-L14-336 — ビジョンエンコーダー (CMMD 検証)",
     "model_danbooru_tags": "Danbooru タグ DB — キャプション順序補正",
+    "model_tagger": "Anima Tagger — caformer_b36 バックボーン (ゲート付き)",
     # HuggingFace 認証 (モデルダイアログ)
     "models_hf_token_placeholder": "HuggingFace トークンを貼り付けてください (hf_…)",
     "models_hf_authenticate": "認証",
     "models_hf_token_hint": "ゲート付き/レート制限のあるダウンロード(SAM3 など)に必要です。"
     '<a href="https://huggingface.co/settings/tokens">'
     "huggingface.co/settings/tokens</a> でトークンを作成し、"
-    '<a href="https://huggingface.co/facebook/sam3">huggingface.co/facebook/sam3</a> で SAM3 のアクセスを申請してください。',
+    '<a href="https://huggingface.co/facebook/sam3">huggingface.co/facebook/sam3</a> で SAM3 のアクセスを申請してください。'
+    "Anima Tagger のバックボーンもゲート付きです。"
+    '<a href="https://huggingface.co/animetimm/caformer_b36.dbv4-full">animetimm/caformer_b36.dbv4-full</a> で利用規約に同意してください。',
     "models_hf_token_present": "✓ HuggingFace トークンは既に保存されています。",
     "models_hf_not_authenticated": "未認証 — トークンを貼り付けてゲート付きダウンロードを有効にしてください。",
     "models_hf_token_empty": "先にトークンを貼り付けてください。",

@@ -16,6 +16,7 @@ failures at the end.
 
 from __future__ import annotations
 
+import json
 import shutil
 import urllib.error
 import urllib.request
@@ -29,6 +30,20 @@ DANBOORU_TAGS_EN_PATH = ROOT / "models" / "danbooru_tags_classified.en.csv"
 DANBOORU_TAGS_URLS = (
     "https://raw.githubusercontent.com/Localsmile/danbooru_KR_wiki_tag_search/main/danbooru_tags_classified.csv",
 )
+
+# Anima Tagger, which is a thin head over an off-the-shelf danbooru tagger:
+# our part (vocab / rules / thresholds / groups / sidecar head) ships from
+# our own repo, the backbone comes from its gated upstream one.
+TAGGER_CKPT_REPO = "sorryhyun/anima-tagger"
+TAGGER_CKPT_SUBFOLDER = "dbv4"
+TAGGER_CKPT_REL = "models/captioners/anima-tagger-dbv4"
+# Required-file set of a dbv4 checkpoint dir; mirrors
+# library/captioning/anima_tagger.py::DBV4_REQUIRED_FILES (duplicated rather
+# than imported — that module pulls torch, and the task runner stays import-light).
+TAGGER_CKPT_REQUIRED = ("config.json", "vocab.json", "rules.yaml")
+# Mirrors library/captioning/dbv4_backend.py::DEFAULT_DBV4_REPO, same reason.
+TAGGER_BACKBONE_REPO = "animetimm/caformer_b36.dbv4-full"
+TAGGER_BACKBONE_FILES = ("model.safetensors", "selected_tags.csv", "meta.json")
 
 
 def _present(paths: list[Path]) -> bool:
@@ -94,15 +109,31 @@ def cmd_download_pe_spatial(_extra):
     )
 
 
+def _flatten_subfolder(dst: Path, sub: str) -> None:
+    """Move ``dst/<sub>/*`` up into ``dst`` — ``hf`` mirrors the repo layout, the
+    loader wants a flat checkpoint dir.
+
+    ``Path.replace`` rather than ``shutil.move`` so a ``--force`` re-download
+    overwrites the existing file instead of raising on Windows (``os.rename``
+    onto an existing path fails there; POSIX would have silently overwritten).
+    """
+    nested = dst / sub
+    if not nested.is_dir():
+        return
+    for f in nested.iterdir():
+        f.replace(dst / f.name)
+    shutil.rmtree(nested, ignore_errors=True)
+
+
 def cmd_download_tagger(_extra):
     # Just the Tagger ``vocab.json`` (~0.7 MB) that caption-index/preprocess need.
     # The full model is not fetched here, so this won't clobber a local model.safetensors.
     # Tracks the live checkpoint (``TAGGER_HF_SUBFOLDER`` / ``DEFAULT_TAGGER_DIR``
     # in library/captioning/anima_tagger.py) so the vocab matches the model that
-    # actually runs.
-    sub = "dbv4"
-    rel = f"models/captioners/anima-tagger-{sub}"
-    dst = ROOT / rel
+    # actually runs. For the whole tagger (head + backbone) see
+    # ``cmd_download_tagger_model``.
+    sub = TAGGER_CKPT_SUBFOLDER
+    dst = ROOT / TAGGER_CKPT_REL
     if _skip("Anima Tagger vocab", [dst / "vocab.json"], _extra):
         return
     dst.mkdir(parents=True, exist_ok=True)
@@ -110,18 +141,83 @@ def cmd_download_tagger(_extra):
         [
             "hf",
             "download",
-            "sorryhyun/anima-tagger",
+            TAGGER_CKPT_REPO,
             f"{sub}/vocab.json",
             "--local-dir",
-            rel,
+            TAGGER_CKPT_REL,
         ]
     )
-    # ``hf`` mirrors the repo layout, so the file lands in a ``<sub>/`` subdir —
-    # flatten it to match the loader's directory contract.
-    nested = dst / sub / "vocab.json"
-    if nested.exists():
-        shutil.move(str(nested), str(dst / "vocab.json"))
-        shutil.rmtree(dst / sub, ignore_errors=True)
+    _flatten_subfolder(dst, sub)
+
+
+def _tagger_backbone_repo() -> str:
+    """Backbone repo named by the installed checkpoint, else the shipped default.
+
+    The checkpoint's ``config.json`` is authoritative (``dbv4.repo`` — that is
+    what ``Dbv4Backend`` will actually fetch at load time), so a checkpoint
+    built against a different ``animetimm/*.dbv4-full`` variant downloads *its*
+    backbone rather than the default one.
+    """
+    try:
+        with open(ROOT / TAGGER_CKPT_REL / "config.json", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        return TAGGER_BACKBONE_REPO
+    repo = (cfg.get("dbv4") or {}).get("repo")
+    return repo if isinstance(repo, str) and repo else TAGGER_BACKBONE_REPO
+
+
+def cmd_download_tagger_model(_extra):
+    """Download the *whole* Anima Tagger — our head plus the gated backbone.
+
+    Two halves, because the tagger is a thin head over an off-the-shelf model:
+
+    * ``sorryhyun/anima-tagger`` ``dbv4/`` → ``models/captioners/anima-tagger-dbv4/``
+      (vocab, rules, thresholds, groups, and the sidecar head that supplies what
+      the backbone cannot say — copyright / OC characters / people count);
+    * the backbone itself (``animetimm/caformer_b36.dbv4-full`` by default),
+      which is **GPL-3.0 and gated**. It is never vendored: the user's own
+      token downloads it, which is also the record of them accepting the repo
+      terms. Auto-approve gate — ``hf auth login`` (or the GUI's token field),
+      then click through once on the repo page.
+
+    The backbone lands in the **HuggingFace hub cache**, not under ``models/``,
+    because that is where the loader looks (``Dbv4Backend._load_model`` →
+    ``hf_hub_download`` with no ``local_dir``). Idempotent like every other
+    target; ``--force`` re-fetches both halves.
+    """
+    force = "--force" in (_extra or [])
+    sub = TAGGER_CKPT_SUBFOLDER
+    dst = ROOT / TAGGER_CKPT_REL
+    if not _skip(
+        "Anima Tagger checkpoint",
+        [dst / f for f in TAGGER_CKPT_REQUIRED],
+        _extra,
+    ):
+        dst.mkdir(parents=True, exist_ok=True)
+        run(
+            [
+                "hf",
+                "download",
+                TAGGER_CKPT_REPO,
+                "--include",
+                f"{sub}/*",
+                "--local-dir",
+                TAGGER_CKPT_REL,
+            ]
+        )
+        _flatten_subfolder(dst, sub)
+
+    repo = _tagger_backbone_repo()
+    from library.runtime.hf_download import hf_file_cached
+
+    if not force and all(hf_file_cached(repo, f) for f in TAGGER_BACKBONE_FILES):
+        print(
+            f"  ✓ tagger backbone {repo} already cached (pass --force to re-download)"
+        )
+        return
+    print(f"  tagger backbone: {repo} (gated, GPL-3.0 — downloaded under your token)")
+    run(["hf", "download", repo, *TAGGER_BACKBONE_FILES])
 
 
 def _download_danbooru_base(_extra):

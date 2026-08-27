@@ -12,6 +12,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from typing import Callable
 
 from PySide6.QtCore import QProcess, QThread, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QTextCursor
@@ -36,9 +37,25 @@ from gui.process import kill_process_tree, setup_kill_safe
 from gui.theme import tok
 from gui.widgets import apply_variant
 
-# (task-key, display-label-i18n-key, [paths-relative-to-ROOT-that-must-all-exist])
-# Status is "installed" iff every path resolves; otherwise "missing".
-_MODEL_GROUPS: list[tuple[str, str, list[str]]] = [
+# The Anima Tagger's backbone is an external gated model fetched straight into
+# the HF hub cache (never under models/), so its row needs a cache probe rather
+# than a path check — see ``_tagger_backbone_installed``.
+_TAGGER_BACKBONE_REPO = "animetimm/caformer_b36.dbv4-full"
+_TAGGER_BACKBONE_FILES = ("model.safetensors", "selected_tags.csv", "meta.json")
+
+
+def _tagger_backbone_installed() -> bool:
+    try:
+        from library.runtime.hf_download import hf_file_cached
+    except Exception:  # noqa: BLE001 — probe only; a failed import is "missing"
+        return False
+    return all(hf_file_cached(_TAGGER_BACKBONE_REPO, f) for f in _TAGGER_BACKBONE_FILES)
+
+
+# (task-key, display-label-i18n-key, [paths-relative-to-ROOT-that-must-all-exist],
+#  extra-check | None)
+# Status is "installed" iff every path resolves and the extra check passes.
+_MODEL_GROUPS: list[tuple[str, str, list[str], Callable[[], bool] | None]] = [
     (
         "anima",
         "model_anima",
@@ -47,9 +64,10 @@ _MODEL_GROUPS: list[tuple[str, str, list[str]]] = [
             "models/text_encoders/qwen_3_06b_base.safetensors",
             "models/vae/qwen_image_vae.safetensors",
         ],
+        None,
     ),
-    ("sam3", "model_sam3", ["models/sam3/sam3.pt"]),
-    ("mit", "model_mit", ["models/mit/model.pth"]),
+    ("sam3", "model_sam3", ["models/sam3/sam3.pt"], None),
+    ("mit", "model_mit", ["models/mit/model.pth"], None),
     (
         "pe",
         "model_pe",
@@ -57,17 +75,33 @@ _MODEL_GROUPS: list[tuple[str, str, list[str]]] = [
             "models/pe/PE-Core-L14-336.pt",
             "models/pe/PE-Spatial-B16-512.pt",
         ],
+        None,
     ),
     (
         "danbooru-tags",
         "model_danbooru_tags",
         ["models/danbooru_tags_classified.csv"],
+        None,
+    ),
+    (
+        "tagger-model",
+        "model_tagger",
+        [
+            "models/captioners/anima-tagger-dbv4/config.json",
+            "models/captioners/anima-tagger-dbv4/vocab.json",
+            "models/captioners/anima-tagger-dbv4/rules.yaml",
+        ],
+        _tagger_backbone_installed,
     ),
 ]
 
 
 def _all_exist(paths: list[str]) -> bool:
     return all((ROOT / p).exists() for p in paths)
+
+
+def _installed(paths: list[str], extra: Callable[[], bool] | None) -> bool:
+    return _all_exist(paths) and (extra is None or extra())
 
 
 class _StreamingDialog(QDialog):
@@ -202,8 +236,11 @@ class ModelsDialog(_StreamingDialog):
     models_changed = Signal()
 
     def __init__(self, parent=None):
-        # (status_label, paths, button) — _after_finished refreshes every row after download-all.
-        self._rows: list[tuple[QLabel, list[str], QPushButton]] = []
+        # (status_label, paths, extra_check, button) — _after_finished refreshes
+        # every row after download-all.
+        self._rows: list[
+            tuple[QLabel, list[str], Callable[[], bool] | None, QPushButton]
+        ] = []
         self._login_thread: _HFLoginThread | None = None
         super().__init__(t("models_title"), parent)
 
@@ -244,14 +281,14 @@ class ModelsDialog(_StreamingDialog):
         all_row.addStretch()
         layout.addLayout(all_row)
 
-        for key, label_key, paths in _MODEL_GROUPS:
+        for key, label_key, paths, extra_check in _MODEL_GROUPS:
             row = QHBoxLayout()
 
             name = QLabel(t(label_key))
             name.setMinimumWidth(280)
             row.addWidget(name)
 
-            installed = _all_exist(paths)
+            installed = _installed(paths, extra_check)
             status = QLabel(t("models_installed") if installed else t("models_missing"))
             status.setStyleSheet(
                 f"color:{tok('ok')};" if installed else f"color:{tok('err')};"
@@ -269,7 +306,7 @@ class ModelsDialog(_StreamingDialog):
                     k, s, p, b
                 )
             )
-            self._rows.append((status, paths, btn))
+            self._rows.append((status, paths, extra_check, btn))
             row.addWidget(btn)
 
             layout.addLayout(row)
@@ -331,13 +368,13 @@ class ModelsDialog(_StreamingDialog):
     def _set_busy(self, busy: bool) -> None:
         super()._set_busy(busy)
         self.all_btn.setEnabled(not busy)
-        for _status, _paths, b in self._rows:
+        for *_row, b in self._rows:
             b.setEnabled(not busy)
 
     def _after_finished(self, exit_code: int) -> None:
         # Refresh every row — download-models touches several groups in one run.
-        for status_lbl, paths, btn in self._rows:
-            installed = _all_exist(paths)
+        for status_lbl, paths, extra_check, btn in self._rows:
+            installed = _installed(paths, extra_check)
             status_lbl.setText(
                 t("models_installed") if installed else t("models_missing")
             )
