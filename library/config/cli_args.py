@@ -327,7 +327,7 @@ def add_training_arguments(parser: argparse.ArgumentParser, support_dreambooth: 
         "reasoning; mix_order_reduction stays enabled when no band straddles "
         "4096. Costs ~x(bands) step-0 compile wall. No-op on single-tier "
         "pools (one band == the union range). Phase 0 flag — see "
-        "_archive/proposals/perband_dynamic_seq.md and bench/perband_seq.",
+        "_archive/proposals/perband_dynamic_seq.md and _archive/bench/perband_seq.",
     )
     parser.add_argument(
         "--vae", type=str, default=None, help="path to checkpoint of vae to replace"
