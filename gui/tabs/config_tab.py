@@ -1057,7 +1057,7 @@ class ConfigTab(DaemonJobMixin, DirtyTrackingMixin, QWidget):
         # collides with a real train arg meaning *live* dataloader tag dropout,
         # and tag dropout is already baked into cached caption variants at
         # preprocess time — running it live too trips the TE-cache assertion.
-        from gui.tabs.preprocess_tab import _GUI_PREPROCESS_KEYS
+        from gui.tabs.preprocess.knobs import PREPROCESS_ONLY_KEYS
 
         for key in (
             "base_config",
@@ -1069,7 +1069,7 @@ class ConfigTab(DaemonJobMixin, DirtyTrackingMixin, QWidget):
             _GUI_PATH_SCOPE_KEY,
             "preprocess_path_pattern",
             "caption_tag_randomize_rate",
-            *_GUI_PREPROCESS_KEYS,
+            *PREPROCESS_ONLY_KEYS,
             *_VIRTUAL_KEYS,
         ):
             snapshot.pop(key, None)

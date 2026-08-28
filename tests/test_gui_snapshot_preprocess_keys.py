@@ -57,7 +57,7 @@ def _make_config_and_preprocess_tabs():
     from PySide6.QtWidgets import QApplication
 
     from gui.tabs.config_tab import ConfigTab
-    from gui.tabs.preprocess_tab import PreprocessingTab
+    from gui.tabs.preprocess import PreprocessingTab
 
     app = QApplication.instance() or QApplication([])
     assert app is not None
@@ -66,7 +66,7 @@ def _make_config_and_preprocess_tabs():
 
 
 def test_snapshot_drops_preprocess_only_keys():
-    from gui.tabs.preprocess_tab import _GUI_PREPROCESS_KEYS
+    from gui.tabs.preprocess.knobs import PREPROCESS_ONLY_KEYS as _GUI_PREPROCESS_KEYS
 
     tab = _make_config_tab()
     try:
@@ -88,7 +88,7 @@ def test_snapshot_drops_preprocess_only_keys():
 
 
 def test_preprocess_queue_snapshot_keeps_scoped_source_separate_from_train_snapshot():
-    from gui.tabs.preprocess_tab import _GUI_PREPROCESS_KEYS
+    from gui.tabs.preprocess.knobs import PREPROCESS_ONLY_KEYS as _GUI_PREPROCESS_KEYS
 
     config_tab = None
     preprocess_tab = None

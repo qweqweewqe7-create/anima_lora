@@ -1,6 +1,6 @@
 # Preprocessing tab refactor — declarative knobs + section panels
 
-Status: proposal (2026-08-28). Motivating change: GH #95 caption-group removal
+Status: **Phases 0, 1 and 3 landed 2026-08-28** (`gui/tabs/preprocess/` package; the tab is 2043 → 1019 lines + ~930 lines of section modules); Phases 2 and 4 open. Motivating change: GH #95 caption-group removal
 (`--caption_drop_groups`, landed in the pipeline 2026-08-28, **not yet in the GUI**).
 
 ## Why now
@@ -133,7 +133,9 @@ existing tests (`tests/test_gui_preprocess_tab.py`,
 `test_gui_snapshot_preprocess_keys.py`, `test_gui_launch_speed.py`) are the
 regression net and must stay green after every phase.
 
-### Phase 0 — characterization (½ day)
+### Phase 0 — characterization (½ day) — DONE 2026-08-28
+
+`tests/test_gui_preprocess_characterization.py` + `tests/fixtures/gui_preprocess_knobs.json` (two default-source scenarios × defaults/flipped × env/overrides/meta-with-and-without-mask, plus reload fixed points). Regenerate only via `--write`.
 
 Pin current behavior before moving anything:
 
@@ -144,7 +146,9 @@ Pin current behavior before moving anything:
   refactor must not add a torch-importing leaf (`tag_drop_groups.py` is
   stdlib-only, verified).
 
-### Phase 1 — extract `knobs.py`, keep the UI as is (1 day)
+### Phase 1 — extract `knobs.py`, keep the UI as is (1 day) — DONE 2026-08-28
+
+Landed as designed with two deviations: `elide_for_meta` became `merge_into_meta(meta, values, defaults, include_mask=)` (mutates the loaded `[variant]` table in place, matching the old pop-or-set semantics — a mask-less save leaves earlier mask keys untouched), and `default_from` grew a `sam_yaml` policy for the mask knobs. The fixture surfaced a real policy split the table now declares rather than hides: `drop_lowres_images` / `min_pixels` / `freefit_max_ratio` / crop knobs **load** from `preprocess.toml` but are **elided** against the hardcoded default (`persist="if_changed"`), so under a populated TOML they get written to the variant untouched, and flipping one back to the hardcoded default is popped and reloads as the TOML value — see `test_const_elision_under_populated_toml_is_the_recorded_quirk`. Collapsing that onto `if_changed_resolved` is a one-word change per row, deliberately not made here (Non-goals).
 
 - Write the `KNOBS` table + the five pure functions; unit-test them against
   the Phase 0 fixture.
@@ -156,9 +160,10 @@ Pin current behavior before moving anything:
 
 ### Phase 2 — add `caption_drop_groups` through the new path (½ day)
 
-- One `Knob` row; `tag_groups` widget in `gui/widgets/fields.py`
-  (`_widget`/`_read` cases); i18n keys ×4 + `_preprocess_fields.json` ×4
-  (use the `translator` agent for ko/ja/cn).
+- One `Knob` row; a `tag_groups` widget (`value()`/`set_value()`/`changed`,
+  the domain-widget protocol `_section.read_widget`/`set_widget` already
+  dispatch to) added via `CaptionEditingSection.add_knob`; i18n keys ×4 +
+  `_preprocess_fields.json` ×4 (use the `translator` agent for ko/ja/cn).
 - Round-trip test in `test_gui_preprocess_tab.py` (variant meta ⇄ widget ⇄ env),
   and assert `CAPTION_DROP_GROUPS` reaches `tasks.py`'s
   `_caption_correction_config` and turns the correction pass on by itself.
@@ -168,18 +173,16 @@ Pin current behavior before moving anything:
   "correct" button previews what the batch run will do — reads the same knob
   value from the Preprocessing tab instance it already receives.
 
-### Phase 3 — section panels (1–2 days)
+### Phase 3 — section panels (1–2 days) — DONE 2026-08-28 (before Phase 2)
 
-- `_section.py` + move each `QGroupBox` block into its module; the tab
-  composes them in order. Domain widgets (`_ResizeCropAnchorWidget`, margins,
-  `_RuleCard`) move with their section.
-- Masking gets its own `MaskingSection` with `collect_rules()` / validation;
-  `_run_mask` shrinks to a call into it.
-- Keep `self.<widget>` aliases on the tab for one release (tests and
-  `image_tab` reach into a few) — add them via `__getattr__` delegation to the
-  owning section, then delete once the tests are migrated to `values()`.
-- Regenerate `gui/CLAUDE.md`'s line counts / module map; add
-  `docs/structure/gui.md` entry if one exists.
+Landed as designed: `_section.py` (`KnobSection` — `add_knob(key, widget, label)` registers the editor, wires change→`changed`, the `enabled_by` gate, and the generic `values()`/`set_values()` dispatched on **widget type**, so two `float` knobs may use different editors), `image_prep.py` (+ `_ResizeCropAnchorWidget`, new `_CropMarginsWidget`), `text_caching.py`, `captions.py` (`AutotagSection` + `CaptionEditingSection`), `masking.py` (`_RuleCard`, `SamMaskSection` with `collect_rules()`/`set_rule_cards()`, `MitMaskSection`), `tab.py`. `gui/tabs/preprocess_tab.py` is the shim; `gui/tabs/preprocess/__init__.py` exports `PreprocessingTab` lazily (PEP 562) so `knobs` stays importable without PySide6.
+
+Deviations / notes:
+
+- Masking is two sections (SAM, MIT), not one `MaskingSection` — they were two group boxes and persist independently.
+- The `tab.<widget>` aliases are a `_WIDGET_ALIASES` map resolved in `PreprocessingTab.__getattr__`; `_set_target_res_widget` / `_set_rule_cards` / `_autotag_mode` / `_resize_crop_margins` / `_rule_cards` stay as thin delegates. Tests still use them (migration to `values()` deferred); `image_tab` reads `target_res_widget` / `resize_crop_anchor_widget` / `freefit_max_ratio_spin` / `_resize_crop_margins` through the same shim.
+- Tests that monkeypatch the default-source loaders now patch `gui.tabs.preprocess.tab` (the shim re-exports the names but patching it no longer reaches the tab).
+- Phase 0's fixture reproduced byte-for-byte; no `--write`.
 
 ### Phase 4 — polish (optional, ½ day)
 
@@ -207,6 +210,7 @@ Pin current behavior before moving anything:
   sources, `_pp_default` for four keys). The Phase 0 fixture is the only guard
   — don't skip it.
 - **Tests reaching into widgets**: 10 tests touch `tab.<widget>` directly.
-  Phase 3's `__getattr__` shim keeps them green; migrate them gradually.
+  Phase 3's `__getattr__` shim keeps them green; migrate them gradually
+  (then delete `_WIDGET_ALIASES`).
 - **i18n parity is manual** (gui/CLAUDE.md) — Phase 2 adds ~6 strings; run
   the `translator` agent, don't hand-copy English.

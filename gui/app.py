@@ -36,7 +36,7 @@ from gui.tabs.easycontrol_tab import EasyControlTab
 from gui.tabs.image_tab import ImageViewerTab
 from gui.tabs.merge_tab import MergeTab
 from gui.tabs.methods_tab import MethodsTab
-from gui.tabs.preprocess_tab import PreprocessingTab
+from gui.tabs.preprocess import PreprocessingTab
 from gui.tabs.queue_tab import QueueTab
 from gui.tensorboard import TensorBoardTab
 from gui.system_dialog import (

@@ -30,7 +30,7 @@ def _make_tab():
 
     from PySide6.QtWidgets import QApplication
 
-    from gui.tabs.preprocess_tab import PreprocessingTab
+    from gui.tabs.preprocess import PreprocessingTab
 
     app = QApplication.instance() or QApplication([])
     assert app is not None
@@ -275,7 +275,7 @@ def test_caption_master_stages_default_from_preprocess_toml(monkeypatch):
     default would export "0" and silently cancel a CLI-side opt-in.
     """
     from gui import _load
-    from gui.tabs import preprocess_tab
+    from gui.tabs.preprocess import tab as preprocess_tab
 
     monkeypatch.setattr(
         preprocess_tab,
