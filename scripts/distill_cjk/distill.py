@@ -42,7 +42,12 @@ if str(REPO) not in sys.path:
 
 from bench._common import make_run_dir, write_result  # noqa: E402
 from library.anima import weights as anima_weights  # noqa: E402
-from scripts.distill_cjk import attn_bank, config as cfg_mod, ext_table  # noqa: E402
+from scripts.distill_cjk import (  # noqa: E402
+    adapter_lora as adapter_lora_mod,
+    attn_bank,
+    config as cfg_mod,
+    ext_table,
+)
 from scripts.distill_cjk import losses as loss_mod  # noqa: E402
 from scripts.distill_cjk.data import CachedPairs, collate  # noqa: E402
 
@@ -444,6 +449,21 @@ def load_context(cfg, device, dtype) -> dict:
         hold_cache = None
 
     ext_init, mapping = ext_vocab.load_ext_assets(cfg.ext_prefix)
+    if cfg.init_pack is not None:
+        # Warm start (plan3): the trained rows become the init, so the global
+        # map starts at identity *on top of* the best rows-only pack and the
+        # arm measures capacity added, not capacity-plus-relearning.
+        warm, warm_map = ext_vocab.load_ext_assets(cfg.init_pack)
+        if warm.shape != ext_init.shape:
+            raise ValueError(
+                f"--init_pack rows {tuple(warm.shape)} != ext assets {tuple(ext_init.shape)}"
+            )
+        logger.info(
+            "warm start: ext rows from %s (trained: %s)",
+            cfg.init_pack,
+            (warm_map.get("training") or {}),
+        )
+        ext_init = warm
     adapter = anima_weights.load_llm_adapter(cfg.dit, dtype=dtype, device="cpu")
     adapter.to(device).eval()
     # The probe bank is built unconditionally: even an arm that does not train
@@ -516,7 +536,29 @@ def train_arm(cfg, ctx, device, dtype) -> tuple[dict, object, torch.Tensor]:
     )
     ext_table.attach(adapter, table)
 
-    opt = torch.optim.AdamW(table.parameters(), lr=cfg.lr, weight_decay=cfg.wd)
+    lora = ctx.get("adapter_lora")
+    if lora is not None:
+        lora.detach()
+    lora = None
+    param_groups = [{"params": list(table.parameters()), "lr": cfg.lr}]
+    if cfg.adapter_lora > 0:
+        lora = adapter_lora_mod.AdapterLoRA(
+            adapter, rank=cfg.adapter_lora, targets=cfg.adapter_lora_targets
+        ).to(device)
+        lora.attach(adapter)
+        ctx["adapter_lora"] = lora
+        param_groups.append(
+            {"params": list(lora.parameters()), "lr": cfg.adapter_lora_lr}
+        )
+        logger.info(
+            "adapter LoRA: r=%d targets=%s  %.2f M params, lr %g (table lr %g)",
+            cfg.adapter_lora,
+            ",".join(lora.targets),
+            lora.n_params() / 1e6,
+            cfg.adapter_lora_lr,
+            cfg.lr,
+        )
+    opt = torch.optim.AdamW(param_groups, lr=cfg.lr, weight_decay=cfg.wd)
     rng = random.Random(cfg.seed)
     history: list[dict] = []
     first_loss = None
@@ -622,6 +664,29 @@ def train_arm(cfg, ctx, device, dtype) -> tuple[dict, object, torch.Tensor]:
         # floor here is a capacity statement, not an optimization one.
         metrics["capacity_floor"] = float(total.detach())
         metrics["capacity_drop"] = (first_loss or 0.0) - float(total.detach())
+    if lora is not None:
+        # Verify the arm off its weights, not its argv: an untouched LoRA
+        # (up still zero) means the second param group never moved.
+        up_rms = (
+            torch.stack(
+                [
+                    m.lora_up.weight.detach().float().pow(2).mean()
+                    for m in lora.loras.values()
+                ]
+            )
+            .mean()
+            .sqrt()
+        )
+        metrics["adapter_lora"] = {
+            "r": lora.rank,
+            "alpha": lora.alpha,
+            "targets": list(lora.targets),
+            "lr": cfg.adapter_lora_lr,
+            "n_params": lora.n_params(),
+            "up_rms": float(up_rms),
+        }
+    if cfg.init_pack is not None:
+        metrics["init_pack"] = str(cfg.init_pack)
     if table.has_global:
         metrics["global_gain"] = float(torch.exp(table.log_gain))
         metrics["global_diag_rms"] = float(
@@ -645,6 +710,18 @@ def save_vocab_pack(cfg, ctx, table, visits, metrics, device) -> None:
     out_map["training"] = {
         k: metrics[k] for k in ("mode", "param", "losses", "trust", "final_loss")
     }
+    if "init_pack" in metrics:
+        out_map["training"]["init_pack"] = metrics["init_pack"]
+    lora = ctx.get("adapter_lora")
+    if lora is not None:
+        sidecar = cfg.out.with_name(cfg.out.name + ".adapter_lora.safetensors")
+        lora.save(sidecar)
+        out_map["training"]["adapter_lora"] = {
+            k: metrics["adapter_lora"][k] for k in ("r", "alpha", "targets", "lr")
+        }
+        out_map["training"]["adapter_lora"]["file"] = sidecar.name
+        metrics["adapter_lora"]["file"] = str(sidecar)
+        logger.info("adapter LoRA sidecar → %s", sidecar)
     cfg.out.with_suffix(".json").write_text(
         json.dumps(out_map, ensure_ascii=False), encoding="utf-8"
     )

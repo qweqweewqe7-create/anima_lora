@@ -261,6 +261,14 @@ def main() -> None:
         "pack (output/ckpt/cjk_vocab_pack*) to score Phase 2c.",
     )
     parser.add_argument(
+        "--adapter_lora",
+        default=None,
+        help="ext-gated adapter LoRA sidecar (plan3) to hook onto llm_adapter "
+        "before encoding; 'auto' = <ext_prefix>.adapter_lora.safetensors. "
+        "EN / t5en arms carry no ext id so their gate is 0 — only *_ext arms "
+        "see the delta.",
+    )
+    parser.add_argument(
         "--prompts",
         type=Path,
         default=None,
@@ -331,6 +339,34 @@ def main() -> None:
             [emb.weight.data, ext_table.to(emb.weight.dtype).to(emb.weight.device)]
         )
         anima.llm_adapter.embed = torch.nn.Embedding.from_pretrained(new_w)
+    adapter_lora = None
+    if opts.adapter_lora:
+        from scripts.distill_cjk.adapter_lora import AdapterLoRA
+
+        lora_path = (
+            opts.ext_prefix.with_name(
+                opts.ext_prefix.name + ".adapter_lora.safetensors"
+            )
+            if opts.adapter_lora == "auto"
+            else Path(opts.adapter_lora)
+        )
+        if ext_table is None:
+            raise SystemExit(
+                "--adapter_lora needs --ext (the gate never opens otherwise)"
+            )
+        adapter_lora = AdapterLoRA.load(anima.llm_adapter, lora_path)
+        print(
+            f"adapter LoRA: r={adapter_lora.rank} targets={','.join(adapter_lora.targets)} "
+            f"({adapter_lora.n_params() / 1e6:.2f} M) hooked from {lora_path}"
+        )
+    elif opts.ext:
+        sib = opts.ext_prefix.with_name(
+            opts.ext_prefix.name + ".adapter_lora.safetensors"
+        )
+        if sib.exists():
+            print(
+                f"NOTE: {sib.name} exists but --adapter_lora not given — rows-only arm"
+            )
     text_encoder = load_text_encoder(args, dtype=torch.bfloat16, device=device)
     shared = {"text_encoder": text_encoder, "conds_cache": {}}
 
@@ -451,6 +487,15 @@ def main() -> None:
                 else {}
             ),
             "ext_prefix": str(opts.ext_prefix) if opts.ext else None,
+            "adapter_lora": (
+                {
+                    "r": adapter_lora.rank,
+                    "targets": list(adapter_lora.targets),
+                    "n_params": adapter_lora.n_params(),
+                }
+                if adapter_lora is not None
+                else None
+            ),
             "arms": {c: list(t) for c, t in arms.items()},
             "images_rendered": sorted(images),
         },

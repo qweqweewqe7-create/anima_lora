@@ -160,6 +160,37 @@ def build_argparser() -> argparse.ArgumentParser:
         "the global map alone) — 933 of 3002 visited rows are seen 1-4×.",
     )
 
+    # ---- adapter capacity (plan3: ext-gated LoRA on the LLM Adapter) --------
+    p.add_argument(
+        "--adapter_lora",
+        type=int,
+        default=0,
+        help="rank of an ext-gated LoRA on the adapter's per-block Linears "
+        "(0 = off, rows only). Trained jointly with the ext table; the delta "
+        "is gated to sequences carrying an ext id so pure-EN prompts stay "
+        "bit-exact by construction. Written as <out>.adapter_lora.safetensors.",
+    )
+    p.add_argument(
+        "--adapter_lora_targets",
+        default="self_qkvo,cross_q",
+        help="comma list of self_q|self_k|self_v|self_o|self_qkvo|cross_q|"
+        "cross_k|cross_v|cross_o|cross_kv|mlp (per block, all 6 blocks)",
+    )
+    p.add_argument(
+        "--adapter_lora_lr",
+        type=float,
+        default=1e-4,
+        help="LoRA param-group LR (the table keeps --lr)",
+    )
+    p.add_argument(
+        "--init_pack",
+        type=Path,
+        default=None,
+        help="warm-start the ext rows from a trained pack prefix (its "
+        "materialized ext_embed becomes the table's init) instead of the "
+        "zero-shot --ext_prefix build",
+    )
+
     # ---- objective --------------------------------------------------------
     p.add_argument("--loss", default="attn:1.0", help='e.g. "attn:1.0,span:0.5"')
     p.add_argument(
@@ -244,6 +275,11 @@ class CJKDistillConfig:
     rank: int
     min_visits: int
 
+    adapter_lora: int = 0
+    adapter_lora_targets: str = "self_qkvo,cross_q"
+    adapter_lora_lr: float = 1e-4
+    init_pack: Path | None = None
+
     losses: dict[str, float] = field(default_factory=dict)
     trust: str = "provenance"
     register_sampling: dict[str, float] = field(default_factory=dict)
@@ -298,6 +334,21 @@ def resolve_config(args: argparse.Namespace) -> CJKDistillConfig:
             "seen once; expect memorization, not generalization"
         )
 
+    if args.adapter_lora:
+        from scripts.distill_cjk.adapter_lora import parse_targets
+
+        parse_targets(args.adapter_lora_targets)  # fail at parse time, not at attach
+        if "attn" in losses:
+            logger.warning(
+                "--adapter_lora with the attn loss: §9 showed sequence-readout "
+                "pressure hurts renders; plan3 trains capacity with span only"
+            )
+    if (
+        args.init_pack is not None
+        and not Path(args.init_pack).with_suffix(".safetensors").exists()
+    ):
+        raise FileNotFoundError(f"--init_pack {args.init_pack}.safetensors not found")
+
     blocks = tuple(int(b) for b in str(args.attn_blocks).split(",") if b.strip() != "")
     if "attn" in losses and not blocks:
         raise ValueError("--loss attn needs at least one --attn_blocks entry")
@@ -317,6 +368,10 @@ def resolve_config(args: argparse.Namespace) -> CJKDistillConfig:
         param=args.param,
         rank=int(args.rank),
         min_visits=int(args.min_visits),
+        adapter_lora=int(args.adapter_lora),
+        adapter_lora_targets=str(args.adapter_lora_targets),
+        adapter_lora_lr=float(args.adapter_lora_lr),
+        init_pack=Path(args.init_pack) if args.init_pack else None,
         losses=losses,
         trust=args.trust,
         register_sampling=parse_register_sampling(args.register_sampling),
