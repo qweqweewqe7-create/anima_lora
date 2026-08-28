@@ -162,3 +162,35 @@ above floor in JA context → the objective, not the data, is the block
 - Artifacts: `output/ckpt/cjk_vocab_pack_{names,synth,synth_bal}`,
   `post_image_dataset/cjk_distill/{cache,cache_synth}`, `names_synth.jsonl`,
   `pairs_synth.jsonl` (EN-context build; re-run `--context both` before §5).
+
+## 8. JA-context verdict (2026-08-28 evening) — **objective, not data**
+
+§5 ran as written (`--context both` → 261,391 pairs: `names_synth_ja` 177,202 +
+`names_synth` 24,000 + base; coverage gate: `博`/`麗` above the 300 floor in
+JA context, n2 fully covered, only `巫`:176 short). Distill
+`bench/cjk_distill/results/20260828-2128-2c-synthja` (recovery_attn 0.901,
+`names_synth_ja` recovery 0.95-class like the other name registers); grids
+`bench/cjk_adapter/results/20260828-2211-2c-synthja-grid`,
+`-2228-2c-synthja-mixed-grid`.
+
+| prompt | synth_bal | synthja | rule |
+|---|---|---|---|
+| n1 / r3 full-JA Reimu | blue-hair generic | **purple-hair generic** — no bow, no miko, no black hair | ✗ |
+| r1 mixed Reimu | blonde miko | black-hair miko, red-white — partial gain kept | ✓ |
+| m1 Miku full-JA | ok | ok | ✓ |
+| n2 Asuka full-JA | fails | fails (red hair, no plugsuit) — **0 under-floor rows** | ✗ |
+| t1 / t2 | clean | clean | ✓ |
+
+Visits were bought *in the matching context* and full-JA still fails; n2
+fails with complete coverage. The "thin visits" hypothesis is falsified for
+the name register. Per the §5 rule: **do not buy more pairs** — D2 / STAIR /
+JESC stay blocked (span-less → inert under `loss=span`, exactly the D2
+result). The block is the objective: the span term does not pull a name span
+toward the teacher when its neighbours are JA rows (`cos_student_vs_en`
+by register: `names_synth_ja` 0.145 < `names_synth` 0.221). Next step is
+§6.3 — add the `attn` sequence term and re-distill **on the same
+`cache_synth2`** (kept, ~155 G; no rebuild needed), then rerun both grids.
+
+Disk note: `cache/` (32 G) and `cache_synth/` (140 G) were deleted 2026-08-28
+to make room; `pairs.jsonl` / `names_synth.jsonl` / `pairs_synth.jsonl` kept,
+so either rebuilds from the daemon (~15 min / ~1 h).
