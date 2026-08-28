@@ -11,6 +11,10 @@ A caption may bind attributes to subjects with trailing clauses: `<flat tag bag>
 
 **Never hand-split a caption**: `library/captioning/position_clauses.py` (torch-free) is the single grammar — `parse_caption` → `ParsedCaption(flat_tags, clauses)`, `compose_caption` back. Caption variants treat each clause as an **atomic unit** (dropped whole at `clause_dropout_rate`, shuffled inside, header never randomized); `correct_caption` splits clauses off before bucket-reordering the flat bag.
 
+## Dropping tag groups (`--caption_drop_groups`, GH #95)
+
+`make preprocess-captions ARGS="--caption_drop_groups artist,lighting,pose"` (or `CAPTION_DROP_GROUPS=…` / `caption_drop_groups` in `configs/preprocess.toml`) strips whole *kinds* of tag from every **mirrored** caption — the master under `image_dataset/` is never edited. Slug table + resolution order in `library/captioning/tag_drop_groups.py`: tag shape (`@`→artist, count, rating) → danbooru numeric kind → the KB's `[대분류 > 소분류]` path; anything not a slug is a literal path prefix (`"효과/연출 > 조명"`). Unknown-to-KB tags, ratings, the trigger word and `@no-artist` never drop; `insert_no_artist` still fires after an `artist` drop (that's the point for style LoRAs). Applies inside position clauses too (an emptied clause is removed whole). Setting it alone is enough to enable the correction pass. Note it is KB-faithful, so `thighhighs` is `accessory`, not `clothing`. CPU-only — no GPU involved.
+
 ## Auto-tagging (`make caption-autotag`)
 
 Batch Anima Tagger over the dataset, writing `.txt` sidecars into the **caption master** (`image_dataset/`) — the dataset-wide counterpart to the Dataset tab's per-image autotag button (`scripts/anima_tagger/autotag.py` is single-image + stdout-only and is *not* a batch path). Orchestration in `library/preprocess/autotag.py`, thin CLI at `scripts/preprocess/autotag_captions.py`. Tags the **resized** image (the pixels training sees), writes next to the original.

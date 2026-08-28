@@ -17,6 +17,7 @@ from library.captioning.position_clauses import (
     compose_caption as compose_position_caption,
 )
 from library.captioning.position_clauses import parse_caption as parse_position_caption
+from library.captioning.tag_drop_groups import should_drop_tag
 from library.captioning.taxonomy import (
     canonical_rating,
     is_artist_tag,
@@ -74,6 +75,12 @@ class CaptionCorrectionOptions:
     validate_artist_tags: bool = False
     trigger_word: str = ""
     trigger_at_front: bool = False
+    # Tag groups to strip from every caption (GH #95): user slugs from
+    # ``tag_drop_groups.DROP_GROUP_PATHS`` (``artist``, ``clothing``,
+    # ``lighting`` …) or literal KB taxonomy-path prefixes. Applied to the
+    # flat bag AND inside position clauses (a clause emptied by the drop is
+    # removed). The trigger word and ``@no-artist`` are never dropped.
+    drop_groups: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -82,6 +89,7 @@ class CaptionCorrectionResult:
     changed: bool
     inserted_no_artist: bool
     unknown_tags: tuple[str, ...]
+    dropped_tags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -243,14 +251,16 @@ def correct_caption(
     parsed = parse_position_caption(text)
     if parsed.has_clauses:
         flat = correct_caption(", ".join(parsed.flat_tags), kb, options=options)
+        clauses, clause_dropped = _drop_clause_tags(parsed.clauses, kb, options)
         corrected = compose_position_caption(
-            [t for t in flat.text.split(", ") if t], parsed.clauses
+            [t for t in flat.text.split(", ") if t], clauses
         )
         return CaptionCorrectionResult(
             text=corrected,
             changed=corrected != text.strip(),
             inserted_no_artist=flat.inserted_no_artist,
             unknown_tags=flat.unknown_tags,
+            dropped_tags=(*flat.dropped_tags, *clause_dropped),
         )
     tags = _parse_tags(text)
     if not tags:
@@ -274,6 +284,7 @@ def correct_caption(
         "general": [],
     }
     unknown: list[str] = []
+    dropped: list[str] = []
     seen: set[str] = set()
     trigger = options.trigger_word.strip()
     trigger_key = tag_key(trigger) if trigger else ""
@@ -285,6 +296,9 @@ def correct_caption(
         if key in seen:
             continue
         seen.add(key)
+        if options.drop_groups and should_drop_tag(tag, kb, options.drop_groups):
+            dropped.append(tag)
+            continue
         kind = _classify_tag(tag, kb, options)
         if kind is None:
             unknown.append(tag)
@@ -323,7 +337,33 @@ def correct_caption(
         changed=corrected != text.strip(),
         inserted_no_artist=inserted_no_artist,
         unknown_tags=tuple(unknown),
+        dropped_tags=tuple(dropped),
     )
+
+
+def _drop_clause_tags(clauses, kb: TagKnowledgeBase, options: CaptionCorrectionOptions):
+    """Apply ``options.drop_groups`` inside position clauses.
+
+    Clauses are atomic units (header verbatim, tags in place), so only the
+    dropped tags are removed; a clause left with no tags is removed whole —
+    a bare ``On the left`` binds nothing.
+    """
+    if not options.drop_groups:
+        return list(clauses), ()
+    from dataclasses import replace
+
+    kept = []
+    dropped: list[str] = []
+    for clause in clauses:
+        tags = []
+        for tag in clause.tags:
+            if should_drop_tag(normalize_tag(tag), kb, options.drop_groups):
+                dropped.append(tag)
+            else:
+                tags.append(tag)
+        if tags:
+            kept.append(replace(clause, tags=tuple(tags)))
+    return kept, tuple(dropped)
 
 
 def _parse_tags(text: str) -> list[str]:

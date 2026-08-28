@@ -45,10 +45,9 @@ ANIMA_LORA = HERE.parents[1]
 VENDOR = HERE / "_vendor"
 
 # HF repo we auto-fetch the tagger checkpoint from when ``tagger_dir`` is
-# missing required files. Mirrors the PE-Core auto-fetch already in this
-# loader - the user gets a working node out of the box without manual
-# downloads, while still being able to point ``tagger_dir`` at a
-# custom-trained checkpoint.
+# missing required files - the user gets a working node out of the box
+# without manual downloads, while still being able to point ``tagger_dir``
+# at a custom-trained checkpoint.
 _HF_TAGGER_REPO = "sorryhyun/anima-tagger"
 _REQUIRED_FILES = ("config.json", "model.safetensors", "vocab.json", "rules.yaml")
 # dbv4-backed checkpoints (the live default since 2026-08-27) ship no weights
@@ -76,30 +75,29 @@ def _is_dbv4_dir(tdir: Path) -> bool:
 
 _OPTIONAL_FILES = ("thresholds.safetensors", "groups.yaml")
 
-# The tagger is dual-encoder only (PE-Core + PE-Spatial, hard-routed). The
-# pre-dual single-encoder ``v1`` checkpoint no longer loads. The live
-# checkpoint (v5 — curated-caption labels, 4-class rating, white-stroke
-# augmentation) sits under the ``v5/`` subfolder of ``sorryhyun/anima-tagger``;
-# ``v3/`` keeps the previous 3-class checkpoint, the repo root the legacy v2
-# files.
+# The shipped default is the **dbv4-backed** checkpoint (``dbv4/`` subfolder of
+# ``sorryhyun/anima-tagger``): an external caformer trunk projected onto our
+# vocab plus our sidecar head. It uses NO PE encoder at all, which is why this
+# node exposes no PE inputs. A legacy PE-head checkpoint (``v5/`` / ``v3/`` on
+# the same repo) still loads and resolves its encoders through the registry
+# default; the pre-dual single-encoder ``v1`` checkpoint no longer loads.
 _HF_SUBFOLDER = "dbv4"
 _DEFAULT_TAGGER_DIR = "models/captioners/anima-tagger-dbv4"
 
-# Default vision-encoder checkpoints (auto-fetched if absent). Listed as the
-# first dropdown row so a fresh install resolves to the auto-download target
-# even before any ``.pt`` exists on disk.
-_DEFAULT_PE_CKPT = "models/pe/PE-Core-L14-336.pt"
-_DEFAULT_PE_AUX_CKPT = "models/pe/PE-Spatial-B16-512.pt"
+# NB no PE vision-encoder inputs: the dbv4 backend uses none, and a legacy
+# PE-head checkpoint resolves its encoders through the registry default
+# (models/pe/..., HF-fetched on first use) with no knob on this node.
 
 
 def _list_tagger_dirs() -> list[str]:
     """Loadable tagger-checkpoint directories under ``models/captioners/``.
 
-    A directory qualifies only when its ``config.json`` carries an
-    ``aux_encoder`` field — i.e. it's a dual-encoder (PE-Core + PE-Spatial)
-    checkpoint, the only architecture that still loads. Pre-dual / v1
-    single-encoder dirs are skipped so the dropdown never offers a checkpoint
-    that ``AnimaTagger`` would reject at load time. Returned as paths relative
+    A directory qualifies when its ``config.json`` declares the ``dbv4``
+    backend (the shipped default) or carries an ``aux_encoder`` field - i.e.
+    it's a legacy dual-encoder (PE-Core + PE-Spatial) checkpoint. Those are the
+    only two architectures that still load; pre-dual / v1 single-encoder dirs
+    are skipped so the dropdown never offers a checkpoint that ``AnimaTagger``
+    would reject at load time. Returned as paths relative
     to ``ANIMA_LORA`` so the load() resolver (which prepends ``ANIMA_LORA`` for
     non-absolute inputs) accepts them unchanged. Empty when running standalone
     — the caller seeds the default dir so the dropdown is never empty and
@@ -116,27 +114,14 @@ def _list_tagger_dirs() -> list[str]:
         if not cfg.exists():
             continue
         try:
-            with open(cfg) as f:
-                if not json.load(f).get("aux_encoder"):
-                    continue
+            with open(cfg, encoding="utf-8") as f:
+                cfg_d = json.load(f)
         except (OSError, ValueError):
+            continue
+        if cfg_d.get("backend") != "dbv4" and not cfg_d.get("aux_encoder"):
             continue
         out.append(str(p.relative_to(ANIMA_LORA)))
     return out
-
-
-def _list_pe_ckpts() -> list[str]:
-    """Vision-encoder ``.pt`` checkpoints under ``models/pe/``, repo-relative.
-
-    Empty when standalone — the caller seeds the canonical default so the
-    dropdown is never empty and the auto-download target stays selectable.
-    """
-    if not ANIMA_LORA.exists():
-        return []
-    base = ANIMA_LORA / "models" / "pe"
-    if not base.is_dir():
-        return []
-    return [str(p.relative_to(ANIMA_LORA)) for p in sorted(base.glob("*.pt"))]
 
 
 def _dropdown(default: str, found: list[str]) -> list[str]:
@@ -292,34 +277,9 @@ class AnimaTaggerLoader:
                             "AnimaTagger checkpoint directory, picked from "
                             "the checkpoints discovered under "
                             "models/captioners/ (any dir with a config.json). "
-                            "The first row is the default dual-encoder "
+                            "The first row is the default dbv4-backed "
                             "checkpoint; if it's missing required files it's "
                             f"auto-fetched from {_HF_TAGGER_REPO} on first use."
-                        ),
-                    },
-                ),
-                "pe_ckpt": (
-                    _dropdown(_DEFAULT_PE_CKPT, _list_pe_ckpts()),
-                    {
-                        "tooltip": (
-                            "PE-Core-L14-336 vision-encoder checkpoint (.pt), "
-                            "picked from models/pe/. Drives rating / "
-                            "people-count / identity tags. If the default is "
-                            "missing it's auto-fetched from "
-                            "facebook/PE-Core-L14-336 on first use (one-time "
-                            "~1 GB download)."
-                        ),
-                    },
-                ),
-                "pe_aux_ckpt": (
-                    _dropdown(_DEFAULT_PE_AUX_CKPT, _list_pe_ckpts()),
-                    {
-                        "tooltip": (
-                            "Auxiliary PE-Spatial-B16-512 vision-encoder "
-                            "checkpoint (.pt), picked from models/pe/. Drives "
-                            "localized tags in the dual-encoder tagger. If the "
-                            "default is missing it's auto-fetched from "
-                            "facebook/PE-Spatial-B16-512 on first use."
                         ),
                     },
                 ),
@@ -334,48 +294,30 @@ class AnimaTaggerLoader:
         "Load an AnimaTagger checkpoint. Output socket is consumed by "
         "AnimaTaggerCaption (image -> caption) and AnimaDirectEdit. ComfyUI "
         "memoizes the output, so re-running the graph reuses the same "
-        "instance without reloading. Both the tagger checkpoint "
-        f"({_HF_TAGGER_REPO}) and the PE-Core-L14-336 vision encoder are "
-        "auto-downloaded if their paths don't exist yet."
+        f"instance without reloading. The tagger checkpoint ({_HF_TAGGER_REPO}) "
+        "is auto-downloaded if its path doesn't exist yet; the dbv4 backend "
+        "needs no PE vision encoder, so there is nothing else to pick."
     )
 
-    def load(
-        self,
-        tagger_dir: str,
-        pe_ckpt: str,
-        pe_aux_ckpt: str = "",
-    ):
+    def load(self, tagger_dir: str, **_legacy):
+        """``**_legacy`` swallows ``pe_ckpt`` / ``pe_aux_ckpt`` from workflows
+        saved before those inputs were removed, so an old graph still runs."""
         tdir = Path(tagger_dir.strip())
         if not tdir.is_absolute():
             tdir = ANIMA_LORA / tdir
-        pe_path = Path(pe_ckpt)
-        if not pe_path.is_absolute():
-            pe_path = ANIMA_LORA / pe_path
-        # Aux PE path is optional — empty string keeps the AnimaTagger
-        # constructor default (None → encoder registry default → HF fallback).
-        pe_aux_resolved: Path | None = None
-        pe_aux_str = pe_aux_ckpt.strip() if pe_aux_ckpt else ""
-        if pe_aux_str:
-            pe_aux_resolved = Path(pe_aux_str)
-            if not pe_aux_resolved.is_absolute():
-                pe_aux_resolved = ANIMA_LORA / pe_aux_resolved
-        # The only loadable architecture is the dual-encoder checkpoint, now
-        # under the v3/ subfolder of the HF repo (_HF_SUBFOLDER == "v3").
+        # Fetches whichever file set the checkpoint's config.json calls for
+        # (dbv4 data-only vs legacy PE head) from _HF_SUBFOLDER.
         _ensure_tagger_dir(tdir, hf_subfolder=_HF_SUBFOLDER)
         device = comfy.model_management.get_torch_device()
         logger.info(
-            "AnimaTaggerLoader: loading %s on %s (pe=%s, pe_aux=%s)",
+            "AnimaTaggerLoader: loading %s on %s (backend=%s)",
             tdir,
             device,
-            pe_path,
-            pe_aux_resolved if pe_aux_resolved else "<registry default>",
+            "dbv4" if _is_dbv4_dir(tdir) else "pe",
         )
-        tagger = AnimaTagger(
-            ckpt_dir=tdir,
-            device=device,
-            pe_ckpt=pe_path,
-            pe_aux_ckpt=pe_aux_resolved,
-        )
+        # PE checkpoints stay unset: inert on dbv4, encoder-registry default
+        # (-> HF fallback) on a legacy PE-head checkpoint.
+        tagger = AnimaTagger(ckpt_dir=tdir, device=device)
         return (tagger,)
 
 

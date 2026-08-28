@@ -10,6 +10,15 @@ caption_tag_randomize_rate = 0.0
 
 caption_position_clauses = false
 
+# Tag groups stripped from every mirrored caption (GH #95); master untouched.
+# Slugs (artist, character, copyright, meta, clothing, accessory, action, pose,
+# expression, face, hair, body, background, effect, object, animal, color,
+# person, lighting, weather, text, style_parody, framing, sexual, weapon, food,
+# species, fashion_style) or a literal '대분류 > 소분류' path prefix from
+# models/danbooru_tags_classified.csv. Env CAPTION_DROP_GROUPS / CLI
+# --caption_drop_groups override. Unknown tags are never dropped.
+# caption_drop_groups = "artist,lighting"
+
 sigma_demote = "1024:896,1024:768"
 
 drop_lowres_images = true

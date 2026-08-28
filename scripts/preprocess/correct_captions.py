@@ -12,6 +12,7 @@ from library.captioning.correction import (
     load_tag_knowledge_base,
 )
 from library.captioning.preprocess import write_corrected_preprocess_captions
+from library.captioning.tag_drop_groups import drop_group_names, parse_drop_groups
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -54,6 +55,19 @@ def main() -> None:
         dest="caption_trigger_at_front",
         action="store_true",
         help="Place caption_trigger_word at the very front instead of artist slot",
+    )
+    parser.add_argument(
+        "--caption_drop_groups",
+        "--caption-drop-groups",
+        dest="caption_drop_groups",
+        default="",
+        help=(
+            "Comma-separated tag groups to strip from every mirrored caption "
+            "(the master is never edited). Slugs: "
+            + ", ".join(drop_group_names())
+            + "; anything else is a literal taxonomy-path prefix from "
+            "danbooru_tags_classified.csv (e.g. '효과/연출 > 조명')."
+        ),
     )
     parser.add_argument(
         "--no_correct",
@@ -144,6 +158,7 @@ def main() -> None:
             insert_no_artist=bool(args.caption_insert_no_artist),
             trigger_word=str(args.caption_trigger_word or ""),
             trigger_at_front=bool(args.caption_trigger_at_front),
+            drop_groups=parse_drop_groups(args.caption_drop_groups),
         ),
         recursive=bool(args.recursive),
         path_pattern=str(args.path_pattern or "*"),

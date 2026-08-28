@@ -24,10 +24,9 @@ The node works in two install shapes:
 1. **Inside the anima_lora repo** (dev / monorepo). It imports the live `library.captioning.anima_tagger`, so edits in the parent repo are picked up immediately.
 2. **Standalone** (just this directory dropped into a vanilla ComfyUI `custom_nodes/`). It falls back to a bundled inference subset under `_vendor/` — no need to clone the parent repo or run `uv sync`. Pip deps are listed in `pyproject.toml` (ComfyUI ships everything except possibly `einops` / `timm` / `pyyaml`, all small).
 
-Both checkpoints auto-download on first use:
+The checkpoint auto-downloads on first use: our data + sidecar head (a few MB) is fetched from [`sorryhyun/anima-tagger`](https://huggingface.co/sorryhyun/anima-tagger) (`dbv4/` subfolder) into `tagger_dir` (default `models/captioners/anima-tagger-dbv4`) when any required file is missing.
 
-- **Tagger checkpoint** (~26 MB) is fetched from [`sorryhyun/anima-tagger`](https://huggingface.co/sorryhyun/anima-tagger) into `tagger_dir` (default `models/captioners/anima-tagger-dbv4`) when any required file is missing.
-- **PE-Core-L14-336** vision encoder (~1 GB) is fetched from `facebook/PE-Core-L14-336` into `pe_ckpt` (default `models/pe/PE-Core-L14-336.pt`).
+The default checkpoint runs on the **dbv4** backend: the trunk is the external `animetimm/caformer_b36.dbv4-full` tagger (GPL-3.0, fetched by the library on first use — needs `timm`), projected onto Anima's vocab and topped with our sidecar head. **No PE vision encoder is involved**, so there is no ~1 GB `PE-Core` download and the loader has no PE inputs at all — `tagger_dir` is its only widget. (Legacy PE-head checkpoints — `v3/`, `v5/` on the same HF repo — still load; they resolve their encoders through the registry default under `models/pe/`.)
 
 ### For maintainers — keeping the vendor copy fresh
 
@@ -43,14 +42,17 @@ python scripts/release/sync_vendor.py     # from the anima_lora repo root (refre
 
 ```
 <tagger_dir>/
-  config.json              # model config + training metadata           (required)
-  model.safetensors        # AnimaTaggerHead state dict                 (required)
+  config.json              # backend + vocab alignment metadata         (required)
   vocab.json               # tag list with category + median_pos info   (required)
   rules.yaml               # caption-normalization rules snapshot       (required)
   thresholds.safetensors   # per-tag F1-optimal thresholds              (optional, falls back to 0.5)
   groups.yaml              # tag-group taxonomy → softmax argmax mode   (optional)
-  pe_lora.safetensors      # PE-LoRA delta on PE-Core trailing blocks   (optional, gated on config.pe_lora=true)
+  sidecar.safetensors      # sidecar head over dbv4 features            (optional)
+  sidecar.json             # sidecar head config                        (optional)
+  model.safetensors        # AnimaTaggerHead state dict — LEGACY PE backend only (required there)
 ```
+
+`config.json`'s `backend` field (`"dbv4"` or `"pe"`) decides which file set is required and whether the PE inputs mean anything.
 
 Default `tagger_dir` is `models/captioners/anima-tagger-dbv4` (relative to the `anima_lora/` repo root in dev install, or to ComfyUI root in standalone install). Absolute paths used as-is. Re-train via `python -m scripts.anima_tagger.cli` in the parent repo to produce a custom checkpoint.
 

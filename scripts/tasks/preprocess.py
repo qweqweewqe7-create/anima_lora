@@ -230,6 +230,7 @@ def _caption_correction_config(extra) -> tuple[dict[str, object], list[str]]:
 
     overrides = _path_overrides()
     env_trigger = os.environ.get("CAPTION_TRIGGER_WORD")
+    env_drop_groups = os.environ.get("CAPTION_DROP_GROUPS")
     config: dict[str, object] = {
         "correct_order": _boolish(
             os.environ.get("CAPTION_CORRECT_ORDER"),
@@ -248,6 +249,13 @@ def _caption_correction_config(extra) -> tuple[dict[str, object], list[str]]:
             os.environ.get("CAPTION_TRIGGER_AT_FRONT"),
             _boolish(overrides.get("caption_trigger_at_front"), False),
         ),
+        # Tag groups stripped at mirror time (GH #95) — comma-separated slugs
+        # / taxonomy-path prefixes, see library/captioning/tag_drop_groups.py.
+        "drop_groups": str(
+            env_drop_groups
+            if env_drop_groups is not None
+            else _drop_groups_override(overrides.get("caption_drop_groups"))
+        ).strip(),
         # Not a `correct_captions.py` flag — gates a separate stage that runs
         # BEFORE the caption/TE steps (see `cmd_preprocess`). Writes the
         # DERIVED caption (`resized/`), not the master.
@@ -306,6 +314,11 @@ def _caption_correction_config(extra) -> tuple[dict[str, object], list[str]]:
         }:
             config["trigger_at_front"] = False
             i += 1
+        elif tok in {"--caption_drop_groups", "--caption-drop-groups"}:
+            if i + 1 >= len(extra):
+                raise SystemExit(f"{tok} requires a comma-separated group list")
+            config["drop_groups"] = str(extra[i + 1]).strip()
+            i += 2
         elif tok in {"--caption_position_clauses", "--caption-position-clauses"}:
             config["position_clauses"] = True
             i += 1
@@ -377,7 +390,17 @@ def _caption_correction_enabled(config: dict[str, object]) -> bool:
         config.get("correct_order")
         or str(config.get("trigger_word") or "").strip()
         or config.get("insert_no_artist")
+        or str(config.get("drop_groups") or "").strip()
     )
+
+
+def _drop_groups_override(value) -> str:
+    """``caption_drop_groups`` from the TOML chain: a string or a list."""
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple)):
+        return ",".join(str(v) for v in value)
+    return str(value)
 
 
 def _caption_correction_args(config: dict[str, object]) -> list[str]:
@@ -389,6 +412,9 @@ def _caption_correction_args(config: dict[str, object]) -> list[str]:
         args += ["--caption_trigger_word", trigger]
     if config.get("trigger_at_front"):
         args.append("--caption_trigger_at_front")
+    drop = str(config.get("drop_groups") or "").strip()
+    if drop:
+        args += ["--caption_drop_groups", drop]
     return args
 
 
