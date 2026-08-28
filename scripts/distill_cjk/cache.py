@@ -18,9 +18,10 @@ Usage (GPU work goes through the daemon)::
 from __future__ import annotations
 
 import json
+import os
 import logging
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import torch
@@ -39,6 +40,25 @@ logger = logging.getLogger(__name__)
 SHARD_SIZE = 512
 
 
+# ---- process-pool staging ---------------------------------------------------
+# The per-pair work (padded fast-tokenizer calls + the pure-Python hybrid ext
+# encoder + span alignment) is GIL-bound Python, so a worker *thread* never
+# overlapped with the main loop in practice (measured 2026-08-27: ~26 pairs/s,
+# GPU 0↔100%). Each worker process builds its own PairEncoder once.
+_WORKER_ENCODER: PairEncoder | None = None
+
+
+def _worker_init(text_encoder_path: str, ext_prefix: str) -> None:
+    global _WORKER_ENCODER
+    torch.set_num_threads(1)
+    _WORKER_ENCODER = PairEncoder(text_encoder_path, Path(ext_prefix))
+
+
+def _worker_encode(chunk: list[dict], trust: dict[str, float], eval_arms: bool):
+    assert _WORKER_ENCODER is not None
+    return [_WORKER_ENCODER.encode(p, trust, eval_arms=eval_arms) for p in chunk]
+
+
 def _encode_split(
     rows: list[dict],
     *,
@@ -50,6 +70,7 @@ def _encode_split(
     device,
     batch_size: int,
     eval_arms: bool = False,
+    workers: int = 1,
 ) -> dict:
     from safetensors.torch import save_file
 
@@ -68,106 +89,112 @@ def _encode_split(
         shard_idx += 1
 
     # Staging is tokenizer-bound, not GPU-bound: the models are a 0.6B encoder
-    # and a 6-block adapter (~2.7 GB, milliseconds per batch), while each pair
-    # pays Qwen + T5 + the pure-Python hybrid ext encoder. Encode chunk k+1 on a
-    # worker thread while the GPU runs chunk k — the HF fast tokenizers drop the
-    # GIL, so this actually overlaps. Matters at corpus scale-up, where a serial
-    # build is hours of near-idle GPU.
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        pending = None
-        for start in range(0, len(rows), batch_size):
-            chunk = rows[start : start + batch_size]
-            enc = (
-                pending.result()
-                if pending is not None
-                else [encoder.encode(p, trust, eval_arms=eval_arms) for p in chunk]
+    # and a 6-block adapter (milliseconds per batch) while each pair pays Qwen +
+    # T5 + the pure-Python hybrid ext encoder. Encode on a process pool with a
+    # bounded prefetch so chunk k+W is tokenized while the GPU runs chunk k.
+    chunks = [rows[i : i + batch_size] for i in range(0, len(rows), batch_size)]
+    prefetch = max(2, 2 * workers)
+
+    def _run_chunks():
+        if workers <= 1:
+            for c in chunks:
+                yield c, [encoder.encode(p, trust, eval_arms=eval_arms) for p in c]
+            return
+        init_args = (encoder.text_encoder_path, str(encoder.ext_prefix))
+        with ProcessPoolExecutor(
+            max_workers=workers, initializer=_worker_init, initargs=init_args
+        ) as pool:
+            futs = []
+            it = iter(chunks)
+            for c in it:
+                futs.append((c, pool.submit(_worker_encode, c, trust, eval_arms)))
+                if len(futs) >= prefetch:
+                    break
+            while futs:
+                c, f = futs.pop(0)
+                yield c, f.result()
+                nxt = next(it, None)
+                if nxt is not None:
+                    futs.append(
+                        (nxt, pool.submit(_worker_encode, nxt, trust, eval_arms))
+                    )
+
+    for chunk_idx, (chunk, enc) in enumerate(_run_chunks()):
+        start = chunk_idx * batch_size
+        qwen_ids = torch.stack([e.qwen_ids for e in enc]).to(device)
+        qwen_mask = torch.stack([e.qwen_mask for e in enc]).to(device)
+        t_ids = torch.stack([e.t_ids for e in enc]).to(device)
+        t_mask = torch.stack([e.t_mask for e in enc]).to(device)
+
+        def run(hidden, src_mask, ids, mask):
+            out = adapter(
+                source_hidden_states=hidden,
+                target_input_ids=ids,
+                target_attention_mask=mask,
+                source_attention_mask=src_mask,
             )
-            nxt = rows[start + batch_size : start + 2 * batch_size]
-            pending = (
-                pool.submit(
-                    lambda c: [
-                        encoder.encode(p, trust, eval_arms=eval_arms) for p in c
-                    ],
-                    nxt,
-                )
-                if nxt
-                else None
-            )
+            # Mirror the inference boundary exactly: pads are zeroed *after*
+            # the adapter (library/inference/text.py:229), so a pad position
+            # carries no Qwen signal — it is a plain attention sink downstream.
+            out[~mask.bool()] = 0
+            return out
 
-            qwen_ids = torch.stack([e.qwen_ids for e in enc]).to(device)
-            qwen_mask = torch.stack([e.qwen_mask for e in enc]).to(device)
-            t_ids = torch.stack([e.t_ids for e in enc]).to(device)
-            t_mask = torch.stack([e.t_mask for e in enc]).to(device)
+        with torch.no_grad():
+            hidden = text_encoder(
+                input_ids=qwen_ids, attention_mask=qwen_mask
+            ).last_hidden_state
+            hidden[~qwen_mask.bool()] = 0
+            teacher = run(hidden, qwen_mask, t_ids, t_mask)
 
-            def run(hidden, src_mask, ids, mask):
-                out = adapter(
-                    source_hidden_states=hidden,
-                    target_input_ids=ids,
-                    target_attention_mask=mask,
-                    source_attention_mask=src_mask,
-                )
-                # Mirror the inference boundary exactly: pads are zeroed *after*
-                # the adapter (library/inference/text.py:229), so a pad position
-                # carries no Qwen signal — it is a plain attention sink downstream.
-                out[~mask.bool()] = 0
-                return out
-
-            with torch.no_grad():
-                hidden = text_encoder(
-                    input_ids=qwen_ids, attention_mask=qwen_mask
+            ref = native = None
+            if eval_arms:
+                n_ids = torch.stack([e.n_ids for e in enc]).to(device)
+                n_mask = torch.stack([e.n_mask for e in enc]).to(device)
+                native = run(hidden, qwen_mask, n_ids, n_mask)
+                r_ids = torch.stack([e.ref_qwen_ids for e in enc]).to(device)
+                r_mask = torch.stack([e.ref_qwen_mask for e in enc]).to(device)
+                r_hidden = text_encoder(
+                    input_ids=r_ids, attention_mask=r_mask
                 ).last_hidden_state
-                hidden[~qwen_mask.bool()] = 0
-                teacher = run(hidden, qwen_mask, t_ids, t_mask)
+                r_hidden[~r_mask.bool()] = 0
+                ref = run(r_hidden, r_mask, t_ids, t_mask)
 
-                ref = native = None
-                if eval_arms:
-                    n_ids = torch.stack([e.n_ids for e in enc]).to(device)
-                    n_mask = torch.stack([e.n_mask for e in enc]).to(device)
-                    native = run(hidden, qwen_mask, n_ids, n_mask)
-                    r_ids = torch.stack([e.ref_qwen_ids for e in enc]).to(device)
-                    r_mask = torch.stack([e.ref_qwen_mask for e in enc]).to(device)
-                    r_hidden = text_encoder(
-                        input_ids=r_ids, attention_mask=r_mask
-                    ).last_hidden_state
-                    r_hidden[~r_mask.bool()] = 0
-                    ref = run(r_hidden, r_mask, t_ids, t_mask)
+        for j, e in enumerate(enc):
+            nq = int(e.qwen_mask.sum())
+            nt = int(e.t_mask.sum())
+            ns = int(e.s_mask.sum())
+            key = f"p{len(records):06d}"
+            shard[f"{key}.qwen"] = hidden[j, :nq].to(torch.bfloat16).cpu()
+            shard[f"{key}.teacher"] = teacher[j, :nt].to(torch.bfloat16).cpu()
+            shard[f"{key}.sids"] = e.s_ids[:ns].to(torch.int32)
+            shard[f"{key}.tids"] = e.t_ids[:nt].to(torch.int32)
+            if eval_arms:
+                nn_ = int(e.n_mask.sum())
+                shard[f"{key}.ref"] = ref[j, :nt].to(torch.bfloat16).cpu()
+                shard[f"{key}.native"] = native[j, :nn_].to(torch.bfloat16).cpu()
+            spans = [
+                [s.teacher, s.student, s.weight, s.via, s.f1]
+                for s in e.spans
+                if max(s.teacher) < nt and max(s.student) < ns
+            ]
+            n_span_tokens += sum(len(s[1]) for s in spans)
+            records.append(
+                {
+                    "id": e.pid,
+                    "register": e.register,
+                    "shard": f"shard_{shard_idx:04d}.safetensors",
+                    "key": key,
+                    "n_qwen": nq,
+                    "n_teacher": nt,
+                    "n_student": ns,
+                    "spans": spans,
+                }
+            )
 
-            for j, e in enumerate(enc):
-                nq = int(e.qwen_mask.sum())
-                nt = int(e.t_mask.sum())
-                ns = int(e.s_mask.sum())
-                key = f"p{len(records):06d}"
-                shard[f"{key}.qwen"] = hidden[j, :nq].to(torch.bfloat16).cpu()
-                shard[f"{key}.teacher"] = teacher[j, :nt].to(torch.bfloat16).cpu()
-                shard[f"{key}.sids"] = e.s_ids[:ns].to(torch.int32)
-                shard[f"{key}.tids"] = e.t_ids[:nt].to(torch.int32)
-                if eval_arms:
-                    nn_ = int(e.n_mask.sum())
-                    shard[f"{key}.ref"] = ref[j, :nt].to(torch.bfloat16).cpu()
-                    shard[f"{key}.native"] = native[j, :nn_].to(torch.bfloat16).cpu()
-                spans = [
-                    [s.teacher, s.student, s.weight, s.via, s.f1]
-                    for s in e.spans
-                    if max(s.teacher) < nt and max(s.student) < ns
-                ]
-                n_span_tokens += sum(len(s[1]) for s in spans)
-                records.append(
-                    {
-                        "id": e.pid,
-                        "register": e.register,
-                        "shard": f"shard_{shard_idx:04d}.safetensors",
-                        "key": key,
-                        "n_qwen": nq,
-                        "n_teacher": nt,
-                        "n_student": ns,
-                        "spans": spans,
-                    }
-                )
-
-            if len(shard) >= SHARD_SIZE * (6 if eval_arms else 4):
-                flush()
-            if start % (batch_size * 20) == 0:
-                logger.info("  encoded %d/%d", start + len(chunk), len(rows))
+        if len(shard) >= SHARD_SIZE * (6 if eval_arms else 4):
+            flush()
+        if start % (batch_size * 20) == 0:
+            logger.info("  encoded %d/%d", start + len(chunk), len(rows))
     flush()
 
     meta = {
@@ -186,6 +213,12 @@ def main() -> None:
     parser = cfg_mod.build_argparser()
     parser.add_argument(
         "--encode_batch", type=int, default=32, help="pairs per Qwen forward"
+    )
+    parser.add_argument(
+        "--encode_workers",
+        type=int,
+        default=max(1, min(8, (os.cpu_count() or 2) - 2)),
+        help="tokenizer worker processes (1 = serial in-process)",
     )
     args = parser.parse_args()
     cfg = cfg_mod.resolve_config(args)
@@ -225,6 +258,7 @@ def main() -> None:
             device=device,
             batch_size=args.encode_batch,
             eval_arms=(split == "holdout"),
+            workers=args.encode_workers,
         )
         summary[split] = {k: v for k, v in meta.items() if k != "pairs"}
         logger.info("  → %s", summary[split])

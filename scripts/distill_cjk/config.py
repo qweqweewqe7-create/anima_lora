@@ -31,11 +31,25 @@ TRUST_POLICIES = {
         "override": 1.0,
         "wikidata": 1.0,
         "wiki_verified": 1.0,
+        # A tag-pair candidate that won the back-translation arbitration
+        # (D1-pairs item 2) — same verification layer as `wiki_verified`, same
+        # community field one snapshot older.
+        "tagpair_verified": 1.0,
         "wiki_han": 1.0,
         "rating": 1.0,
         "passthrough": 1.0,
+        # `names`-register segments deliberately kept EN: teacher and student
+        # agree on their ids, so the span isolates the swapped name's
+        # contextual influence — exact signal, weight is the mixing knob.
+        "en_pinned": 1.0,
         "mt_verified": 0.8,
         "wiki": 0.7,
+        # `tagpair` fills tags the glossary left unresolved (p1atdev, CC0): the
+        # community's own other_names, but an older snapshot, partly LLM-filled,
+        # and with no back-translation behind the choice. Above `mt_unverified`,
+        # below `wiki` — and note these rows have *no* supervision otherwise, so
+        # the comparison is against 0, not against a better wording.
+        "tagpair": 0.6,
         "mt_unverified": 0.3,
         "unresolved": 0.0,
         "unmapped": 0.0,
@@ -48,8 +62,11 @@ TRUST_POLICIES = {
         "wiki_han": 1.0,
         "rating": 1.0,
         "passthrough": 1.0,
+        "en_pinned": 1.0,
         "mt_verified": 1.0,
         "wiki": 1.0,
+        "tagpair_verified": 1.0,  # back-translation-verified, unlike the fill
+        "tagpair": 0.0,  # nothing back-translated it — this arm drops it
         "mt_unverified": 0.0,
         "unresolved": 0.0,
         "unmapped": 0.0,
@@ -59,6 +76,25 @@ TRUST_POLICIES = {
 LOSS_NAMES = ("flat", "span", "attn", "pool")
 PARAM_MODES = ("global", "row", "global_row")
 MODES = ("train", "capacity", "oracle")
+
+
+def parse_register_sampling(spec: str) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for item in str(spec or "").split(","):
+        if item.strip():
+            k, v = item.split(":")
+            out[k.strip()] = float(v)
+    return out
+
+
+def parse_register_span_scale(spec: str) -> dict[tuple[str, str], float]:
+    out: dict[tuple[str, str], float] = {}
+    for item in str(spec or "").split(","):
+        if item.strip():
+            key, v = item.split("=")
+            reg, via = key.split(":")
+            out[(reg.strip(), via.strip())] = float(v)
+    return out
 
 
 def parse_losses(spec: str) -> dict[str, float]:
@@ -94,7 +130,7 @@ def build_argparser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--train_registers",
-        default="tags,tags_alt",
+        default="tags,tags_alt,names",
         help="registers the loss actually trains on. D6's quote registers are "
         "excluded by default because their teacher is degraded by construction "
         "— `quote_preserved` puts the raw JA string into the teacher's stock-"
@@ -126,6 +162,18 @@ def build_argparser() -> argparse.ArgumentParser:
 
     # ---- objective --------------------------------------------------------
     p.add_argument("--loss", default="attn:1.0", help='e.g. "attn:1.0,span:0.5"')
+    p.add_argument(
+        "--register_sampling",
+        default="",
+        help='per-register batch sampling weight, e.g. "tags:1,names_synth:0.25" '
+        "(unlisted registers weight 1.0; pairs are drawn proportional to weight)",
+    )
+    p.add_argument(
+        "--register_span_scale",
+        default="",
+        help="multiply span weights of one via inside one register, e.g. "
+        '"names_synth:en_pinned=0.3" — a distill-time knob, no cache rebuild',
+    )
     p.add_argument(
         "--trust",
         default="provenance",
@@ -198,6 +246,8 @@ class CJKDistillConfig:
 
     losses: dict[str, float] = field(default_factory=dict)
     trust: str = "provenance"
+    register_sampling: dict[str, float] = field(default_factory=dict)
+    register_span_scale: dict[tuple[str, str], float] = field(default_factory=dict)
     attn_blocks: tuple[int, ...] = ()
     attn_queries: int = 64
     query_bank: Path | None = None
@@ -269,6 +319,8 @@ def resolve_config(args: argparse.Namespace) -> CJKDistillConfig:
         min_visits=int(args.min_visits),
         losses=losses,
         trust=args.trust,
+        register_sampling=parse_register_sampling(args.register_sampling),
+        register_span_scale=parse_register_span_scale(args.register_span_scale),
         attn_blocks=blocks,
         attn_queries=int(args.attn_queries),
         query_bank=Path(args.query_bank) if args.query_bank else None,

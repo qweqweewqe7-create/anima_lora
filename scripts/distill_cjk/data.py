@@ -183,6 +183,8 @@ class PairEncoder:
         from library.anima import strategy as strategy_anima
 
         self.max_length = max_length
+        self.text_encoder_path = text_encoder_path
+        self.ext_prefix = Path(ext_prefix)
         self.tok = strategy_anima.AnimaTokenizeStrategy(
             qwen3_path=text_encoder_path,
             qwen3_max_length=max_length,

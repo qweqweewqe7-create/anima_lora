@@ -179,3 +179,175 @@ def test_compose_passes_unmapped_segments_through_and_counts_them():
     assert [s["en"] for s in spans] == ["1girl", "@aak", "unmapped tag"]
     assert [s["ja"] for s in spans] == ja
     assert spans[-1]["via"] == "unmapped"
+
+
+def test_names_register_swaps_only_names_and_skips_nameless_captions():
+    """The name-swap contract: character/copyright go JA, everything else — the
+    general tags *and* an unswappable name — stays EN with `via: en_pinned`,
+    and a caption with no resolvable name emits no pair (it would visit no ext
+    rows). The student joins with 、 like every span-carrying register, because
+    the distill side's `_ja_span_chars` hardcodes that joiner.
+    """
+    glossary = {
+        "acheron (honkai: star rail)": {"axis": "character", "ja": "黄泉"},
+        "honkai: star rail": {"axis": "copyright", "ja": "崩壊：スターレイル"},
+        "1girl": {"axis": "general", "ja": "女の子1人"},
+        "no-ja name": {"axis": "character", "ja": None},
+    }
+    caption = "1girl, acheron (honkai: star rail), honkai: star rail, no-ja name"
+    pairs = build_pairs.build_names([("img", caption)], glossary)
+    assert len(pairs) == 1
+    p = pairs[0]
+    assert p["register"] == "names"
+    assert p["en"] == caption
+    assert p["ja"] == "1girl、黄泉、崩壊：スターレイル、no-ja name"
+    assert p["n_missing"] == 1  # the name the glossary could not swap
+    assert [s["via"] for s in p["spans"]] == [
+        "en_pinned",
+        "unknown",  # glossary entry carries no `via` in this fixture
+        "unknown",
+        "en_pinned",
+    ]
+    # `en_pinned` must never inherit default trust silently.
+    from scripts.distill_cjk.config import TRUST_POLICIES
+
+    assert all("en_pinned" in pol for name, pol in TRUST_POLICIES.items() if pol)
+
+    assert build_pairs.build_names([("img2", "1girl, solo")], glossary) == []
+
+
+tag_pairs = _load("tag_pairs")
+
+
+def test_tag_pairs_fills_only_what_the_glossary_left_unresolved():
+    """The fill contract: a resolved wording is never re-opened on a CPU pass.
+
+    Every wording the glossary already carries is either pinned or chosen by
+    back-translation, and this source has neither behind it — overwriting one
+    would reproduce the CPU-rebuild regression `datasets/README.md` records. An
+    *unresolved* tag has nothing to lose: it composes as latin passthrough at
+    span weight 0.
+    """
+    tags = {
+        "1girl": {"count": 9, "axis": "general", "ja": "女の子", "via": "mt_verified"},
+        "kizuato": {"count": 5, "axis": "general", "ja": None, "via": "unresolved"},
+    }
+    counts = {"1girl": 9, "kizuato": 5, "socks": 3, "@aak": 7}
+    pairs = {
+        "1girl": ["女子"],  # a competing wording — must be ignored
+        "kizuato": ["痕"],
+        "socks": ["靴下"],
+        "@aak": ["アーク"],  # artist handles stay latin identity
+    }
+    inventory = set("痕靴下")
+    stats = tag_pairs.fill(
+        tags,
+        __import__("collections").Counter(counts),
+        pairs,
+        inventory,
+        {"@aak": "artist"},
+    )
+
+    assert tags["1girl"]["ja"] == "女の子"  # untouched
+    assert tags["1girl"]["via"] == "mt_verified"
+    assert tags["kizuato"]["ja"] == "痕"  # unresolved → filled
+    assert tags["kizuato"]["via"] == tag_pairs.TAGPAIR_VIA
+    assert tags["socks"]["ja"] == "靴下"  # absent → added
+    assert "@aak" not in tags
+    assert stats["filled"] == 3 - 1  # kizuato + socks
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "单色调",  # simplified Chinese — Shift-JIS rejects it
+        "百褶裙",  # traditional Chinese — Shift-JIS accepts, the inventory does not
+        "ウィンクX東方",  # latin contamination in the field
+    ],
+)
+def test_tag_pairs_guards_reject_non_japanese(name):
+    """The source is unfiltered by its own admission, so the guards re-run here."""
+    inventory = set("東方髪目")
+    assert tag_pairs.japanese_names([name], inventory) == []
+
+
+def test_tagpair_via_has_an_explicit_trust_weight():
+    """`apply_trust` defaults an unknown `via` to 1.0 — a new source must not
+    inherit full trust by omission."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from scripts.distill_cjk.config import TRUST_POLICIES
+
+    for policy, weights in TRUST_POLICIES.items():
+        if policy == "all":
+            continue  # `all` is empty by construction — every span at 1.0
+        assert tag_pairs.TAGPAIR_VIA in weights, policy
+        assert tag_glossary.TAGPAIR_VERIFIED_VIA in weights, policy
+    assert (
+        weights["mt_unverified"] <= TRUST_POLICIES["provenance"][tag_pairs.TAGPAIR_VIA]
+    )
+
+
+def test_choose_prefers_community_sense_over_mt_at_equal_f1():
+    """`bow` — お辞儀 (MT, *bowing*) and 蝶結び (community, the ribbon) both
+    back-translate to "bow", so F1 cannot separate the senses. Only provenance
+    knows which one the booru tag means; at equal evidence the community field
+    must beat the MT rendering (D1-pairs item 2)."""
+    entry = {"count": 1582, "axis": "general", "alts": []}
+    cands = [
+        {
+            "ja": "蝶結び",
+            "back": "bow",
+            "f1": 1.0,
+            "kana": True,
+            "mt": False,
+            "src": "tagpair",
+            "ja_ok": True,
+        },
+        {
+            "ja": "お辞儀",
+            "back": "bow",
+            "f1": 1.0,
+            "kana": True,
+            "mt": True,
+            "src": "mt",
+            "ja_ok": True,
+        },
+    ]
+    tag_glossary.choose(entry, cands, "お辞儀", 0.75)
+    assert entry["ja"] == "蝶結び"
+    assert entry["via"] == tag_glossary.TAGPAIR_VERIFIED_VIA
+    assert entry["candidates"][0]["src"] == "tagpair"  # provenance persisted
+
+
+def test_choose_keeps_kana_over_kanji_and_surfaces_the_rival():
+    """鎧 back-translates perfectly, but kana stays the proof of Japaneseness —
+    a Han-only rival can be Chinese (`bed` → 床 is *floor* in JA), so it never
+    wins a tie automatically. It must land in the D1-words review section
+    instead, where a human can override it in."""
+    entry = {"count": 39, "axis": "general", "alts": []}
+    cands = [
+        {
+            "ja": "アーマー",
+            "back": "armor",
+            "f1": 1.0,
+            "kana": True,
+            "mt": False,
+            "src": "wiki",
+            "ja_ok": True,
+        },
+        {
+            "ja": "鎧",
+            "back": "armor",
+            "f1": 1.0,
+            "kana": False,
+            "mt": False,
+            "src": "tagpair",
+            "ja_ok": True,
+        },
+    ]
+    tag_glossary.choose(entry, cands, "", 0.75)
+    assert entry["ja"] == "アーマー"
+    assert entry["via"] == "wiki_verified"
+
+    rows = tag_glossary.kanji_review_rows({"tags": {"armor": entry}})
+    assert [(r[1], r[3]["ja"]) for r in rows] == [("armor", "鎧")]

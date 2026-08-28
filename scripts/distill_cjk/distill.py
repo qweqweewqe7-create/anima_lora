@@ -161,6 +161,19 @@ def discrimination(
     }
 
 
+def _register_triangle(d: dict[str, list[float]]) -> dict:
+    """One register's readout-space triangle: student / teacher / native + R."""
+    mean = {k: sum(v) / len(v) for k, v in d.items()}
+    span = mean["t"] - mean["n"]
+    return {
+        "n": len(d["s"]),
+        "student": mean["s"],
+        "teacher": mean["t"],
+        "native": mean["n"],
+        "recovery": (mean["s"] - mean["n"]) / span if abs(span) > 1e-6 else 0.0,
+    }
+
+
 @torch.no_grad()
 def evaluate(
     adapter, cached, cfg, device, dtype, limit=None, batch_size=32, probes=None
@@ -203,6 +216,11 @@ def evaluate(
     }
     held: dict[str, list[float]] = {}
     per_register: dict[str, list[float]] = {}
+    # …and the same decomposition in the readout space. `recovery_attn` is a
+    # *mix* statistic (G3), so the aggregate is only comparable between runs
+    # that hold out the same register proportions — which a corpus change
+    # breaks. The per-register triangle is what survives a re-mix.
+    per_register_a: dict[str, dict[str, list[float]]] = {}
     outs: list[torch.Tensor] = []
     outs_a: list[torch.Tensor] = []
     for start in range(0, n, batch_size):
@@ -248,9 +266,19 @@ def evaluate(
                 )
             )
             outs_a.extend(rs[j] for j in range(rs.shape[0]))
-            acc["s_ref_a"] += flat_cos(rs, rr).tolist()
-            acc["t_ref_a"] += flat_cos(rt, rr).tolist()
-            acc["n_ref_a"] += flat_cos(rn, rr).tolist()
+            s_ref_a = flat_cos(rs, rr)
+            t_ref_a = flat_cos(rt, rr)
+            n_ref_a = flat_cos(rn, rr)
+            acc["s_ref_a"] += s_ref_a.tolist()
+            acc["t_ref_a"] += t_ref_a.tolist()
+            acc["n_ref_a"] += n_ref_a.tolist()
+            for reg, sv, tv, nv in zip(
+                b["registers"], s_ref_a.tolist(), t_ref_a.tolist(), n_ref_a.tolist()
+            ):
+                d = per_register_a.setdefault(reg, {"s": [], "t": [], "n": []})
+                d["s"].append(sv)
+                d["t"].append(tv)
+                d["n"].append(nv)
 
     mean = {k: (sum(v) / len(v) if v else float("nan")) for k, v in acc.items()}
     span = mean["t_ref"] - mean["n_ref"]
@@ -280,6 +308,9 @@ def evaluate(
         "cos_native_vs_en_attn": mean["n_ref_a"],
         "cos_student_vs_en_by_register": {
             k: sum(v) / len(v) for k, v in sorted(per_register.items())
+        },
+        "attn_by_register": {
+            k: _register_triangle(v) for k, v in sorted(per_register_a.items())
         },
         "held_out_loss": {k: sum(v) / len(v) for k, v in sorted(held.items())},
     }
@@ -355,6 +386,48 @@ def make_pool(cfg, train_cache) -> list[int]:
     return pool
 
 
+def pool_weights(cfg, train_cache, pool: list[int]) -> list[float] | None:
+    """Per-index draw weights from --register_sampling (None = uniform).
+
+    A synthetic register can outnumber the real ones 4:1 (names_synth, 2026-08-27);
+    drawn uniformly it starves `tags` of gradient visits and the full-JA renders
+    regress. Weights rebalance the *draw*, not the pairs — the cache is untouched.
+    """
+    if not cfg.register_sampling:
+        return None
+    w = [
+        float(cfg.register_sampling.get(train_cache.records[i]["register"], 1.0))
+        for i in pool
+    ]
+    by_reg: dict[str, float] = {}
+    for i, wi in zip(pool, w):
+        by_reg[train_cache.records[i]["register"]] = (
+            by_reg.get(train_cache.records[i]["register"], 0.0) + wi
+        )
+    tot = sum(by_reg.values())
+    logger.info(
+        "register sampling share: %s",
+        ", ".join(f"{k}={v / tot:.2f}" for k, v in sorted(by_reg.items())),
+    )
+    return w
+
+
+def scale_register_spans(cfg, train_cache) -> None:
+    """Apply --register_span_scale in place: (register, via) → weight multiplier."""
+    if not cfg.register_span_scale:
+        return
+    n = 0
+    for rec in train_cache.records:
+        reg = rec["register"]
+        for s in rec.get("spans") or []:
+            k = float(cfg.register_span_scale.get((reg, str(s[3])), 1.0))
+            if k != 1.0:
+                s[2] = float(s[2]) * k
+                n += 1
+    train_cache._span_cache.clear()
+    logger.info("register span scale applied to %d spans", n)
+
+
 def load_context(cfg, device, dtype) -> dict:
     """Everything an arm needs that is identical across arms — loaded once.
 
@@ -411,6 +484,8 @@ def load_context(cfg, device, dtype) -> dict:
                 seq_total=SEQ_TOTAL,
             )
     pool = make_pool(cfg, train_cache)
+    weights = pool_weights(cfg, train_cache, pool)
+    scale_register_spans(cfg, train_cache)
     return {
         "train_cache": train_cache,
         "hold_cache": hold_cache,
@@ -420,6 +495,7 @@ def load_context(cfg, device, dtype) -> dict:
         "orig_embed": adapter.embed,
         "probes": probes,
         "pool": pool,
+        "pool_weights": weights,
         "visits": compute_visits(train_cache, pool, ext_init.shape[0]),
     }
 
@@ -432,6 +508,7 @@ def train_arm(cfg, ctx, device, dtype) -> tuple[dict, object, torch.Tensor]:
     adapter = ctx["adapter"]
     probes = ctx["probes"]
     pool = ctx["pool"]
+    weights = ctx.get("pool_weights")
 
     adapter.embed = ctx["orig_embed"]  # restore before re-attaching a fresh table
     table, visits = build_table(
@@ -449,7 +526,12 @@ def train_arm(cfg, ctx, device, dtype) -> tuple[dict, object, torch.Tensor]:
     # step is dominated by host work — shard reads, padding, H2D copies. Build
     # batch k+1 on a worker thread while the GPU runs batch k.
     def next_batch():
-        idx = [rng.choice(pool) for _ in range(min(cfg.batch_size, len(pool)))]
+        k = min(cfg.batch_size, len(pool))
+        idx = (
+            rng.choices(pool, weights=weights, k=k)
+            if weights
+            else [rng.choice(pool) for _ in range(k)]
+        )
         return train_cache.batch(idx, device, dtype)
 
     loader = ThreadPoolExecutor(max_workers=1)

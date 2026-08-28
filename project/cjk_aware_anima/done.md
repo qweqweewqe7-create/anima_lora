@@ -50,8 +50,10 @@ Builders and their measured results: [`datasets/README.md`](datasets/README.md).
       coverage (`coverage.json`).
 
 Still open in 2a — see [`plan.md`](plan.md#phases--gates): user sign-off on
-`tag_glossary_review.md`, and the `natural` prose register (implemented, not
-run).
+`tag_glossary_review.md`. (The `natural` prose register — implemented, never
+run at scale — was **retired 2026-08-17**: span-less, so inert under the
+settled `loss=span`, and its name-pinning job is superseded by the `names`
+register added the same day; see `datasets/README.md`.)
 
 ## Phase 2b — loop + gates (2026-08-15/16)
 
@@ -104,7 +106,9 @@ Measured verdicts:
       no flat term ships; buying flat points costs readout-space alignment.
 - [x] Rendered eval — `assets/ja_eval_prompts.json` (20 prompts, five
       registers) through `run_bench.py --ext --prompts`; gate + grid per pack
-      under `bench/cjk_adapter/results/20260816-16{18,19,34,50}-2c-*`.
+      under `bench/cjk_adapter/results/20260816-1618-2c-gate-global/`,
+      `…-1619-2c-grid-global/`, `…-1634-2c-gate-globalrow/`,
+      `…-1634-2c-grid-globalrow/`.
 - [x] `gates/coverage.py` — CPU-only per-prompt span-visit diagnostic; ties
       each render failure to its 0–40-visit content tokens and sizes the D1
       widening (the next work item — see [`plan.md`](plan.md#corpus--where-the-next-win-is)).
@@ -133,6 +137,77 @@ Measured verdicts:
       MT-laundered and undetectable). Kept for geometry: mask validation and
       Phase 4. See [`datasets/README.md`](datasets/README.md).
 
+## Phase 2c — D1-wide (2026-08-16)
+
+Measured verdicts:
+[`report_0816_phase2.md`](report_0816_phase2.md#d1-wide--the-gelcrawl-widening-measured-2026-08-16).
+
+- [x] `build_pairs.py` / `tag_glossary.py` take **multiple caption roots**
+      (`--captions` curated / `--raw-captions` raw / `--tag-rules`). Raw
+      crawler roots are normalized through gelcrawl's `tag_rules.yaml` via
+      `library.captioning.tag_rules` — the same rules that produced
+      `image_dataset`, so the roots agree on the rating band. Dedup key is the
+      artist-relative path, not the bare stem
+      ([[project_booru_id_space_collision]]); first root wins.
+- [x] Corpus rebuilt at width — **3,008 → 16,128 captions**, 18,990 → **45,230
+      pairs**, 500+ visit band **381 → 756**, 4.3× total visits. This is the
+      current `post_image_dataset/cjk_distill/`.
+- [x] Measured that widening buys **visits, not vocabulary** (rows visited flat
+      at ~6,400) and therefore does **not** move any `v=0` token — the render
+      grid's zero-visit failures are a glossary **wording** defect (119 tags
+      where a native-kanji candidate lost to a katakana loanword), which is a
+      human review axis, not an automatic fix.
+- [x] Established that a glossary rebuild **requires `--mt`** — the CPU-only
+      path was tried and reverted (drops the back-translation verification
+      layer, regresses 1,991 wordings).
+
+## Phase 2c — D1-pairs tail fill (2026-08-16)
+
+- [x] `datasets/tag_pairs.py` — `p1atdev/danbooru-ja-tag-pair-20241015` (CC0,
+      151,431 rows) as a **fill-only** source for tags the glossary leaves
+      unresolved. **5,248 tags filled; unmapped segments 42,530 → 13,714**
+      (−68%), ext rows visited 6,424 → 6,538, 500+ band 756 → 778. Fills only —
+      a resolved wording is never re-opened on a CPU pass (the rebuild failure
+      in [`datasets/README.md`](datasets/README.md#do-not-rebuild-the-glossary-without---mt));
+      the source's own Chinese/latin noise is re-guarded here, not trusted.
+      New provenance `via: tagpair` at trust 0.6 — declared in all
+      `TRUST_POLICIES`, because `apply_trust` defaults an unknown `via` to
+      **1.0**.
+- [x] `tests/test_cjk_glossary.py` +3 invariants — fill-only contract, the
+      script guards, and the explicit-trust-weight rule.
+- [x] Measured that the same source is the **strongest open lever on the 2a
+      ship blocker** (booru sense vs MT's string translation; 35% agreement on
+      our MT-derived wordings) — recorded as D1-pairs item 2 in
+      [`plan.md`](plan.md#corpus--where-the-next-win-is), not yet run.
+
+## Phase 2c — D1-pairs item 2, the arbiter re-selection (2026-08-17)
+
+Measured verdicts:
+[`report_0816_phase2.md`](report_0816_phase2.md#d1-pairs-item-2--the-arbiter-re-selection-measured-2026-08-17).
+
+- [x] `tag_glossary.py --mt` takes the tag-pair names as arbitration
+      candidates (same guards as the fill; per-candidate `src` provenance;
+      winner `via: tagpair_verified`, trust 1.0 in all `TRUST_POLICIES`).
+      Ranking: at equal F1 + kana-tier, community beats the MT rendering;
+      kana-over-kanji untouched. Opt-out `--no-tag-pairs`.
+- [x] Ran it fused with the **owed widened `--mt` rebuild** (glossary counts
+      were still narrow-corpus): 14,678/14,753 tags worded, coverage 99.86%,
+      **4,438 wordings moved / 0 pinned regressions**, corpus untranslated
+      segments **13,714 → 878**. Pre-state kept at
+      `assets/tag_glossary_ja.pre_item2.json`.
+- [x] Found the arbiter's structural blind spot — the **polysemy class**
+      (`bow`→蝶結び back-translates to the sense, not the string; F1 cannot
+      verify it). Review filter extended to surface `mt_verified`-with-
+      community-rival rows + the D1-words katakana/kanji section
+      (`tag_glossary_review.md`, 400 sourced rows). The wording ceiling now
+      runs through the human sign-off.
+- [x] Retrained (`2c-item2`) + re-rendered: tags/tags_alt readout recovery
+      0.915/0.934; grid moves on the coverage-bound prompts (t3 rider+horse,
+      t2 background back), names unchanged (D5 still un-run). Renders under
+      `bench/cjk_adapter/results/20260817-0138/`.
+- [x] +2 `tests/test_cjk_glossary.py` invariants: community-beats-MT at F1
+      tie; kana-beats-kanji with the rival surfaced to `kanji_review_rows`.
+
 ## Reusable for Phase 2b onward
 
 | Piece | Where |
@@ -143,3 +218,20 @@ Measured verdicts:
 | Adapter injection point | `library/anima/models.py::LLMAdapter` (~:2599) |
 | Tag vocabulary / entity list | `caption_index.json` (`make caption-index`) |
 | OCR + text detection (Phase 4) | MIT backend of `make mask` (`scripts/tasks/masking.py`) |
+
+## Phase 2c — item (b) synthetic names (2026-08-27/28)
+
+Measured verdicts: [`report_0827_names_synth.md`](report_0827_names_synth.md).
+
+- [x] Branch `cjk-tagpair-tailfill` state restored onto main (working tree).
+- [x] `scripts/distill_cjk/cache.py` process-pool stager — 26 → 67 pairs/s,
+      bit-identical.
+- [x] Arm A `names` register retrain on the fixed ext init — renders unchanged;
+      root cause: name absent from captions (3 visits).
+- [x] `datasets/synth_names.py` — wiki ∩ tag-pair canonical names, EN/JA
+      context templates, rarity-weighted allocation to the visit floor.
+- [x] Arm B (EN context) + Arm C (rebalanced draw via new
+      `--register_sampling` / `--register_span_scale`) — mixed prompt gains,
+      full-JA does not: context-specific learning.
+- [ ] Arm D (JA context, `--context both`) — built, not trained.
+
