@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 from dataclasses import dataclass
@@ -102,12 +103,19 @@ def ensure_tagger_checkpoint(
     ckpt_dir: str | Path,
     repo: str = TAGGER_HF_REPO,
     subfolder: str = TAGGER_HF_SUBFOLDER,
+    *,
+    backbone: bool = True,
 ) -> Path:
     """Fetch the tagger checkpoint into ``ckpt_dir`` if any required file is missing.
 
     Files are flattened into ``ckpt_dir`` regardless of source layout so the
     loader's directory contract stays uniform. Optional files (thresholds /
     groups) are best-effort — a 404 just means the checkpoint doesn't ship it.
+
+    With ``backbone=True`` (default) a dbv4 checkpoint also runs
+    :func:`ensure_tagger_backbone`, so the gated upstream weights are verified
+    / fetched **here**, before any caller loads SAM3 or builds the tagger —
+    not lazily on the first crop halfway through a daemon job.
     """
     ckpt_dir = Path(ckpt_dir)
     if all((ckpt_dir / f).exists() for f in TAGGER_REQUIRED_FILES):
@@ -115,6 +123,8 @@ def ensure_tagger_checkpoint(
     if all((ckpt_dir / f).exists() for f in DBV4_REQUIRED_FILES) and _is_dbv4_dir(
         ckpt_dir
     ):
+        if backbone:
+            ensure_tagger_backbone(ckpt_dir)
         return ckpt_dir
     from huggingface_hub.utils import EntryNotFoundError
 
@@ -159,7 +169,59 @@ def ensure_tagger_checkpoint(
             _fetch_flat(fname)
         except EntryNotFoundError:
             logger.debug("optional tagger file %s not present on %s", fname, repo)
+    if backbone and _is_dbv4_dir(ckpt_dir):
+        ensure_tagger_backbone(ckpt_dir)
     return ckpt_dir
+
+
+def ensure_tagger_backbone(ckpt_dir: str | Path) -> str:
+    """Preflight the gated dbv4 backbone for the checkpoint at ``ckpt_dir``.
+
+    Our half of the tagger is public; the backbone
+    (``config.json["dbv4"]["repo"]``, GPL-3.0) is gated and only ever lands in
+    the HF hub cache under the user's own token. Returns the repo id. Order:
+
+    1. offline cache probe (``hf_file_cached``) — no network when installed;
+    2. otherwise fetch every backbone file through ``hf_download``, which turns
+       a gated 401/403 into a ``FileNotFoundError`` naming the accept-terms
+       recovery instead of a raw hub traceback.
+
+    Non-dbv4 (legacy PE) checkpoints return their default repo without touching
+    anything. Set ``ANIMA_TAGGER_NO_AUTOFETCH=1`` to fail instead of fetching
+    (offline hosts, CI).
+    """
+    from library.captioning.dbv4_meta import (
+        DBV4_BACKBONE_FILES,
+        backbone_cached,
+        backbone_repo_for,
+        gated_hint,
+    )
+
+    ckpt_dir = Path(ckpt_dir)
+    repo = backbone_repo_for(ckpt_dir)
+    if not _is_dbv4_dir(ckpt_dir) or backbone_cached(repo):
+        return repo
+    if os.environ.get("ANIMA_TAGGER_NO_AUTOFETCH"):
+        raise FileNotFoundError(
+            f"AnimaTagger backbone {repo} is not in the HF cache and "
+            f"ANIMA_TAGGER_NO_AUTOFETCH is set. Run `make download-tagger-model` "
+            f"({gated_hint(repo)})."
+        )
+    from library.runtime.hf_download import hf_download
+
+    logger.info(
+        "AnimaTagger: backbone %s not cached — fetching under your HF token "
+        "(gated, GPL-3.0; one-time).",
+        repo,
+    )
+    for fname in DBV4_BACKBONE_FILES:
+        hf_download(
+            what=f"AnimaTagger backbone ({repo})",
+            hint=gated_hint(repo),
+            repo_id=repo,
+            filename=fname,
+        )
+    return repo
 
 
 def _is_dbv4_dir(ckpt_dir: Path) -> bool:

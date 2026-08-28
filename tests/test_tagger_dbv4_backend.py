@@ -180,7 +180,10 @@ def test_align_without_recovery_leaves_rename_unmatched():
 def test_dbv4_dir_loads_without_model_weights(tmp_path, monkeypatch):
     _write_ckpt(tmp_path)
     assert not (tmp_path / "model.safetensors").exists()
-    assert at.ensure_tagger_checkpoint(tmp_path) == tmp_path  # no fetch attempted
+    # Our half is complete -> no checkpoint fetch; the backbone preflight is
+    # stubbed as "cached" so the test stays offline.
+    monkeypatch.setattr("library.captioning.dbv4_meta.backbone_cached", lambda _r: True)
+    assert at.ensure_tagger_checkpoint(tmp_path) == tmp_path
     t = _tagger(tmp_path, {"1girl": 0.95, "solo": 0.9, "explicit": 0.9}, monkeypatch)
     assert t.backend_kind == "dbv4"
     assert t.model is None
@@ -284,3 +287,72 @@ def test_unknown_backend_rejected(tmp_path):
     (tmp_path / "config.json").write_text(json.dumps({"backend": "wat"}))
     with pytest.raises(ValueError, match="unknown tagger backend"):
         at.AnimaTagger(tmp_path, device="cpu")
+
+
+# --------------------------------------------------------------------------- #
+# gated backbone preflight
+# --------------------------------------------------------------------------- #
+
+
+def test_backbone_preflight_skips_fetch_when_cached(tmp_path, monkeypatch):
+    _write_ckpt(tmp_path)
+    monkeypatch.setattr("library.captioning.dbv4_meta.backbone_cached", lambda _r: True)
+    monkeypatch.setattr(
+        "library.runtime.hf_download.hf_download",
+        lambda **_k: (_ for _ in ()).throw(AssertionError("must not fetch")),
+    )
+    from library.captioning.dbv4_meta import backbone_repo_for
+
+    assert at.ensure_tagger_backbone(tmp_path) == backbone_repo_for(tmp_path)
+
+
+def test_backbone_preflight_fetches_every_file_when_uncached(tmp_path, monkeypatch):
+    from library.captioning.dbv4_meta import DBV4_BACKBONE_FILES
+
+    _write_ckpt(tmp_path)
+    monkeypatch.delenv("ANIMA_TAGGER_NO_AUTOFETCH", raising=False)
+    monkeypatch.setattr(
+        "library.captioning.dbv4_meta.backbone_cached", lambda _r: False
+    )
+    calls = []
+    monkeypatch.setattr(
+        "library.runtime.hf_download.hf_download",
+        lambda **kw: calls.append(kw["filename"]) or "/x",
+    )
+    at.ensure_tagger_backbone(tmp_path)
+    assert calls == list(DBV4_BACKBONE_FILES)
+
+
+def test_backbone_preflight_respects_no_autofetch(tmp_path, monkeypatch):
+    _write_ckpt(tmp_path)
+    monkeypatch.setenv("ANIMA_TAGGER_NO_AUTOFETCH", "1")
+    monkeypatch.setattr(
+        "library.captioning.dbv4_meta.backbone_cached", lambda _r: False
+    )
+    with pytest.raises(FileNotFoundError, match="download-tagger-model"):
+        at.ensure_tagger_backbone(tmp_path)
+
+
+def test_hf_download_translates_gated_repo_error(monkeypatch):
+    """The gated 401/403 is fast (not a hang) but must still name the recovery."""
+    import huggingface_hub
+    from huggingface_hub.utils import GatedRepoError
+
+    from library.runtime.hf_download import hf_download
+
+    import httpx
+
+    def _boom(**_k):
+        resp = httpx.Response(401, request=httpx.Request("GET", "https://hf.co/r"))
+        raise GatedRepoError(
+            "401 Client Error: Cannot access gated repo", response=resp
+        )
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", _boom)
+    with pytest.raises(FileNotFoundError, match="accept the terms"):
+        hf_download(
+            what="x",
+            hint="hf auth login, then accept the terms at https://hf.co/r",
+            repo_id="r",
+            filename="model.safetensors",
+        )

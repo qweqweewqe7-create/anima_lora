@@ -16,11 +16,17 @@ failures at the end.
 
 from __future__ import annotations
 
-import json
 import shutil
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+from library.captioning.dbv4_meta import (
+    DBV4_BACKBONE_FILES,
+    DEFAULT_DBV4_REPO,
+    backbone_cached,
+    backbone_repo_for,
+)
 
 from ._common import PY, ROOT, run
 
@@ -41,9 +47,10 @@ TAGGER_CKPT_REL = "models/captioners/anima-tagger-dbv4"
 # library/captioning/anima_tagger.py::DBV4_REQUIRED_FILES (duplicated rather
 # than imported — that module pulls torch, and the task runner stays import-light).
 TAGGER_CKPT_REQUIRED = ("config.json", "vocab.json", "rules.yaml")
-# Mirrors library/captioning/dbv4_backend.py::DEFAULT_DBV4_REPO, same reason.
-TAGGER_BACKBONE_REPO = "animetimm/caformer_b36.dbv4-full"
-TAGGER_BACKBONE_FILES = ("model.safetensors", "selected_tags.csv", "meta.json")
+# Backbone facts come from the torch-free library.captioning.dbv4_meta so the
+# loader, this task and the GUI can never disagree on repo / file set.
+TAGGER_BACKBONE_REPO = DEFAULT_DBV4_REPO
+TAGGER_BACKBONE_FILES = DBV4_BACKBONE_FILES
 
 
 def _present(paths: list[Path]) -> bool:
@@ -151,20 +158,8 @@ def cmd_download_tagger(_extra):
 
 
 def _tagger_backbone_repo() -> str:
-    """Backbone repo named by the installed checkpoint, else the shipped default.
-
-    The checkpoint's ``config.json`` is authoritative (``dbv4.repo`` — that is
-    what ``Dbv4Backend`` will actually fetch at load time), so a checkpoint
-    built against a different ``animetimm/*.dbv4-full`` variant downloads *its*
-    backbone rather than the default one.
-    """
-    try:
-        with open(ROOT / TAGGER_CKPT_REL / "config.json", encoding="utf-8") as f:
-            cfg = json.load(f)
-    except (OSError, ValueError):
-        return TAGGER_BACKBONE_REPO
-    repo = (cfg.get("dbv4") or {}).get("repo")
-    return repo if isinstance(repo, str) and repo else TAGGER_BACKBONE_REPO
+    """Backbone repo of the installed checkpoint (``config.json`` → default)."""
+    return backbone_repo_for(ROOT / TAGGER_CKPT_REL)
 
 
 def cmd_download_tagger_model(_extra):
@@ -209,9 +204,7 @@ def cmd_download_tagger_model(_extra):
         _flatten_subfolder(dst, sub)
 
     repo = _tagger_backbone_repo()
-    from library.runtime.hf_download import hf_file_cached
-
-    if not force and all(hf_file_cached(repo, f) for f in TAGGER_BACKBONE_FILES):
+    if not force and backbone_cached(repo):
         print(
             f"  ✓ tagger backbone {repo} already cached (pass --force to re-download)"
         )

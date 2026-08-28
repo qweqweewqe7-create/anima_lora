@@ -19,8 +19,18 @@ missing; `v5/` is the last in-house PE dual-encoder head (val macro-F1
 `library/captioning/anima_tagger.py` are the single source of truth for both;
 the ComfyUI node and `make download-tagger` track them. Requires `timm`.
 `make download-tagger-model` (GUI: **Models** dialog → *Anima Tagger*)
-pre-fetches both halves — our checkpoint dir *and* the gated backbone —
-instead of waiting for the lazy first-use fetch.
+pre-fetches both halves — our checkpoint dir *and* the gated backbone.
+Every runtime entry point (`caption-position`, `caption-autotag`, the GUI
+autotag server, DirectEdit) goes through `ensure_tagger_checkpoint`, which
+now also runs `ensure_tagger_backbone`: an offline hub-cache probe, then a
+token fetch on miss — **before** SAM3 / the tagger are loaded, so a missing
+token or unaccepted terms fails fast with the `hf auth login` + accept-terms
+hint (a gated 401/403 is translated in `library/runtime/hf_download.py`)
+instead of a raw traceback halfway through a daemon job. Set
+`ANIMA_TAGGER_NO_AUTOFETCH=1` to refuse the fetch (offline hosts / CI). Repo
++ file set live in the torch-free `library/captioning/dbv4_meta.py`, shared
+by the loader, `make download-tagger-model` and the GUI Models dialog; the
+repo follows the installed checkpoint's `config.json["dbv4"]["repo"]`.
 
 > **Doc drift.** Sections below still describe the pre-v3 single-encoder +
 > PE-LoRA stack, which no longer loads — the tagger is dual-encoder
