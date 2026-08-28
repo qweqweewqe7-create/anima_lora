@@ -47,7 +47,11 @@ needing fresh justification:
   first pass indicates a capacity limit (G0 passed; the failures are
   unsupervised rows, which 2-ii cannot fix either). Breaks the EN-bit-exactness
   guarantee, so it must clear an EN-regression gate and ship as a separate
-  optional sidecar.
+  optional sidecar. **PROMOTED 2026-08-29 → [`plan3.md`](plan3.md)**: the
+  capacity signal appeared (report_0827 §8–§9 — matched-context data and
+  the sequence objective both failed rare kanji names); plan3 keeps EN
+  bit-exact *by construction* with an ext-id sequence gate, so the
+  EN-regression gate becomes a unit test.
 - **2-iii: full adapter finetune** — not proposed.
 
 ### Training loop — built
