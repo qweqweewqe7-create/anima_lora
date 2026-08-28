@@ -194,3 +194,32 @@ by register: `names_synth_ja` 0.145 < `names_synth` 0.221). Next step is
 Disk note: `cache/` (32 G) and `cache_synth/` (140 G) were deleted 2026-08-28
 to make room; `pairs.jsonl` / `names_synth.jsonl` / `pairs_synth.jsonl` kept,
 so either rebuilds from the daemon (~15 min / ~1 h).
+
+## 9. `attn` sequence-term arm (2026-08-29) — **negative; objective lever spent**
+
+Same corpus / `cache_synth2` / registers / sampling as `synthja`, only
+`--loss attn:1.0,span:0.5` (probe blocks 0,13,27, real query bank).
+`bench/cjk_distill/results/20260828-2239-2c-synthja-attn` (recovery_attn
+0.826 vs 0.901 span-only; per-register cos identical), grids
+`bench/cjk_adapter/results/20260828-2337-2c-synthja-attn-grid`,
+`-2353-2c-synthja-attn-mixed-grid`.
+
+| prompt | span | attn |
+|---|---|---|
+| n1 / r3 full-JA Reimu | purple-hair generic | headless crop — worse |
+| r1 mixed Reimu | black-hair miko (partial) | orange hair — gain lost |
+| n2 Asuka | red-hair girl | bearded man |
+| m1 Miku / t2 | ok | ok (t1 grows a stray figure) |
+| s1 prose | vague | vague — no lift in attn's own register |
+
+Both levers the plan held for the name register — matched-context data (§8)
+and the sequence objective (this) — are spent without moving full-JA names.
+Two conclusions: (1) `recovery_attn` does not witness the failure (0.90 and
+0.83 both render nothing) — the grid is the gate from here; (2) the shape is
+*rows learn, the frozen 6-block adapter does not compose all-new rows into
+the teacher's output*. That is the capacity signal plan.md's 2-ii
+escalation was gated on. Next: **either** a small ext-id-gated LoRA on the
+adapter's T5-side blocks (EN stays bit-identical by construction; same
+cache/distill), **or** ship Phase 3 with the `synthja` span pack and scope
+rare kanji names out of v1. mT5 vocab swap and JESC/STAIR/D2 do not touch
+the mechanism — do not re-propose them for this failure.
