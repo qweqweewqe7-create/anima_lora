@@ -24,10 +24,16 @@ if not hasattr(np, "bool"):
     np.bool = np.bool_
 
 import torch  # noqa: E402
-from safetensors.torch import load_file, save_file  # noqa: E402
+from safetensors.torch import save_file  # noqa: E402
+
+# Canonical home is library/ — bench/ is in scripts/update.py's PRESERVE_DIRS,
+# so anything the shipped preprocess path needs cannot live only here.
+from library.preprocess.instance_detection import (  # noqa: E402
+    SOFT_PROMPT_KEYS as PROMPT_KEYS,
+)
+from library.preprocess.instance_detection import load_soft_prompt  # noqa: E402,F401
 
 ROOT = Path(__file__).resolve().parents[2]
-PROMPT_KEYS = ("language_features", "language_mask", "language_embeds")
 MASK_RES = 288  # native `pred_masks` resolution
 
 
@@ -212,11 +218,6 @@ def save_soft_prompt(path: Path, prompt: dict[str, torch.Tensor], meta: dict) ->
     path.parent.mkdir(parents=True, exist_ok=True)
     tensors = {k: prompt[k].detach().cpu().contiguous() for k in PROMPT_KEYS}
     save_file(tensors, str(path), metadata={k: json.dumps(v) for k, v in meta.items()})
-
-
-def load_soft_prompt(path: str | Path, device: str = "cuda") -> dict[str, torch.Tensor]:
-    tensors = load_file(str(path), device=device)
-    return {k: tensors[k] for k in PROMPT_KEYS}
 
 
 def soft_prompt_meta(path: str | Path) -> dict:

@@ -46,6 +46,7 @@ if str(ROOT) not in sys.path:
 from library.env import resolve_under_home  # noqa: E402
 from library.preprocess.instance_detection import (  # noqa: E402
     DEFAULT_SUBJECT_PROMPT_EMBED,
+    load_soft_prompt,
     prompt_embed_sha256,
     resolve_prompt_embed,
 )
@@ -471,8 +472,6 @@ def build_detect_fn(args: argparse.Namespace, *, model=None, processor=None):
     soft_prompt = None
     embed_path = resolve_prompt_embed(getattr(args, "prompt_embed", None))
     if embed_path is not None:
-        from bench.sam3_soft_prompt.common import load_soft_prompt
-
         soft_prompt = load_soft_prompt(embed_path, args.device)
         print(f"soft prompt: {embed_path} (replaces {args.prompt!r})", flush=True)
     cache: dict[str, object] = {"key": None, "state": None, "dets": {}}

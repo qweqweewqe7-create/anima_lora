@@ -53,6 +53,21 @@ def resolve_prompt_embed(spec: str | None) -> Path | None:
     raise FileNotFoundError(f"--prompt_embed {spec!r} not found at {path}")
 
 
+# Keys a SAM3 soft prompt is stored under (SAM3 encodes a text prompt into this
+# triple and the rest of the model only ever sees it). Loading one is a plain
+# safetensors read, so it lives here rather than in bench/ — bench/ is in
+# scripts/update.py's PRESERVE_DIRS and is never delivered to an installed tree.
+SOFT_PROMPT_KEYS = ("language_features", "language_mask", "language_embeds")
+
+
+def load_soft_prompt(path: str | Path, device: str = "cuda") -> dict:
+    """The three prompt tensors from a saved soft prompt, on ``device``."""
+    from safetensors.torch import load_file
+
+    tensors = load_file(str(path), device=device)
+    return {k: tensors[k] for k in SOFT_PROMPT_KEYS}
+
+
 def prompt_embed_sha256(path: Path | None) -> str | None:
     import hashlib
 
