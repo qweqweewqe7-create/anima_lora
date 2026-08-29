@@ -48,9 +48,12 @@ from torch import nn
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DBV4_REPO = "animetimm/caformer_b36.dbv4-full"
-DEFAULT_DBV4_ARCH = "caformer_b36"
-DEFAULT_DBV4_IMG_SIZE = 384
+from library.captioning.dbv4_meta import (  # noqa: E402 — re-exported
+    DEFAULT_DBV4_ARCH,
+    DEFAULT_DBV4_IMG_SIZE,
+    DEFAULT_DBV4_REPO,
+    gated_hint,
+)
 
 # danbooru rating name (dbv4 card, category 9) -> Anima rating name.
 DBV4_RATING_MAP: Dict[str, str] = {
@@ -100,7 +103,7 @@ def load_dbv4_card(
     """Fetch + parse ``selected_tags.csv`` and ``meta.json`` for ``repo``."""
     from library.runtime.hf_download import hf_download
 
-    hint = f"hf auth login, then accept the terms at https://huggingface.co/{repo}"
+    hint = gated_hint(repo)
     tags_csv = hf_download(
         what=f"dbv4 tag list ({repo})",
         hint=hint,
@@ -276,7 +279,7 @@ class Dbv4Backend:
         card = self.card
         weights = hf_download(
             what=f"dbv4 weights ({self.repo})",
-            hint=f"hf auth login, then accept the terms at https://huggingface.co/{self.repo}",
+            hint=gated_hint(self.repo),
             repo_id=self.repo,
             filename="model.safetensors",
             revision=self.revision,

@@ -46,6 +46,7 @@ Two things §9 taught that shape the gates below:
 ## Goal, stated as the invariant it creates
 
 A JA prompt made entirely of ext rows composes a rare kanji name the way the
+
 EN teacher does — **while every EN prompt stays bit-identical to the base
 model**, and the artifact is an ordinary LoRA that rides the existing Anima
 Adapter Loader alongside the vocab pack (plan.md deployment §: "always

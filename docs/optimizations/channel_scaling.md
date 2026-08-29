@@ -104,7 +104,7 @@ See `scripts/calibration/README.md` for the script flags and the output JSON lay
 
 ## When this helps more
 
-The bench analysis confirms the precondition (20–100× per-channel dominance, DC-bias not attention sinks) holds on the current Anima DiT, and the 2026-06-10 audit confirms the gradient geometry changes exactly as designed on every Live variant. **The sample-quality delta has never been A/B-measured** (no α=0 vs α=0.5 training comparison exists); the regime that should see the largest payoff is:
+The bench analysis confirms the precondition (20–100× per-channel dominance, DC-bias not attention sinks) holds on the current Anima DiT, and the 2026-06-10 audit confirms the gradient geometry changes exactly as designed on every Live variant. **For standard flow-matching LoRA training the sample-quality delta has not been A/B-measured.** The one A/B that exists is on **turbo (DP-DMD) distillation, where α=0.5 was clearly net-negative** (melted faces, washed/oversaturated color vs a clean α=0 twin, 2026-06-16) — turbo therefore defaults to α=0.0. Recalibrating the scale on the turbo rollout does not rescue it (turbo's per-channel input profile matches the shipped calibration at cosine 0.996), and α=0.01 is a numerical no-op (dominance 6.14→6.01); the surviving explanation is that the Adam-geometry reparam is only safe under a stationary MSE target, not a co-training critic. For the standard path the regime that should see the largest payoff is:
 
 - **Higher rank** (≥64, where GraLoRA's argument bites hardest).
 - **Trainable-down variants** — see the liveness table; on frozen-basis ortho variants the effect is exactly zero.

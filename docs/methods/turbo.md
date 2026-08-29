@@ -191,14 +191,14 @@ Sectioned, bespoke. Every key has a matching CLI override flag (see
 | `[dpdmd]` | `teacher_anchor_steps` | `12` | teacher σ-grid the K is counted against |
 | `[dpdmd]` | `div_weight` (λ) | `0.05` | weight on the first-step diversity MSE |
 | `[dpdmd]` | `detach_after_first` | `true` | **load-bearing** stop-grad after step 1; keep True (A/B only) |
-| `[optim]` | `student_lr` / `fake_lr` | `1e-5` / `2e-5` | fake runs hotter; **do not raise the student to 2e-5** — adversarial instability ([[project_turbo_lr_instability_threshold]]) |
+| `[optim]` | `student_lr` / `fake_lr` | `1e-5` / `2e-5` | fake runs hotter. **Cold start only: do not raise the student to 2e-5** (adversarial instability). On the shipped warm start 5e-5/5e-5 is stable but near-edge — expect an excursion around ~1k and rank keepers from 2k+; fm_mse is anti-correlated with quality, rank by rendered 4-step samples ([[project_turbo_lr_instability_threshold]], [[project_turbo_T_sweep_verdict]]) |
 | `[optim]` | `fake_steps_per_student_step` | `4` | keep the fake ahead of the moving x_θ |
 | `[optim]` | `fake_warmup_steps` | `50` | fake (critic) head-start before the main loop — kills the early grad_signal_rms spike (~step 50); `0` = off |
 | `[optim]` | `grad_clip` | `1.0` | grad-norm cap (both nets) |
 | `[sampling]` | `t_distribution` | `uniform` | τ sampling for the fake update + warmup (or `sigmoid`) |
-| `[sampling]` | `flow_shift` | `2.0` | σ-schedule shift for the student/teacher Euler grids (matches inference) |
+| `[sampling]` | `flow_shift` | `3.0` | σ-schedule shift for the student/teacher Euler grids (matches inference; standardized on 3.0 after the 2026-07 `_T` sweep — `k_anchor` σ is shift-coupled, so change both together) |
 | `[gan]` | `weight_gen` | `0.03` (**on**) | teacher-feature GAN generator term — see below |
-| `[gan]` | `delay_steps` / `warmup_steps` | `0` / `0` | generator-side λ ramp: hold at 0 for `delay_steps` (disc still trains), then linear 0 → `weight_gen` over `warmup_steps`. Mandatory for `disc_head="token"` on a collapsed warm start — unramped dense logits froze pose at the init's mode (2026-07-18) |
+| `[gan]` | `delay_steps` / `warmup_steps` | `0` / `0` | generator-side λ ramp: hold at 0 for `delay_steps` (disc still trains), then linear 0 → `weight_gen` over `warmup_steps`. Cheap insurance on a collapsed warm start, but NOT load-bearing for `disc_head="token"` — the 2026-07-18 pose freeze was traced to a `fake_adaln=true` flip in the same arm, not the token head (see caveat below) |
 
 Validation enforces `student_steps ≥ 2` (step 1 is diversity-supervised + detached,
 so at least one further step must carry the DMD loss) and
@@ -340,13 +340,15 @@ GAN now ships **on** at the FastGen `weight_gen = 0.03`; f-distill stays off:
   discarded at save, like the fake). FastGen QwenImage recipe: `weight_gen=0.03`,
   `use_same_t_noise=true`, middle block, `disc_lr=1e-5`.
 
-  **Token-head caveat (2026-07-18):** at full λ from step 0 on a collapsed warm
-  start (turboV10 init), the dense per-token gradient pins the student's
-  pose/layout at the init's modal composition — the collapsed image is already
-  locally "real" (zero GAN grad) while any pose excursion is penalized at every
-  token position, so the DM + div terms recover appearance axes but never the
-  layout. Use `delay_steps`/`warmup_steps` to hold the generator-side λ at 0
-  through the escape window (~500 steps) and ramp in after. **Observability:**
+  **Token-head caveat (2026-07-18, REVISED):** the original read — that at
+  full λ from step 0 on a collapsed warm start the dense per-token gradient
+  "pins" pose at the init's mode — was **refuted** by the Phase-0 ablation: the
+  token head contributes zero disc→student gradient through the escape window
+  (`E_tok_ramp` reproduced the freeze with the head effectively off), and the
+  true confound was `fake_adaln=true` flipped in the same arm. The
+  `delay_steps`/`warmup_steps` ramp is still harmless and kept as default-off
+  insurance, but do not reach for it as the fix for a pose freeze — check the
+  `fake_adaln` / config-section provenance of the arm first. **Observability:**
   the hinge losses are blind to this (both arms sit at equilibrium ≈0.69/1.39) —
   read `train/gan_disc_margin` (mean real − fake logit) and
   `train/gan_logit_spread` (per-token logit std) instead, plus the cross-seed
@@ -362,7 +364,7 @@ GAN now ships **on** at the FastGen `weight_gen = 0.03`; f-distill stays off:
 **Cost (honest).** Without the idea-3.1 feature-tap API there is no early-exit, so
 the GAN adds **+1 grad-bearing teacher forward** in the student step (the generator
 term must flow grad through the teacher into `x_pred`) and **+2 no_grad teacher
-forwards** per disc step. Consider `--grad_ckpt` when the GAN is on. `weight_gen=0`
+forwards** per disc step. `--grad_ckpt` is a valid VRAM lever here, with one loop invariant: `set_view`/`set_student_step` are global state read at forward time and checkpoint recompute defers to `.backward()`, so **every checkpointed forward must be backwarded while its own view/head is still live** (the loop enforces this in `steps.py`; nothing in the metrics catches a violation — the recompute silently runs under the wrong view). `weight_gen=0`
 keeps the entire path off → byte-identical DP-DMD (no disc, no hooks, no extra
 forwards). **Decision gate 1:** A/B `weight_gen` 0 vs 0.03 at fixed seed/data/steps,
 2-step `--cfg 1.0`, ship only on a CMMD/A-B win without diversity collapse (reuse

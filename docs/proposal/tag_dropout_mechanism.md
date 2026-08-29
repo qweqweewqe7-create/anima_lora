@@ -1,6 +1,6 @@
 # Tag dropout / randomize mechanism — does caption-variant training buy sparse-prompt richness, and what does it cost?
 
-Status: **PROPOSED** (no phase run). Instrument dependency satisfied: the
+Status: **Phase 0/1 RUN 2026-07-22 — near-miss, N≥64 rerun owed** (artist mignon, 79 imgs; harness `bench/tag_dropout/`, results `bench/tag_dropout/results/20260722-1957-phase1`). Phase 0: instrument valid (shuffle discrimination 0.958) but richness>base failed on a soup shard (weak single-artist LoRA, not a bug); the characteristic set must be TF-IDF-distinctive (`--min_distinct_ratio`, default 2.0), not raw artist-frequency. Phase 1 (A=shuffle_only vs B=dropout_0.1, 20 ep): sparse-richness win-rate B>A = 0.571 vs gate ≥0.6 at N=28 — every richness axis agrees, adherence non-regressed (0.562); underpowered, so the pre-registered N≥64 run (10 seeds) is the honest resolution — record neither "inert" nor "works" yet. Gotcha: a `{stem}.variants.txt` sidecar next to the resized image OVERRIDES the CLI `--caption_tag_dropout_rate`; move sidecars aside to A/B rates. Instrument dependency satisfied: the
 tag-readback judge passed its validity gate
 (`tag_readback_reward.md` Phase 0a, `bench/readback/`).
 

@@ -86,8 +86,8 @@ logger = logging.getLogger(__name__)
 # loader). Live checkpoint lives under the `dbv4/` subfolder (2026-08-27: the
 # external caformer_b36 backend + our sidecar — vocab / rules / groups /
 # thresholds / sidecar only, the GPL-3.0 backbone weights come from the
-# upstream gated repo); `v5/` is the last in-house PE dual-encoder head,
-# `v3/` the previous 3-class checkpoint, repo root the legacy v2 files.
+# upstream gated repo); `v5/` is the last in-house PE dual-encoder head, kept
+# as the fallback. `v3/` and the legacy v2 root files were deleted 2026-08-29.
 TAGGER_HF_REPO = "sorryhyun/anima-tagger"
 TAGGER_HF_SUBFOLDER = "dbv4"
 TAGGER_REQUIRED_FILES = ("config.json", "model.safetensors", "vocab.json", "rules.yaml")
