@@ -6,8 +6,9 @@ line, now that the capacity signal it was gated on has appeared
 ([`report_0827_names_synth.md`](report_0827_names_synth.md) §8–§9).
 Written 2026-08-29.*
 
-Status: **PROPOSED** — one arm, grid-gated, with the fallback pre-committed
-(§Decision). Nothing here needs a cache rebuild: `cache_synth2` (261k pairs,
+Status: **Phase 1 RUN (2026-08-30) — gate 1 failed, gate 2 regressed →
+Phase 2, one arm** (§Phase 1 result, §Phase 2). Phase 0 wiring landed in
+`3d604a9a`. Nothing here needs a cache rebuild: `cache_synth2` (261k pairs,
 JA-context names, ~170 G) is the training set as-is.
 
 ## What forced this rung
@@ -170,19 +171,81 @@ the daemon shows both param groups moving and pack + sidecar written.
    where that shows if it hurts.
 
 Health (not gates): span loss ≤ `synthja`'s 0.092; recovery_attn in the
-0.85–0.92 band the rows-only arms occupy; `cos_native_vs_en_attn` floor
-unchanged (the LoRA must not lift the *native* arm — if it does, it is
-smoothing the readout, not composing).
+0.85–0.92 band the rows-only arms occupy. ~~`cos_native_vs_en_attn` floor
+unchanged~~ — **vacuous under the sequence gate**: the native arm has no ext
+id, so `g = 0` and it is bit-identical by construction. Risk 1 ("smoothing
+the readout, not composing") has to be read off `recovery_attn` — per
+register, `attn_by_register` in the distill envelope.
 
-### Phase 2 — only if Phase 1 is directionally right
+### Phase 1 result (2026-08-30)
 
-- Rank sweep {8, 32} if names appear but weakly.
-- MLP on if self/cross only gets bow-but-no-outfit style partials.
-- Token-level gate if mixed-prompt EN tags degraded in gate 4.
-- Cold-init control if the warm arm's gain could be the rows, not the LoRA
-  (it cannot be — rows alone are `synthja` — but record it once).
+Arm `cjk_vocab_pack_synthja_lora16` (daemon `20260830-181525-ded029`,
+envelope `bench/cjk_distill/results/20260830-1815-plan3-lora16`; grids
+`bench/cjk_adapter/results/20260830-1907-plan3-lora16-grid`,
+`-1924-…-mixed-grid`). Metadata verified: r=16, α=16, 5 targets, lr 1e-4,
+`init_pack=synthja`, sidecar 3.9 MB.
 
-Each is one arm, one grid. No corpus work anywhere in this line.
+| | `synthja` | `lora16` | band |
+|---|---|---|---|
+| held-out span | 0.085 | **0.041** | ≤ 0.092 ✓ |
+| `recovery_attn` | 0.901 | **0.449** | 0.85–0.92 ✗ |
+| held-out attn loss | 0.236 | 0.458 | |
+| attn cos→EN, names / names_synth / names_synth_ja | .923 / .913 / .452 | **.666 / .355 / .225** | teacher .942 / .921 / .494 |
+| attn cos→EN, tags / tags_alt / commentary | .404 / .469 / .976 | .424 / .450 / .984 | unchanged |
+
+The flat `recovery` sat at 0.107 the whole run (0.101 baseline = `synthja`'s
+final, i.e. the warm start loaded) — that metric is capped by tokenization
+and is uninformative here, as `distill.py:198` already says. The honest one
+moved **down, and only on the name registers**, while span loss (held-out
+too, so not overfitting the 3k synth names) halved. Mechanism: `loss_span`
+is a segment-mean cosine per aligned span — invariant to how a name's content
+is distributed across its positions — and a LoRA on self-attention can
+satisfy it by *smearing* the neighbourhood's content across tokens. Rows
+alone cannot mix neighbours, which is why `synthja` scored 0.90 on the same
+metric.
+
+Grid, `ja_ext` arm, vs `synthja`:
+
+| gate | verdict |
+|---|---|
+| 1 · n1/r3 Reimu | ✗ — red-haired girl, white cap, forest; no black hair / bow / miko |
+| 1 · n2 Asuka | ~ red suit + visor (arguably a plugsuit — first time), no twin-tails |
+| 2 · r1 keeps black-hair miko | ✗ **regression** — miko outfit kept, hair turned red |
+| 3 · t1/t2/m1 clean, no strays | ✓ — t1/t2 clean, m1 *improved* (mic, pose), zero stray figures (`synthja` n2 had one) |
+| 4 · mixed EN tags land | ✓ — r1 miko, m2 vocaloid, a1 red plugsuit (a1 twin-tails lost) |
+
+The visual tell is the metric tell: **every Reimu prompt renders red hair**
+— `red bow / red-and-white` from the name's neighbourhood lands on the
+subject. So the LoRA does add composition capacity (no strays, Miku better,
+Asuka gains a suit) but span-only training lets it spend that capacity on
+redistribution rather than on reproducing the teacher's per-token structure.
+
+### Phase 2 — regularise the readout (one arm, decided 2026-08-30)
+
+Phase 1 is directionally right (capacity shows) and fails on *how* the
+capacity is spent, so the Phase 2 menu as first written does not apply:
+rank {8, 32} and MLP add more of the same un-constrained freedom; the
+token-level gate answers a gate-4 failure that did not fire.
+
+**Arm `cjk_vocab_pack_synthja_lora16_reg`**: identical recipe, loss
+`span:1.0,attn:0.25`, warm from `synthja` rows. The attn term is the
+position-wise, sink-aware sequence readout — it charges the smear the pooled
+span cosine is blind to, so the delta has to compose rather than
+redistribute. This deliberately reverses §Not-in-this-line's "no `attn`
+loss": §9's evidence was rows-only, where extra sequence pressure had no
+capacity to absorb it and made renders worse; with the LoRA the failure is
+the mirror image. `config.py` currently refuses `--adapter_lora` together
+with the attn loss on the §9 reasoning — relax that guard (it is a
+health-metric interaction, not a wiring hazard) and note why.
+
+Pass: `recovery_attn` on the name registers back ≥ 0.85 **and** r1's hair
+is black again (gate 2 restored) — then read gate 1. Weight 0.25 is the
+only knob; 0.5 was §9's value and is the one retry if 0.25 leaves
+`recovery_attn` < 0.85 with span still ≤ 0.092.
+
+Deferred, only if the reg arm passes gate 2 but not gate 1: rank 32 (the
+delta is then composing, and may simply be weak). No corpus work anywhere in
+this line.
 
 ### Ship (folds into plan.md Phase 3)
 
@@ -199,7 +262,9 @@ pack without the LoRA is the §8 behaviour.
 - Gate passes → ship Phase 3 **with** the LoRA; rare kanji names are in
   scope for v1. Then, and only then, the prose registers (D2 → STAIR →
   JESC) become worth sizing, and against *this* adapter, not the frozen one.
-- Gate fails on 1 with 2–4 clean → Phase 2, at most two arms.
+- Gate fails on 1 with 2–4 clean → Phase 2, at most two arms. *(Phase 1
+  outcome: fails 1, regresses 2, 3–4 clean → Phase 2 as rewritten above —
+  the reg arm plus at most one weight retry.)*
 - Gate fails on 1 *and* Phase 2 doesn't move it → **ship Phase 3 with
   `cjk_vocab_pack_synthja` as is** and scope rare kanji names out of v1
   (users type `hakurei reimu` latin — the mixed register r1 already works).
@@ -215,16 +280,21 @@ pack without the LoRA is the §8 behaviour.
   mechanism.
 - **More pairs, JESC, STAIR, D2 growth.** §8 falsified visits as the cause;
   span-less corpora are inert under the loss this arm uses.
-- **`attn` loss.** §9. Health metric only.
+- **`attn` loss as the objective.** §9. Health metric only — but as a
+  *regulariser* alongside span it is the Phase 2 arm (see there for why §9
+  does not transfer to the capacity setting).
 - **Lexicon single-row names.** Subsumed: if the adapter can compose, it
   doesn't need them; if it can't, a single row still sits in an
   all-new-row context.
 
 ## Risks
 
-1. **The LoRA learns to read the teacher's *pad/attention-sink* structure
-   rather than compose** — would show as native-arm floor rising
-   (`cos_native_vs_en_attn`). Health check above; fallback = token gate.
+1. **The LoRA learns to satisfy the pooled span objective by smearing
+   rather than composing** — *this fired in Phase 1* (`recovery_attn`
+   0.90 → 0.45 on names, red-hair bleed in every Reimu render). The
+   native-floor check written here originally cannot see it (gate = 0 on
+   the native arm); `attn_by_register` can. Fallback = attn regulariser
+   (Phase 2), then token gate.
 2. **Mixed-prompt EN regression** (gate 4). Fallback = token-level gate.
 3. **Ship surface**: the Adapter Loader must apply a gated delta; if its
    patching can't express the gate, the pack node grows one wrapper. Not a
