@@ -339,9 +339,11 @@ def resolve_config(args: argparse.Namespace) -> CJKDistillConfig:
 
         parse_targets(args.adapter_lora_targets)  # fail at parse time, not at attach
         if "attn" in losses:
-            logger.warning(
-                "--adapter_lora with the attn loss: §9 showed sequence-readout "
-                "pressure hurts renders; plan3 trains capacity with span only"
+            logger.info(
+                "--adapter_lora with the attn loss: plan3 Phase 2 regulariser. "
+                "(§9's 'attn hurts renders' was rows-only; with LoRA capacity, "
+                "span-only smears — the attn term charges that. Health-metric "
+                "interaction, not a wiring hazard.)"
             )
     if (
         args.init_pack is not None

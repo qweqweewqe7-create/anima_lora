@@ -6,9 +6,11 @@ line, now that the capacity signal it was gated on has appeared
 ([`report_0827_names_synth.md`](report_0827_names_synth.md) §8–§9).
 Written 2026-08-29.*
 
-Status: **Phase 1 RUN (2026-08-30) — gate 1 failed, gate 2 regressed →
-Phase 2, one arm** (§Phase 1 result, §Phase 2). Phase 0 wiring landed in
-`3d604a9a`. Nothing here needs a cache rebuild: `cache_synth2` (261k pairs,
+Status: **CLOSED 2026-08-30 — Phase 2 reg arm passes every distill health
+metric and still fails gates 1 and 2** (§Phase 2 result). Pre-committed
+decision applies: ship plan.md Phase 3 with `cjk_vocab_pack_synthja` rows
+only; rare kanji names are out of v1. Phase 0 wiring landed in `3d604a9a`
+and stays (the LoRA path is inert without `--adapter_lora`). Nothing here needs a cache rebuild: `cache_synth2` (261k pairs,
 JA-context names, ~170 G) is the training set as-is.
 
 ## What forced this rung
@@ -246,6 +248,58 @@ only knob; 0.5 was §9's value and is the one retry if 0.25 leaves
 Deferred, only if the reg arm passes gate 2 but not gate 1: rank 32 (the
 delta is then composing, and may simply be weak). No corpus work anywhere in
 this line.
+
+### Phase 2 result (2026-08-30) — line closed
+
+Arm `cjk_vocab_pack_synthja_lora16_reg` (daemon `20260830-205548-198144`,
+envelope `bench/cjk_distill/results/20260830-2055-plan3-lora16-reg`; grids
+`bench/cjk_adapter/results/20260830-2202-plan3-lora16-reg-grid`,
+`-2218-…-reg-mixed-grid`). `config.py`'s LoRA×attn guard was only ever a
+warning; reworded to the Phase 2 rationale.
+
+| | `synthja` | `lora16` | `lora16_reg` | band |
+|---|---|---|---|---|
+| held-out span | 0.085 | 0.041 | 0.058 | ≤ 0.092 ✓ |
+| held-out attn | 0.236 | 0.458 | **0.073** | |
+| `recovery_attn` | 0.901 | 0.449 | **0.963** | 0.85–0.92 ✓ (above) |
+| attn cos→EN, names / names_synth / names_synth_ja | .923 / .913 / .452 | .666 / .355 / .225 | **.933 / .917 / .476** | teacher .942 / .921 / .494 |
+| attn cos→EN, tags / tags_alt | .404 / .469 | .424 / .450 | .482 / .530 | |
+
+Every health metric is restored — the name registers sit *closer* to the
+teacher than the rows-only pack, the smear is gone from the readout. Grid,
+`ja_ext` arm:
+
+| gate | verdict |
+|---|---|
+| 1 · n1/r3 Reimu | ✗ — purple-haired girl in white, forest: `synthja`'s composition with `lora16`'s arms-up pose. No black hair / bow / miko. |
+| 1 · n2 Asuka | ~ red suit kept, no twin-tails; the **stray masked figure returns** (present in `synthja`, gone in `lora16`) |
+| 2 · r1 hair black | ✗ — miko kept, hair **pink** (`synthja` black → `lora16` red → reg pink) |
+| 3 · t1/t2/m1 clean | ✓ — m1 keeps the mic/pose gain; n2's stray is the one give-back |
+| 4 · mixed EN tags land | ✓ — r1 miko, a1 red plugsuit, m2 vocaloid |
+
+Reading: the attn term did what it was asked — it pulled the student's
+per-token readout back onto the teacher's — and the render moved *halfway
+back toward `synthja`* on every name prompt (r1's hair colour is the clean
+trace). Nothing composed. Two conclusions:
+
+1. **`recovery_attn` is saturated and blind in both directions.** 0.90 (rows)
+   and 0.96 (reg) render the same missing Reimu; 0.45 (lora16) rendered a
+   different wrong one. The plan's retry rule (attn 0.5 if `recovery_attn`
+   < 0.85) has no instrument behind it — the metric already exceeds the
+   teacher-relative ceiling — so the retry is **not run**.
+2. The capacity is real (poses, Miku, Asuka's suit, no strays in `lora16`)
+   but nothing in the distillation target *contains* the composition of a
+   rare kanji name: the teacher is the frozen adapter reading EN pieces,
+   and matching its output per token (attn) or per span (span) on 3k synth
+   names at ~300 visits does not transfer to `博麗霊夢` in an all-new-row
+   context. The next lever would be a *different target* (DiT-side signal,
+   or a real-caption corpus where the name co-occurs with its attributes),
+   which is corpus work — excluded from this line by construction.
+
+**Decision (pre-committed, third bullet):** ship plan.md Phase 3 with
+`cjk_vocab_pack_synthja` rows only. `lora16_reg` is kept on disk as the
+reference for a future DiT-side-target line; nothing in it ships. 2-iii
+(full adapter finetune) stays not-proposed.
 
 ### Ship (folds into plan.md Phase 3)
 
