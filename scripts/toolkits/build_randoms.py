@@ -10,7 +10,7 @@ So each entry here is a cluster, and both halves come from data already in
 the repo:
 
 * **which axis a tag sits on** — the Anima Tagger's ``groups.yaml``
-  (loaded through :mod:`library.captioning.tag_groups`). Slots are defined by
+  (loaded through :mod:`anime_tools.captions.tag_groups`). Slots are defined by
   *referencing* those groups, so re-curating the tagger taxonomy re-curates
   this pool. It also gives the block list: a companion from an
   identity-carrying group must come from ``__chara__``, never a random draw.
@@ -39,8 +39,8 @@ import sys
 
 import yaml
 
-from library.captioning.position_clauses import parse_caption
-from library.captioning.tag_groups import load_groups
+from anime_tools.captions.position_clauses import parse_caption
+from anime_tools.captions.tag_groups import load_groups
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 TAGGER = REPO / "models" / "captioners" / "anima-tagger-dbv4"

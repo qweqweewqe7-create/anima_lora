@@ -50,7 +50,7 @@ from bench.sam3_soft_prompt.common import (  # noqa: E402
     proposals,
 )
 from library.env import resolve_under_home  # noqa: E402
-from library.preprocess.multiview_sheet import _font  # noqa: E402
+from anime_tools.stages.multiview_sheet import _font  # noqa: E402
 
 PANEL_W = 640
 COLORS = [

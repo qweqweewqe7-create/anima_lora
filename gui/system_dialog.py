@@ -39,7 +39,7 @@ from gui.widgets import apply_variant
 
 # The Anima Tagger's backbone is an external gated model fetched straight into
 # the HF hub cache (never under models/), so its row needs a cache probe rather
-# than a path check. Repo + file set come from library.captioning.dbv4_meta —
+# than a path check. Repo + file set come from anime_tools.tagger.dbv4_meta —
 # the same source the loader and ``make download-tagger-model`` read — and the
 # repo follows the installed checkpoint's config.json, not a hardcoded default.
 _TAGGER_CKPT_REL = "models/captioners/anima-tagger-dbv4"
@@ -47,7 +47,7 @@ _TAGGER_CKPT_REL = "models/captioners/anima-tagger-dbv4"
 
 def _tagger_backbone_installed() -> bool:
     try:
-        from library.captioning.dbv4_meta import backbone_cached, backbone_repo_for
+        from anime_tools.tagger.dbv4_meta import backbone_cached, backbone_repo_for
     except Exception:  # noqa: BLE001 — probe only; a failed import is "missing"
         return False
     return backbone_cached(backbone_repo_for(ROOT / _TAGGER_CKPT_REL))

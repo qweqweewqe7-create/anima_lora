@@ -39,8 +39,8 @@ if str(ROOT) not in sys.path:
 
 from PIL import Image, ImageDraw  # noqa: E402
 
-from library.captioning._env import resolve_path  # noqa: E402
-from library.captioning._walk import walk_images  # noqa: E402
+from anime_tools._env import resolve_path  # noqa: E402
+from anime_tools._walk import walk_images  # noqa: E402
 
 COLORS = [
     (255, 60, 60),

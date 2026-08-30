@@ -1,6 +1,6 @@
 """Captioning — ``anima_lora.captioning``.
 
-``AnimaTagger`` (canonical home ``library.captioning``) maps an image to an
+``AnimaTagger`` (canonical home ``anime_tools.tagger``) maps an image to an
 Anima-format caption; resolving it is what first drags in torch.
 """
 
@@ -11,6 +11,6 @@ from anima_lora._lazy import attach
 attach(
     globals(),
     {
-        "AnimaTagger": "library.captioning",
+        "AnimaTagger": "anime_tools.tagger",
     },
 )

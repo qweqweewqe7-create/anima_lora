@@ -140,7 +140,7 @@ def main() -> None:
     del vae
     clean_memory_on_device(device)
 
-    from library.captioning.anima_tagger import (  # noqa: E402
+    from anime_tools.tagger.tagger import (  # noqa: E402
         DEFAULT_TAGGER_DIR,
         AnimaTagger,
         ensure_tagger_checkpoint,

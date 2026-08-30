@@ -24,31 +24,19 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Move manifest (proposal §"Move manifest"). Directories are recursive; globs
 # are relative to the repo root.
 CURATION_PATHS: tuple[str, ...] = (
-    "library/captioning/**/*.py",
+    # Phase 1 (2026-08-30) moved captions / tagger / stages into the
+    # ``anime_tools`` package; what remains here is the Phase 2 set
+    # (masking + grouping + the task wrappers). ``anime_tools`` imports are
+    # allowed — that is the dependency direction.
     "library/vision/pe_features.py",
     "library/vision/pe_matching.py",
     "library/datasets/grouping.py",
-    "library/preprocess/autotag.py",
-    "library/preprocess/caption_variants.py",
-    "library/preprocess/instance_detection.py",
-    "library/preprocess/multiview_audit.py",
-    "library/preprocess/multiview_sheet.py",
-    "library/preprocess/position_captions.py",
-    "scripts/anima_tagger/**/*.py",
     "scripts/curate/**/*.py",
-    "scripts/preprocess/ab_position_captions.py",
-    "scripts/preprocess/audit_apply_curated.py",
-    "scripts/preprocess/audit_multiview.py",
-    "scripts/preprocess/autotag_captions.py",
-    "scripts/preprocess/build_caption_index.py",
-    "scripts/preprocess/correct_captions.py",
     "scripts/preprocess/generate_masks.py",
     "scripts/preprocess/generate_masks_mit.py",
     "scripts/preprocess/merge_masks.py",
-    "scripts/preprocess/position_captions.py",
     "scripts/preprocess/probe_nms_pairs.py",
     "scripts/preprocess/probe_sam_masks.py",
-    "scripts/preprocess/review_position_captions.py",
     "scripts/tasks/tagger.py",
     "scripts/tasks/masking.py",
     "scripts/tasks/curate.py",
@@ -56,8 +44,10 @@ CURATION_PATHS: tuple[str, ...] = (
 
 # Anything under ``library.`` that is not itself in the manifest is trainer-only
 # (``library.env`` / ``library.log`` / ``library.io`` / ``library.datasets`` /
-# ``library.runtime`` included — the curation set carries its own tiny copies in
-# ``library/captioning/{_env,_walk,_hf}.py``), plus ``networks`` and ``train``.
+# ``library.runtime`` included — the curation side uses ``anime_tools.{_env,_walk,_hf}``),
+# plus ``networks`` and ``train``. The Phase 1 shims (``library.captioning.*``,
+# ``library.preprocess.caption_variants`` …) are trainer-side forwarding modules
+# and are forbidden here too: curation code imports ``anime_tools`` directly.
 FORBIDDEN_ROOTS: tuple[str, ...] = ("library", "networks", "train")
 
 

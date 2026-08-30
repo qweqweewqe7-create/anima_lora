@@ -1,5 +1,4 @@
-"""Anima multi-label tagger trainer — package entry.
-
-CLI lives in :mod:`scripts.anima_tagger.cli`. Invoke as
-``python -m scripts.anima_tagger.cli --mode <mode>``.
+"""Anima Tagger CLIs — MOVED to ``anime_tools.tagger.cli`` (curation split
+Phase 1, 2026-08-30). The modules here are forwarding shells; invoke
+``python -m anime_tools.tagger.cli --mode <mode>`` in new code.
 """

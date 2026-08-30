@@ -21,7 +21,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from library.captioning.dbv4_meta import (
+from anime_tools.tagger.dbv4_meta import (
     DBV4_BACKBONE_FILES,
     DEFAULT_DBV4_REPO,
     backbone_cached,
@@ -47,7 +47,7 @@ TAGGER_CKPT_REL = "models/captioners/anima-tagger-dbv4"
 # library/captioning/anima_tagger.py::DBV4_REQUIRED_FILES (duplicated rather
 # than imported — that module pulls torch, and the task runner stays import-light).
 TAGGER_CKPT_REQUIRED = ("config.json", "vocab.json", "rules.yaml")
-# Backbone facts come from the torch-free library.captioning.dbv4_meta so the
+# Backbone facts come from the torch-free anime_tools.tagger.dbv4_meta so the
 # loader, this task and the GUI can never disagree on repo / file set.
 TAGGER_BACKBONE_REPO = DEFAULT_DBV4_REPO
 TAGGER_BACKBONE_FILES = DBV4_BACKBONE_FILES
@@ -258,7 +258,7 @@ def cmd_download_danbooru_tags(_extra):
     # task-runner concept the build script doesn't accept.
     build_args = [a for a in (_extra or []) if a != "--force"]
     run(
-        [PY, "-m", "scripts.anima_tagger.build_english_tag_csv", *build_args],
+        [PY, "-m", "anime_tools.tagger.cli.build_english_tag_csv", *build_args],
         cwd=ROOT,
     )
 

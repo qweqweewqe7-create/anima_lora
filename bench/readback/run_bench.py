@@ -53,7 +53,7 @@ sys.path.insert(0, str(REPO_ROOT))
 import torch  # noqa: E402
 
 from bench._common import make_run_dir, write_result  # noqa: E402
-from library.captioning.readback import (  # noqa: E402
+from anime_tools.tagger.readback import (  # noqa: E402
     AGG_LOGSIGMOID,
     AGG_RECALL,
     CONTENT_CATEGORIES,
@@ -143,7 +143,7 @@ def _collect_logits_dbv4(
     from safetensors import safe_open
     from safetensors.torch import load_file as st_load
 
-    from library.captioning.dbv4_backend import (
+    from anime_tools.tagger.dbv4_backend import (
         UNSUPPORTED_LOGIT,
         SidecarHead,
         probs_to_logits,
@@ -457,7 +457,7 @@ def main() -> None:
     n, n_tags = tag_logits.shape
     log.info("collected logits: N=%d n_tags=%d (split=%s)", n, n_tags, args.split)
 
-    from library.captioning.anima_tagger import AnimaTagger
+    from anime_tools.tagger.tagger import AnimaTagger
 
     rb = TagReadback(
         AnimaTagger(model_dir, device=device), content_categories=CONTENT_CATEGORIES

@@ -76,7 +76,7 @@ _ATTR_TO_MODULE: dict[str, str] = {
     "load_dit_model": "library.inference.models",
     "load_vae": "library.models.qwen_vae",
     # captioning (anima_lora.captioning)
-    "AnimaTagger": "library.captioning",
+    "AnimaTagger": "anime_tools.tagger",
     # device / dtype helpers (anima_lora.models)
     "str_to_dtype": "library.runtime.device",
     # default checkpoint paths (anima_lora.models)

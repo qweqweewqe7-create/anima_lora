@@ -47,8 +47,8 @@ from safetensors import safe_open  # noqa: E402
 from safetensors.torch import load_file as st_load  # noqa: E402
 
 from bench._common import make_run_dir, write_result  # noqa: E402
-from library.captioning.dbv4_backend import SidecarHead  # noqa: E402
-from scripts.anima_tagger.calibrate import calibrate_thresholds  # noqa: E402
+from anime_tools.tagger.dbv4_backend import SidecarHead  # noqa: E402
+from anime_tools.tagger.cli.calibrate import calibrate_thresholds  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger(__name__)

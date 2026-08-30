@@ -178,13 +178,35 @@ def test_count_preprocess_caches_path_pattern_filters_nested_caches(
     }
 
 
+# Minimal Danbooru-KB CSV (mirrors anime_tools/tests/test_caption_correction.py).
+def _tag_csv(path: Path) -> Path:
+    path.write_text(
+        "\n".join(
+            [
+                "name,category,post_count,description",
+                '1girl,0,10,"[인물 > 인원수] count"',
+                'solo,0,10,"[인물 > 인원수] count"',
+                'hatsune_miku,4,10,"[캐릭터 > vocaloid] character"',
+                'vocaloid,3,10,"[작품 > series] copyright"',
+                'sincos,1,10,"[작가 > illustrator] artist"',
+                'best_quality,5,10,"[메타 > 화질] quality"',
+                'highres,5,10,"[메타 > 화질] resolution meta"',
+                'commentary,5,10,"[메타 > 정보_요청] artist commentary"',
+                'long_hair,0,10,"[머리카락 > 머리 길이] general"',
+                'copyright_notice,0,10,"[메타 > 정보_요청] misleading description"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_write_corrected_preprocess_captions_preserves_source(tmp_path: Path) -> None:
-    from library.captioning.correction import (
+    from anime_tools.captions.correction import (
         CaptionCorrectionOptions,
         load_tag_knowledge_base,
     )
-    from library.captioning.preprocess import write_corrected_preprocess_captions
-    from tests.test_caption_correction import _csv
+    from anime_tools.stages.captions import write_corrected_preprocess_captions
 
     source = tmp_path / "image_dataset"
     resized = tmp_path / "post_image_dataset" / "resized"
@@ -196,7 +218,7 @@ def test_write_corrected_preprocess_captions_preserves_source(tmp_path: Path) ->
     stats = write_corrected_preprocess_captions(
         source,
         resized,
-        load_tag_knowledge_base(_csv(tmp_path / "tags.csv")),
+        load_tag_knowledge_base(_tag_csv(tmp_path / "tags.csv")),
         options=CaptionCorrectionOptions(
             insert_no_artist=True,
             trigger_word="@dataset-trigger",
@@ -214,10 +236,9 @@ def test_write_corrected_preprocess_captions_preserves_source(tmp_path: Path) ->
 def test_write_corrected_preprocess_captions_removes_stale_missing_source(
     tmp_path: Path,
 ) -> None:
-    from library.captioning.correction import CaptionCorrectionOptions
-    from library.captioning.correction import load_tag_knowledge_base
-    from library.captioning.preprocess import write_corrected_preprocess_captions
-    from tests.test_caption_correction import _csv
+    from anime_tools.captions.correction import CaptionCorrectionOptions
+    from anime_tools.captions.correction import load_tag_knowledge_base
+    from anime_tools.stages.captions import write_corrected_preprocess_captions
 
     source = tmp_path / "image_dataset"
     resized = tmp_path / "post_image_dataset" / "resized"
@@ -229,7 +250,7 @@ def test_write_corrected_preprocess_captions_removes_stale_missing_source(
     stats = write_corrected_preprocess_captions(
         source,
         resized,
-        load_tag_knowledge_base(_csv(tmp_path / "tags.csv")),
+        load_tag_knowledge_base(_tag_csv(tmp_path / "tags.csv")),
         options=CaptionCorrectionOptions(),
         recursive=True,
     )

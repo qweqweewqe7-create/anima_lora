@@ -95,7 +95,7 @@ from gui.tabs._image_overlays import (
 )
 from gui.theme import tok
 from gui.widgets import apply_variant
-from library.captioning.correction import (
+from anime_tools.captions.correction import (
     CaptionCorrectionOptions,
     TagKnowledgeBase,
     correct_caption,
@@ -109,7 +109,7 @@ from library.datasets.curation_actions import (
     rel_key,
     save_curation_decisions,
 )
-from library.preprocess.caption_variants import (
+from anime_tools.captions.variants import (
     read_variants_sidecar,
     variants_sidecar_path,
 )

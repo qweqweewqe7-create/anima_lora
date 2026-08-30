@@ -16,13 +16,13 @@ from unittest import mock
 import torch
 from safetensors import safe_open
 
-from library.captioning.correction import (
+from anime_tools.captions.correction import (
     CaptionCorrectionOptions,
     load_tag_knowledge_base,
 )
-from library.captioning.preprocess import write_corrected_preprocess_captions
+from anime_tools.stages.captions import write_corrected_preprocess_captions
 from library.preprocess import text as te
-from library.preprocess.caption_variants import (
+from anime_tools.captions.variants import (
     read_variants_sidecar,
     variants_sidecar_path,
     write_variants_sidecar,

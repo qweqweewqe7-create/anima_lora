@@ -1,22 +1,17 @@
-"""Image-to-caption helpers used by editing/inversion paths.
+"""Captioning — MOVED to ``anime_tools`` (curation split Phase 1, 2026-08-30).
 
-Ships :class:`AnimaTagger` — trained on the Anima caption distribution,
-the ψ_src provider for DirectEdit when a checkpoint is present at
-``DEFAULT_TAGGER_DIR`` (currently ``models/captioners/anima-tagger-dbv4/``;
-auto-fetched from ``sorryhyun/anima-tagger`` when missing).
-
-Exposes ``predict(pil_img)`` and ``predict_caption(pil_img)`` for a
-comma-separated tag string.
+Every submodule here is a forwarding shim onto its new home
+(``anime_tools.captions.*`` / ``anime_tools.tagger.*`` / ``anime_tools.stages.captions``);
+``AnimaTagger`` stays reachable lazily for one release. Import ``anime_tools``
+directly in new code — the shims go away in Phase 3.
 """
-
-# AnimaTagger's import touches torch/safetensors; expose it lazily (PEP 562) so torch-free siblings (notably library.captioning.taxonomy, used by the caption-index preprocess script) import without dragging torch through this __init__.
 
 __all__ = ["AnimaTagger"]
 
 
 def __getattr__(name: str):
     if name == "AnimaTagger":
-        from library.captioning.anima_tagger import AnimaTagger
+        from anime_tools.tagger.tagger import AnimaTagger
 
         return AnimaTagger
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

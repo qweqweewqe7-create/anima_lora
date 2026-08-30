@@ -4,10 +4,9 @@ Each ComfyUI node tries to import the live ``library.*`` first, falling back
 to a bundled vendor copy when the host install isn't sitting inside the
 anima_lora repo. This script keeps those vendor copies fresh.
 
-Five targets:
+Four targets (the tagger node no longer vendors anything — it depends on the
+``anime_tools`` package and lives in its own repo, ``ComfyUI-Anima-Tagger``):
 
-* ``custom_nodes/comfyui-anima-tagger/_vendor/`` — captioning + PE encoder
-  inference path (AnimaTagger, tag rules/groups, vision encoder, vendored PE).
 * ``custom_nodes/comfyui-anima-directedit/_vendor/`` — directedit primitives,
   trimmed sampling helper, the trimmed ``CONSTANT_TOKEN_BUCKETS`` constant,
   and a tiny ``library.anima.models`` stub so the lazy ``Anima`` annotation
@@ -59,7 +58,6 @@ import shutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-TAGGER_VENDOR = ROOT / "custom_nodes" / "comfyui-anima-tagger" / "_vendor"
 DIRECTEDIT_VENDOR = ROOT / "custom_nodes" / "comfyui-anima-directedit" / "_vendor"
 TRAINER_VENDOR = ROOT / "custom_nodes" / "comfyui-anima-trainer" / "_vendor"
 
@@ -84,31 +82,6 @@ SPECTRUM_NODE_REPO = Path(
     )
 )
 SPECTRUM_VENDOR = SPECTRUM_NODE_REPO / "_vendor"
-
-# Tagger-only captioning + vision subset. Since the directedit node takes
-# ``source_tag``/``target_tag`` STRINGs directly (no embedded tagger), this
-# tree is only needed by the tagger vendor.
-TAGGER_VERBATIM: list[tuple[str, str]] = [
-    ("library/captioning/anima_tagger.py", "library/captioning/anima_tagger.py"),
-    ("library/captioning/tag_rules.py", "library/captioning/tag_rules.py"),
-    ("library/captioning/tag_groups.py", "library/captioning/tag_groups.py"),
-    # dbv4 backend (external caformer behind the same contract) + the
-    # torch-free tag-shape helpers it needs; hf_download fetches the gated
-    # upstream weights + card.
-    ("library/captioning/dbv4_backend.py", "library/captioning/dbv4_backend.py"),
-    ("library/captioning/taxonomy.py", "library/captioning/taxonomy.py"),
-    ("library/runtime/hf_download.py", "library/runtime/hf_download.py"),
-]
-
-TAGGER_PACKAGE_DIRS: list[str] = [
-    "library",
-    "library/captioning",
-    "library/runtime",
-]
-
-# The tagger no longer needs trimmed shims (its PE dual-encoder path — which
-# pulled IMAGE_TRANSFORMS + pil_resize_to_bucket — was removed 2026-08-30).
-TAGGER_TRIMMED: list[tuple[str, str]] = []
 
 DIRECTEDIT_VERBATIM: list[tuple[str, str]] = [
     (
@@ -252,21 +225,6 @@ def _resolve_directedit_trimmed() -> list[tuple[str, str]]:
         content = template.replace("{{EDGE_TOKEN_BANDS_LITERAL}}", bands_literal)
         out.append((dst_rel, content))
     return out
-
-
-def build_tagger_vendor() -> None:
-    print(f"\n[tagger] -> {TAGGER_VENDOR.relative_to(ROOT)}")
-    if TAGGER_VENDOR.exists():
-        shutil.rmtree(TAGGER_VENDOR)
-    TAGGER_VENDOR.mkdir(parents=True)
-    (TAGGER_VENDOR / "__init__.py").write_text(
-        '"""Bundled inference subset of anima_lora.\n\n'
-        "Synced by scripts/release/sync_vendor.py — do not edit by hand.\n"
-        '"""\n'
-    )
-    _write_pkg_markers(TAGGER_VENDOR, TAGGER_PACKAGE_DIRS)
-    _copy_verbatim(TAGGER_VENDOR, TAGGER_VERBATIM)
-    _write_trimmed(TAGGER_VENDOR, TAGGER_TRIMMED)
 
 
 def build_directedit_vendor() -> None:
@@ -461,7 +419,6 @@ def build_spectrum_vendor() -> None:
 
 
 def main() -> None:
-    build_tagger_vendor()
     build_directedit_vendor()
     build_hydralora_vendor()
     build_trainer_vendor()

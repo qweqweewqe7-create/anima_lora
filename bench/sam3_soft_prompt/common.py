@@ -28,10 +28,10 @@ from safetensors.torch import save_file  # noqa: E402
 
 # Canonical home is library/ — bench/ is in scripts/update.py's PRESERVE_DIRS,
 # so anything the shipped preprocess path needs cannot live only here.
-from library.preprocess.instance_detection import (  # noqa: E402
+from anime_tools.stages.instance_detection import (  # noqa: E402
     SOFT_PROMPT_KEYS as PROMPT_KEYS,
 )
-from library.preprocess.instance_detection import load_soft_prompt  # noqa: E402,F401
+from anime_tools.stages.instance_detection import load_soft_prompt  # noqa: E402,F401
 
 ROOT = Path(__file__).resolve().parents[2]
 MASK_RES = 288  # native `pred_masks` resolution

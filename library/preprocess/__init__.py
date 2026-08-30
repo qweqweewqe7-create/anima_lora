@@ -42,13 +42,22 @@ _LAZY = {
     "StaleCaches": ("reconcile", "StaleCaches"),
     "cache_text_embeddings": ("text", "cache_text_embeddings"),
     "count_pending_text": ("text", "count_pending_text"),
-    # Torch-free leaf (caption_variants) so the caption-correction step / GUI can
+    # Torch-free leaf (now anime_tools.captions.variants) so the caption-correction step / GUI can
     # import these without dragging torch in via the text submodule.
-    "generate_caption_variants": ("caption_variants", "generate_caption_variants"),
-    "build_erasure_token_pool": ("caption_variants", "build_erasure_token_pool"),
-    "variants_sidecar_path": ("caption_variants", "variants_sidecar_path"),
-    "write_variants_sidecar": ("caption_variants", "write_variants_sidecar"),
-    "read_variants_sidecar": ("caption_variants", "read_variants_sidecar"),
+    "generate_caption_variants": (
+        "anime_tools.captions.variants",
+        "generate_caption_variants",
+    ),
+    "build_erasure_token_pool": (
+        "anime_tools.captions.variants",
+        "build_erasure_token_pool",
+    ),
+    "variants_sidecar_path": ("anime_tools.captions.variants", "variants_sidecar_path"),
+    "write_variants_sidecar": (
+        "anime_tools.captions.variants",
+        "write_variants_sidecar",
+    ),
+    "read_variants_sidecar": ("anime_tools.captions.variants", "read_variants_sidecar"),
 }
 
 __all__ = list(_LAZY)
@@ -59,7 +68,8 @@ def __getattr__(name: str):
         submodule, attr = _LAZY[name]
     except KeyError:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from None
-    value = getattr(import_module(f"{__name__}.{submodule}"), attr)
+    target = submodule if "." in submodule else f"{__name__}.{submodule}"
+    value = getattr(import_module(target), attr)
     globals()[name] = value  # cache so __getattr__ runs once per name
     return value
 

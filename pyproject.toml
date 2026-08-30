@@ -71,6 +71,10 @@ dependencies = [
     # PyPI onnxruntime-gpu has no aarch64 wheels; Microsoft ships CUDA-13 builds for ARM64.
     "onnxruntime-gpu @ https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-13/pypi/download/onnxruntime-gpu/1.26.0/onnxruntime_gpu-1.26.0-cp313-cp313-manylinux_2_34_aarch64.whl ; platform_machine == 'aarch64' and sys_platform == 'linux'",
 ]
+# NB: the ``anime-tools`` curation package (caption grammar, Anima Tagger,
+# caption stages — split out 2026-08-30) is a dependency-GROUP below, not a
+# plain dependency, because uv requires a group-conditioned source's package
+# to live in that group. ``anime-tools-git`` is default-on.
 
 [project.optional-dependencies]
 gui = ["PySide6>=6.7"]
@@ -99,11 +103,15 @@ index-strategy = "unsafe-best-match"
 # `cuda-windows` is default-on so the no-flag `uv sync` run by old updaters
 # lands the CUDA stack on Windows (GH #92). ROCm opts in with
 # `uv sync --no-group cuda-windows --group rocm-windows`.
-default-groups = ["dev", "cuda-windows"]
+default-groups = ["dev", "cuda-windows", "anime-tools-git"]
 conflicts = [
     [
         { group = "cuda-windows" },
         { group = "rocm-windows" },
+    ],
+    [
+        { group = "anime-tools-git" },
+        { group = "anime-tools-dev" },
     ],
 ]
 prerelease = "allow"
@@ -115,6 +123,15 @@ override-dependencies = [
 ]
 
 [tool.uv.sources]
+# anime_tools: the pinned git rev is what releases install. For a live dev
+# loop against a sibling checkout run
+#     uv sync --group anime-tools-dev
+# (the `anime-tools-dev` group swaps in ../anime_tools as an editable path
+# source; it conflicts with the default `anime-tools-git` group by design).
+anime-tools = [
+    { git = "https://github.com/sorryhyun/anime_tools", rev = "92ebc584b567a995b28dcfdaed7bf35a19ea50b9", group = "anime-tools-git" },
+    { path = "../anime_tools", editable = true, group = "anime-tools-dev" },
+]
 torch = [
     { index = "pytorch-cu132", marker = "sys_platform != 'darwin' and sys_platform != 'win32'" },
     { index = "pytorch-cu132", group = "cuda-windows" },
@@ -180,6 +197,11 @@ build-backend = "setuptools.build_meta"
 dev = [
     "markdownify",
 ]
+# anime_tools source selector (see [tool.uv.sources]): `anime-tools-git` is
+# default-on (pinned rev); `--no-group anime-tools-git --group anime-tools-dev`
+# swaps in the sibling checkout for development.
+anime-tools-git = ["anime-tools[stages]"]
+anime-tools-dev = ["anime-tools[stages]"]
 # Windows accelerator backends. `cuda-windows` is in default-groups (see
 # [tool.uv]) so it composes into every plain `uv sync`; every dep is
 # win32-marked, so both groups are inert on Linux/macOS.

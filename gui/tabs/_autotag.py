@@ -124,10 +124,12 @@ class _AutotagWorker(QObject):
         """Launch the resident worker subprocess (torch lives here, not the GUI)."""
         proc = QProcess(self)
         proc.setProgram(sys.executable)
-        proc.setArguments(["-m", "scripts.anima_tagger.autotag_server"])
+        proc.setArguments(["-m", "anime_tools.tagger.cli.autotag_server"])
         proc.setWorkingDirectory(str(ROOT))
         env = QProcessEnvironment.systemEnvironment()
         env.insert("PYTHONUNBUFFERED", "1")  # stream sentinel lines live
+        # anime_tools anchors bare defaults on ANIMA_HOME (else the CWD).
+        env.insert("ANIMA_HOME", str(ROOT))
         proc.setProcessEnvironment(env)
         proc.readyReadStandardOutput.connect(self._on_stdout)
         proc.finished.connect(self._on_finished)

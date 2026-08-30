@@ -172,7 +172,7 @@ def stage_select(
     pairs: bool,
     limit: int | None,
 ) -> dict[str, dict]:
-    from library.captioning.position_clauses import parse_caption
+    from anime_tools.captions.position_clauses import parse_caption
 
     if not index_path.is_file():
         raise SystemExit(f"{index_path} not found — run `make caption-index` first.")
@@ -629,7 +629,7 @@ def _position_word(girl_box, partner_box, size, *, side_frac: float = 0.4) -> st
     qualifies a lone subject only within a multi-row sheet), so solo images
     take the side her bbox centre falls on: ``left`` / ``right`` when it is
     outside the middle ``side_frac``..``1-side_frac`` band, else ``center``."""
-    from library.captioning.position_clauses import assign_positions, horizontal_names
+    from anime_tools.captions.position_clauses import assign_positions, horizontal_names
 
     if partner_box is not None:
         return assign_positions([girl_box, partner_box], size)[0]
@@ -872,12 +872,12 @@ def stage_captions(base: Path, resized_dir: Path, caption_src: Path) -> None:
     stage's record (girl + partner boxes through the caption grammar's own
     ``assign_positions``), so the caption position and the paint agree.
     """
-    from library.captioning.position_clauses import (
+    from anime_tools.captions.position_clauses import (
         PositionClause,
         compose_caption,
         parse_caption,
     )
-    from library.preprocess.caption_variants import (
+    from anime_tools.captions.variants import (
         read_variants_sidecar,
         variants_sidecar_path,
         write_variants_sidecar,

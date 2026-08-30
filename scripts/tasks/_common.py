@@ -236,6 +236,9 @@ def run(cmd: list[str], **kwargs):
     env = kwargs.pop("env", None)
     if env is None:
         env = os.environ.copy()
+    # Curation stages (anime_tools) anchor bare relative defaults on
+    # ANIMA_HOME; pin it to this checkout so they resolve as before the split.
+    env.setdefault("ANIMA_HOME", str(ROOT))
     # Bound `hf` CLI socket timeouts so a stalled download can't hang the serial
     # daemon queue (a hung-not-failed fetch wedges every job queued behind it,
     # training included). setdefault means an explicit ANIMA_HF_TIMEOUT/HF_HUB_*

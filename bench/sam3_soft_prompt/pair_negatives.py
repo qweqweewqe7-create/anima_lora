@@ -59,7 +59,7 @@ from bench.sam3_soft_prompt.common import (  # noqa: E402
 )
 from library.env import resolve_under_home  # noqa: E402
 from library.preprocess._dataset import walk_images  # noqa: E402
-from library.preprocess.instance_detection import Detection, crop_instance  # noqa: E402
+from anime_tools.stages.instance_detection import Detection, crop_instance  # noqa: E402
 
 PAIR_COUNT = ("1boy", "1girl")
 KEEPER = "bench/sam3_soft_prompt/results/20260826-2310-animegirl-init/soft_prompt.safetensors"
@@ -161,7 +161,7 @@ def classify(kept: dict) -> str:
 
 
 def build(a) -> None:
-    from library.captioning.anima_tagger import AnimaTagger
+    from anime_tools.tagger.tagger import AnimaTagger
 
     dst = resolve_under_home(a.dst)
     out = resolve_under_home(a.out)

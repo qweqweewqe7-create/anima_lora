@@ -29,7 +29,7 @@ from PIL import Image
 from tqdm import tqdm
 
 
-from library.preprocess import walk_images
+from anime_tools._walk import walk_images
 
 _ENCODER = "tu-efficientnetv2_rw_m"
 _HF_REPO = "a-b-c-x-y-z/Manga-Text-Segmentation-2025"

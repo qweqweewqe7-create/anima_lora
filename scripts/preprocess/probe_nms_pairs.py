@@ -41,17 +41,17 @@ if str(ROOT) not in sys.path:
 
 from PIL import Image  # noqa: E402
 
-from library.captioning._env import resolve_path  # noqa: E402
-from library.preprocess.instance_detection import (  # noqa: E402
+from anime_tools._env import resolve_path  # noqa: E402
+from anime_tools.stages.instance_detection import (  # noqa: E402
     DEFAULT_SUBJECT_PROMPT_EMBED,
 )
-from library.captioning._walk import walk_images  # noqa: E402
-from library.preprocess.position_captions import (  # noqa: E402
+from anime_tools._walk import walk_images  # noqa: E402
+from anime_tools.stages.position_captions import (  # noqa: E402
     box_containment,
     box_iou,
     drop_small_boxes,
 )
-from scripts.preprocess.position_captions import build_detect_fn  # noqa: E402
+from anime_tools.stages.cli.position_captions import build_detect_fn  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:

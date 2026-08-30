@@ -16,8 +16,8 @@ import yaml
 from PIL import Image
 from tqdm import tqdm
 
-from library.captioning.path_filter import filter_paths_by_glob
-from library.preprocess import walk_images
+from anime_tools.path_filter import filter_paths_by_glob
+from anime_tools._walk import walk_images
 
 
 def load_image(path: Path) -> Image.Image:

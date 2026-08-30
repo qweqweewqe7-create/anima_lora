@@ -172,7 +172,7 @@ def cmd_test_directedit(extra):
 
     from PIL import Image  # noqa: PLC0415
 
-    from library.captioning.anima_tagger import (  # noqa: PLC0415
+    from anime_tools.tagger.tagger import (  # noqa: PLC0415
         DEFAULT_TAGGER_DIR,
         AnimaTagger,
         ensure_tagger_checkpoint,

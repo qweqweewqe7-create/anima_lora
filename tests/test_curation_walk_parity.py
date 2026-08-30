@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from library.captioning import _walk
+from anime_tools import _walk
 from library.datasets import image_utils
 from library.io import cache as io_cache
 from library.io import walk as io_walk

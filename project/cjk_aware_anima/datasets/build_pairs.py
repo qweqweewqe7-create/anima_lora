@@ -110,7 +110,7 @@ def load_captions(
     apostrophes, booru rating words instead of Anima's band, ``highres`` /
     ``absurdres`` meta, undeduped clothing bases). ``rules_path`` runs the raw
     side through gelcrawl's own rule set via
-    :mod:`library.captioning.tag_rules`, which is the same normalization that
+    :mod:`anime_tools.captions.tag_rules`, which is the same normalization that
     produced ``image_dataset`` — without it the two roots would disagree on
     ``questionable`` vs ``nsfw`` and split the rating rows.
 
@@ -125,7 +125,7 @@ def load_captions(
     """
     rules = parse_caption = None
     if rules_path is not None and rules_path.exists():
-        from library.captioning.tag_rules import load_rules, parse_caption  # noqa: PLC0415
+        from anime_tools.captions.tag_rules import load_rules, parse_caption  # noqa: PLC0415
 
         rules = load_rules(rules_path)
 

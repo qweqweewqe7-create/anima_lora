@@ -36,7 +36,7 @@ from library.datasets.buckets import (
     freefit_bucket,
 )
 from library.io.walk import safe_walk
-from library.preprocess.caption_variants import VARIANTS_SIDECAR_SUFFIX
+from anime_tools.captions.variants import VARIANTS_SIDECAR_SUFFIX
 
 NPZ_RE = re.compile(r"^(?P<stem>.+)_(?P<w>\d{4})x(?P<h>\d{4})_anima\.npz$")
 TE_RE = re.compile(r"^(?P<stem>.+)_anima_te\.safetensors$")

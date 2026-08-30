@@ -649,3 +649,29 @@ def test_preprocess_demote_args_override_and_split(monkeypatch):
         "1280:1024",
         "1024:768",
     ]
+
+
+def test_preprocess_task_wiring_forwards_drop_groups(monkeypatch):
+    """``--caption_drop_groups`` (GH #95) threads through the task runner."""
+    from scripts.tasks.preprocess import (
+        _caption_correction_args,
+        _caption_correction_config,
+        _caption_correction_enabled,
+    )
+
+    monkeypatch.delenv("CAPTION_DROP_GROUPS", raising=False)
+    config, cleaned = _caption_correction_config(
+        ["--caption_drop_groups", "artist,lighting", "--other", "x"]
+    )
+    assert config["drop_groups"] == "artist,lighting"
+    assert cleaned == ["--other", "x"]
+    assert _caption_correction_enabled({"drop_groups": "artist"})
+    assert not _caption_correction_enabled({"drop_groups": "  "})
+    assert _caption_correction_args({"drop_groups": "artist,lighting"}) == [
+        "--caption_drop_groups",
+        "artist,lighting",
+    ]
+
+    monkeypatch.setenv("CAPTION_DROP_GROUPS", "pose")
+    config, _ = _caption_correction_config([])
+    assert config["drop_groups"] == "pose"

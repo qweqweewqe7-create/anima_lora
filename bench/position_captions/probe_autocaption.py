@@ -268,7 +268,7 @@ def main() -> None:
     clean_memory_on_device(device)
 
     # ---- pass 2: tag crops, compose clauses, score against ground truth ----
-    from library.captioning.anima_tagger import (  # noqa: E402
+    from anime_tools.tagger.tagger import (  # noqa: E402
         DEFAULT_TAGGER_DIR,
         AnimaTagger,
         ensure_tagger_checkpoint,

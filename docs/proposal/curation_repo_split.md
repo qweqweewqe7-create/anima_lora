@@ -1,6 +1,32 @@
 # Curation split — tagger / masking / grouping / caption polishing → `sorryhyun/anime_tools`
 
-Status: **Phase 0 complete (2026-08-30).** Nothing moved to a new repo yet; the seam is cut and guarded in-tree. Contract: [`anime_tools_contract.md`](anime_tools_contract.md).
+Status: **Phase 1 complete (2026-08-30).** `github.com/sorryhyun/anime_tools` exists (private until the trainer branch merges — flip with `gh repo edit sorryhyun/anime_tools --visibility public --accept-visibility-change-consequences`, same for `ComfyUI-Anima-Tagger`); captions + tagger + stages live there, the trainer depends on it, old paths are shims. Contract: `../anime_tools/docs/contract.md`. Next: Phase 2 (masking + grouping + GUI panels).
+
+Phase 1 log:
+- 2026-08-30 — repo created (`anime_tools/{captions,tagger,stages}` + `_env/_walk/_hf/path_filter`
+  copies; `captions/data/clause_vocabulary.yaml` packaged as the default the trainer's
+  `configs/` copy overrides). 13 tests, 4 docs, the `captions` skill and the contract moved.
+  Move was scripted (copy + ordered import-rewrite rules), no hand edits to bodies.
+- Trainer: `library/_moved.py` `alias()` shims (sys.modules aliasing — same object, so
+  monkeypatching either path works) for every moved `library.*` module; `forward()` shells for
+  `scripts/preprocess/{8}.py` + `scripts/anima_tagger/*.py` that pin `ANIMA_HOME` and call the
+  package `main()` — `make` argv shapes unchanged (pinned by `tests/test_preprocess_tasks.py`).
+  In-process consumers (GUI, bench, easycontrol, tasks, façade) import `anime_tools` directly.
+- Dependency: git rev pinned in `[tool.uv.sources]` through a default-on `anime-tools-git`
+  group; `anime-tools-dev` (path, editable) conflicts with it — uv insists the package sit in
+  the group, not in `dependencies` (same shape as `cuda-windows`/`rocm-windows`).
+- `curation_home()` fallback changed from "checkout root" to **CWD** (no checkout once
+  installed); the trainer's `run()` exports `ANIMA_HOME` so nothing moved.
+- Guard caught two Phase-2 leaks the old manifest-prefix rule hid: `generate_masks{,_mit}.py`
+  imported `library.preprocess.walk_images` → `anime_tools._walk`.
+- Tagger node extracted to `github.com/sorryhyun/ComfyUI-Anima-Tagger` (`_vendor` dropped,
+  `pip install anime-tools[tagger]`); `sync_vendor.py` no longer has a tagger target.
+- Exit gate: both suites green (trainer 1405 fast + slow, package 285); caption master +
+  mirrors + `.variants.txt` byte-identical on the live dataset except `mikozin/11841806`, which
+  rewrites on **every** run pre-split too (unseeded variant draw — pre-existing);
+  `caption_index.json` `image_meta`/`groups` identical vs a `main` worktree run. TE caches not
+  regenerated (their producer `library/preprocess/text.py` only changed an import).
+
 
 Phase 0 log:
 - 2026-08-30 — guard test `tests/test_curation_boundary.py` landed (task d). It caught three

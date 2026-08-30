@@ -73,25 +73,50 @@ LEAKAGE_FAMILIES = ("omission",)
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    p.add_argument("--prompt_sets", required=True, help="prompt_sets.json from prompt_sets.py.")
-    p.add_argument("--lora", action="append", default=[], metavar="NAME:PATH",
-                   help="An arm 'name:relpath'. Repeatable. Path relative to repo root.")
-    p.add_argument("--include_base", action="store_true", help="Add a no-LoRA 'base' arm.")
-    p.add_argument("--model_dir", default="models/captioners/anima-tagger-dbv4",
-                   help="Tagger checkpoint dir (the frozen judge).")
+    p.add_argument(
+        "--prompt_sets", required=True, help="prompt_sets.json from prompt_sets.py."
+    )
+    p.add_argument(
+        "--lora",
+        action="append",
+        default=[],
+        metavar="NAME:PATH",
+        help="An arm 'name:relpath'. Repeatable. Path relative to repo root.",
+    )
+    p.add_argument(
+        "--include_base", action="store_true", help="Add a no-LoRA 'base' arm."
+    )
+    p.add_argument(
+        "--model_dir",
+        default="models/captioners/anima-tagger-dbv4",
+        help="Tagger checkpoint dir (the frozen judge).",
+    )
     p.add_argument("--seeds", type=int, nargs="+", default=[42, 43])
     p.add_argument("--infer_steps", type=int, default=24)
     p.add_argument("--cfg", type=float, default=4.0)
     p.add_argument("--sampler", default="euler")
-    p.add_argument("--size", type=int, nargs=2, default=[1024, 1024], metavar=("H", "W"))
-    p.add_argument("--gate_richness_winrate", type=float, default=0.60,
-                   help="Phase 0: paired richness win-rate (arm0 vs base) on sparse to pass sanity.")
-    p.add_argument("--gate_shuffle_winrate", type=float, default=0.90,
-                   help="Readback instrument: adherence(true) > adherence(shuffled) win-rate.")
+    p.add_argument(
+        "--size", type=int, nargs=2, default=[1024, 1024], metavar=("H", "W")
+    )
+    p.add_argument(
+        "--gate_richness_winrate",
+        type=float,
+        default=0.60,
+        help="Phase 0: paired richness win-rate (arm0 vs base) on sparse to pass sanity.",
+    )
+    p.add_argument(
+        "--gate_shuffle_winrate",
+        type=float,
+        default=0.90,
+        help="Readback instrument: adherence(true) > adherence(shuffled) win-rate.",
+    )
     p.add_argument("--label", default=None)
-    p.add_argument("--reuse_renders", default=None,
-                   help="Skip rendering; score an existing render_manifest.json instead "
-                        "(e.g. results/<run>/renders/render_manifest.json).")
+    p.add_argument(
+        "--reuse_renders",
+        default=None,
+        help="Skip rendering; score an existing render_manifest.json instead "
+        "(e.g. results/<run>/renders/render_manifest.json).",
+    )
     return p.parse_args()
 
 
@@ -107,8 +132,9 @@ def _flat_cells(prompt_sets: dict) -> List[Tuple[str, str, str]]:
     return cells
 
 
-def render_arms(args, prompt_sets: dict, arms: List[Tuple[str, Optional[str]]],
-                run_dir: Path) -> Tuple[Path, dict]:
+def render_arms(
+    args, prompt_sets: dict, arms: List[Tuple[str, Optional[str]]], run_dir: Path
+) -> Tuple[Path, dict]:
     from anima_lora import GenerationRequest, generate, load_vae
     from library.inference import get_generation_settings
     from library.inference.models import load_text_encoder
@@ -119,10 +145,23 @@ def render_arms(args, prompt_sets: dict, arms: List[Tuple[str, Optional[str]]],
     cells = _flat_cells(prompt_sets)
     seeds = list(args.seeds)
     run_dir.mkdir(parents=True, exist_ok=True)
-    log.info("rendering %d prompts x %d seeds x %d arms -> %s", len(cells), len(seeds), len(arms), run_dir)
+    log.info(
+        "rendering %d prompts x %d seeds x %d arms -> %s",
+        len(cells),
+        len(seeds),
+        len(arms),
+        run_dir,
+    )
 
-    vae = load_vae(VAE, device="cpu", disable_mmap=True, spatial_chunk_size=64,
-                   disable_cache=True, dtype=torch.bfloat16, eval=True)
+    vae = load_vae(
+        VAE,
+        device="cpu",
+        disable_mmap=True,
+        spatial_chunk_size=64,
+        disable_cache=True,
+        dtype=torch.bfloat16,
+        eval=True,
+    )
 
     manifest: dict = {
         "prompt_sets": str(Path(args.prompt_sets).resolve()),
@@ -136,9 +175,14 @@ def render_arms(args, prompt_sets: dict, arms: List[Tuple[str, Optional[str]]],
         arm_dir = run_dir / arm_name
         arm_dir.mkdir(exist_ok=True)
         req = GenerationRequest(
-            dit=DIT, vae=VAE, text_encoder=TEXT_ENCODER,
-            prompt=cells[0][2], image_size=(args.size[0], args.size[1]),
-            infer_steps=args.infer_steps, guidance_scale=args.cfg, sampler=args.sampler,
+            dit=DIT,
+            vae=VAE,
+            text_encoder=TEXT_ENCODER,
+            prompt=cells[0][2],
+            image_size=(args.size[0], args.size[1]),
+            infer_steps=args.infer_steps,
+            guidance_scale=args.cfg,
+            sampler=args.sampler,
             lora_weight=[lora] if lora else None,
             lora_multiplier=[1.0] if lora else None,
             save_path=str(arm_dir),
@@ -156,8 +200,9 @@ def render_arms(args, prompt_sets: dict, arms: List[Tuple[str, Optional[str]]],
         # DiT). Without this, generate() reloads the TE from disk and frees it on
         # every one of the len(cells)*len(seeds) calls. `conds_cache` collapses the
         # repeated (identical) negative-prompt encodings to one.
-        text_encoder = load_text_encoder(base_args, dtype=torch.bfloat16,
-                                         device=torch.device("cpu"))
+        text_encoder = load_text_encoder(
+            base_args, dtype=torch.bfloat16, device=torch.device("cpu")
+        )
         text_encoder.eval()
         shared: dict = {"text_encoder": text_encoder, "conds_cache": {}}
         latents: Dict[str, torch.Tensor] = {}
@@ -209,12 +254,14 @@ def score_manifest(args, prompt_sets: dict, manifest: dict) -> dict:
     """Score every render; return per-arm/per-family score tables + paired gates."""
     from PIL import Image
 
-    from library.captioning.anima_tagger import AnimaTagger
-    from library.captioning.readback import AGG_LOGSIGMOID, AGG_RECALL, TagReadback
+    from anime_tools.tagger.tagger import AnimaTagger
+    from anime_tools.tagger.readback import AGG_LOGSIGMOID, AGG_RECALL, TagReadback
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # general-only judge — matches how the characteristic/prompted sets were typed.
-    rb = TagReadback(AnimaTagger(args.model_dir, device=device), content_categories=("general",))
+    rb = TagReadback(
+        AnimaTagger(args.model_dir, device=device), content_categories=("general",)
+    )
 
     characteristic = set(prompt_sets["characteristic_set"])
     # id -> entry (carries prompted/omitted general-tag sets)
@@ -262,13 +309,22 @@ def score_manifest(args, prompt_sets: dict, manifest: dict) -> dict:
                 # whose richness is EXPECTED to be low if migration is trigger-bound.
                 if pid in richness_mask:
                     scores[arm_name][agg][f"richness_{fam}"][pid][si] = float(
-                        rb.readback_from_logits(logits, richness_mask[pid].unsqueeze(0), agg=agg)[0, 0])
+                        rb.readback_from_logits(
+                            logits, richness_mask[pid].unsqueeze(0), agg=agg
+                        )[0, 0]
+                    )
                 if pid in adherence_mask:
                     scores[arm_name][agg]["adherence"][pid][si] = float(
-                        rb.readback_from_logits(logits, adherence_mask[pid].unsqueeze(0), agg=agg)[0, 0])
+                        rb.readback_from_logits(
+                            logits, adherence_mask[pid].unsqueeze(0), agg=agg
+                        )[0, 0]
+                    )
                 if pid in leakage_mask:
                     scores[arm_name][agg]["leakage"][pid][si] = float(
-                        rb.readback_from_logits(logits, leakage_mask[pid].unsqueeze(0), agg=agg)[0, 0])
+                        rb.readback_from_logits(
+                            logits, leakage_mask[pid].unsqueeze(0), agg=agg
+                        )[0, 0]
+                    )
 
     arm_names = list(manifest["arms"].keys())
     kinds = [f"richness_{f}" for f in RICHNESS_FAMILIES] + ["adherence", "leakage"]
@@ -280,7 +336,11 @@ def score_manifest(args, prompt_sets: dict, manifest: dict) -> dict:
         for agg in aggs:
             per_arm[arm][agg] = {}
             for kind in kinds:
-                vals = [v for pid in scores[arm][agg][kind] for v in scores[arm][agg][kind][pid].values()]
+                vals = [
+                    v
+                    for pid in scores[arm][agg][kind]
+                    for v in scores[arm][agg][kind][pid].values()
+                ]
                 per_arm[arm][agg][kind] = _mean(vals)
 
     # ---- paired win-rates arm_i vs reference (base if present else arm0) ----
@@ -311,7 +371,9 @@ def score_manifest(args, prompt_sets: dict, manifest: dict) -> dict:
     shuffle_check: dict = {}
     from PIL import Image as _Image
 
-    other_mask = {pid: mask_for(entry_by_id[pid].get("prompted", [])) for pid in det_ids}
+    other_mask = {
+        pid: mask_for(entry_by_id[pid].get("prompted", [])) for pid in det_ids
+    }
     for arm_name, arm in manifest["arms"].items():
         rng = random.Random(1234)
         pairs: List[Tuple[float, float]] = []
@@ -324,8 +386,16 @@ def score_manifest(args, prompt_sets: dict, manifest: dict) -> dict:
                 continue
             oid = rng.choice(others)
             logits = rb.image_logits(_Image.open(path)).unsqueeze(0)
-            true_v = float(rb.readback_from_logits(logits, adherence_mask[pid].unsqueeze(0), agg=AGG_LOGSIGMOID)[0, 0])
-            shuf_v = float(rb.readback_from_logits(logits, other_mask[oid].unsqueeze(0), agg=AGG_LOGSIGMOID)[0, 0])
+            true_v = float(
+                rb.readback_from_logits(
+                    logits, adherence_mask[pid].unsqueeze(0), agg=AGG_LOGSIGMOID
+                )[0, 0]
+            )
+            shuf_v = float(
+                rb.readback_from_logits(
+                    logits, other_mask[oid].unsqueeze(0), agg=AGG_LOGSIGMOID
+                )[0, 0]
+            )
             pairs.append((true_v, shuf_v))
         rate, npair = _winrate(pairs)
         shuffle_check[arm_name] = {"winrate": rate, "n": npair}
@@ -373,17 +443,31 @@ def main() -> None:
     res = score_manifest(args, prompt_sets, manifest)
 
     # -- gate (Phase 0 sanity; Phase 1 reads the same numbers, different verdict) --
-    from library.captioning.readback import AGG_LOGSIGMOID
+    from anime_tools.tagger.readback import AGG_LOGSIGMOID
 
     kinds = res["kinds"]
-    arm0 = res["arms"][0] if res["arms"][0] != res["reference"] else (
-        res["arms"][1] if len(res["arms"]) > 1 else res["arms"][0])
+    arm0 = (
+        res["arms"][0]
+        if res["arms"][0] != res["reference"]
+        else (res["arms"][1] if len(res["arms"]) > 1 else res["arms"][0])
+    )
     # Gate on SPARSE richness (trigger present) — the H1 direction; no_trigger is
     # the H4 locus probe, reported but not gated.
-    rich_pair = res["paired_vs_reference"].get(arm0, {}).get(AGG_LOGSIGMOID, {}).get("richness_sparse", {})
+    rich_pair = (
+        res["paired_vs_reference"]
+        .get(arm0, {})
+        .get(AGG_LOGSIGMOID, {})
+        .get("richness_sparse", {})
+    )
     rich_wr = rich_pair.get("winrate", float("nan"))
-    shuf_wr = max((sc["winrate"] for sc in res["shuffle_check"].values()
-                   if sc["winrate"] == sc["winrate"]), default=float("nan"))
+    shuf_wr = max(
+        (
+            sc["winrate"]
+            for sc in res["shuffle_check"].values()
+            if sc["winrate"] == sc["winrate"]
+        ),
+        default=float("nan"),
+    )
     gate_rich = rich_wr == rich_wr and rich_wr >= args.gate_richness_winrate
     gate_shuf = shuf_wr == shuf_wr and shuf_wr >= args.gate_shuffle_winrate
     verdict = "PASS" if (gate_rich and gate_shuf) else "FAIL"
@@ -409,23 +493,41 @@ def main() -> None:
     for arm in res["arms"]:
         m = res["per_arm_mean"][arm][AGG_LOGSIGMOID]
         lines.append(f"| {arm} | " + _cols(m) + " |")
-    lines += ["", "## paired win-rates vs " + res["reference"] + " (logsigmoid)", "",
-              "| arm | " + " | ".join(kinds) + " |", "|---|" + "---|" * len(kinds)]
+    lines += [
+        "",
+        "## paired win-rates vs " + res["reference"] + " (logsigmoid)",
+        "",
+        "| arm | " + " | ".join(kinds) + " |",
+        "|---|" + "---|" * len(kinds),
+    ]
     for arm, agg_d in res["paired_vs_reference"].items():
         d = agg_d[AGG_LOGSIGMOID]
         cells = " | ".join(f"{d[k]['winrate']:.3f} (n{d[k]['n']})" for k in kinds)
         lines.append(f"| {arm} | " + cells + " |")
-    lines += ["", "## readback instrument check (adherence true vs shuffled, logsigmoid)", ""]
+    lines += [
+        "",
+        "## readback instrument check (adherence true vs shuffled, logsigmoid)",
+        "",
+    ]
     for arm, sc in res["shuffle_check"].items():
         lines.append(f"- {arm}: win-rate {sc['winrate']:.3f} (n={sc['n']})")
     (run_dir / "summary.md").write_text("\n".join(lines) + "\n")
 
     write_result(
-        run_dir, script=__file__, args=args,
-        metrics={"verdict": verdict, "gate_richness": gate_rich, "gate_shuffle": gate_shuf,
-                 "richness_winrate": rich_wr, "shuffle_winrate": shuf_wr,
-                 "results": res, "render_dir": str(render_dir)},
-        label=args.label, artifacts=[run_dir / "summary.md"],
+        run_dir,
+        script=__file__,
+        args=args,
+        metrics={
+            "verdict": verdict,
+            "gate_richness": gate_rich,
+            "gate_shuffle": gate_shuf,
+            "richness_winrate": rich_wr,
+            "shuffle_winrate": shuf_wr,
+            "results": res,
+            "render_dir": str(render_dir),
+        },
+        label=args.label,
+        artifacts=[run_dir / "summary.md"],
         device=str(torch.device("cuda" if torch.cuda.is_available() else "cpu")),
     )
     log.info("verdict: %s  ->  %s", verdict, run_dir)

@@ -108,9 +108,7 @@ def _install_tagger_ckpt(tmp_path, monkeypatch, repo: str | None = None) -> None
 def test_download_tagger_model_skips_both_halves_when_present(tmp_path, monkeypatch):
     """Idempotency contract (GH #21): a re-run verifies, it doesn't re-fetch 500MB."""
     _install_tagger_ckpt(tmp_path, monkeypatch)
-    monkeypatch.setattr(
-        "library.captioning._hf.hf_file_cached", lambda *_a, **_k: True
-    )
+    monkeypatch.setattr("anime_tools._hf.hf_file_cached", lambda *_a, **_k: True)
     calls = []
     monkeypatch.setattr(downloads, "run", lambda cmd, **kw: calls.append(cmd))
 
@@ -122,9 +120,7 @@ def test_download_tagger_model_skips_both_halves_when_present(tmp_path, monkeypa
 def test_download_tagger_model_fetches_backbone_when_uncached(tmp_path, monkeypatch):
     """Checkpoint on disk but backbone missing from the HF cache -> fetch only it."""
     _install_tagger_ckpt(tmp_path, monkeypatch)
-    monkeypatch.setattr(
-        "library.captioning._hf.hf_file_cached", lambda *_a, **_k: False
-    )
+    monkeypatch.setattr("anime_tools._hf.hf_file_cached", lambda *_a, **_k: False)
     calls = []
     monkeypatch.setattr(downloads, "run", lambda cmd, **kw: calls.append(cmd))
 

@@ -34,7 +34,7 @@ import logging
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
@@ -48,26 +48,74 @@ DEFAULT_SRC = "image_dataset"
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    p.add_argument("--artist", required=True, help="Artist trigger, e.g. '@mignon' (the @ is optional).")
+    p.add_argument(
+        "--artist",
+        required=True,
+        help="Artist trigger, e.g. '@mignon' (the @ is optional).",
+    )
     p.add_argument("--caption_index", default=DEFAULT_INDEX)
-    p.add_argument("--src", default=DEFAULT_SRC, help="Root the caption sidecar paths resolve under.")
-    p.add_argument("--model_dir", default="models/captioners/anima-tagger-dbv4",
-                   help="Tagger dir — supplies the vocab/category typing (no forward run).")
-    p.add_argument("--freq_floor", type=float, default=0.25,
-                   help="A tag joins the characteristic set if present in >= this fraction of the artist's images.")
-    p.add_argument("--min_images", type=int, default=4,
-                   help="...and in at least this many images (tail-tag calibration guard).")
-    p.add_argument("--min_distinct_ratio", type=float, default=2.0,
-                   help="...AND artist_freq/corpus_freq >= this (TF-IDF distinctiveness). Generic anime "
-                        "content base already draws (ratio ~1) has no richness headroom, so it is excluded. "
-                        "Set 0 to disable (rank by raw artist frequency — the old, generic behavior).")
-    p.add_argument("--max_characteristic", type=int, default=20,
-                   help="Cap the characteristic set (ranked by distinctiveness, else frequency).")
-    p.add_argument("--num_detailed", type=int, default=12, help="Real captions sampled for detailed/omission sets.")
-    p.add_argument("--omit_top_m", type=int, default=4, help="Characteristic tags removed per omission prompt.")
-    p.add_argument("--max_sparse_chars", type=int, default=6, help="Top characters used to seed sparse stubs.")
-    p.add_argument("--seed", type=int, default=42, help="Deterministic caption sampling.")
-    p.add_argument("--out", default=None, help="Output json (default bench/tag_dropout/prompt_sets_<artist>.json).")
+    p.add_argument(
+        "--src",
+        default=DEFAULT_SRC,
+        help="Root the caption sidecar paths resolve under.",
+    )
+    p.add_argument(
+        "--model_dir",
+        default="models/captioners/anima-tagger-dbv4",
+        help="Tagger dir — supplies the vocab/category typing (no forward run).",
+    )
+    p.add_argument(
+        "--freq_floor",
+        type=float,
+        default=0.25,
+        help="A tag joins the characteristic set if present in >= this fraction of the artist's images.",
+    )
+    p.add_argument(
+        "--min_images",
+        type=int,
+        default=4,
+        help="...and in at least this many images (tail-tag calibration guard).",
+    )
+    p.add_argument(
+        "--min_distinct_ratio",
+        type=float,
+        default=2.0,
+        help="...AND artist_freq/corpus_freq >= this (TF-IDF distinctiveness). Generic anime "
+        "content base already draws (ratio ~1) has no richness headroom, so it is excluded. "
+        "Set 0 to disable (rank by raw artist frequency — the old, generic behavior).",
+    )
+    p.add_argument(
+        "--max_characteristic",
+        type=int,
+        default=20,
+        help="Cap the characteristic set (ranked by distinctiveness, else frequency).",
+    )
+    p.add_argument(
+        "--num_detailed",
+        type=int,
+        default=12,
+        help="Real captions sampled for detailed/omission sets.",
+    )
+    p.add_argument(
+        "--omit_top_m",
+        type=int,
+        default=4,
+        help="Characteristic tags removed per omission prompt.",
+    )
+    p.add_argument(
+        "--max_sparse_chars",
+        type=int,
+        default=6,
+        help="Top characters used to seed sparse stubs.",
+    )
+    p.add_argument(
+        "--seed", type=int, default=42, help="Deterministic caption sampling."
+    )
+    p.add_argument(
+        "--out",
+        default=None,
+        help="Output json (default bench/tag_dropout/prompt_sets_<artist>.json).",
+    )
     return p.parse_args()
 
 
@@ -98,10 +146,12 @@ def main() -> None:
     # so caption_indices() keeps ONLY general tags: character/copyright/count/artist
     # (separate categories) and rating/metadata/deprecated all drop out. Same
     # masking the readback primitive uses for the "general_only" set.
-    from library.captioning.anima_tagger import AnimaTagger
-    from library.captioning.readback import TagReadback
+    from anime_tools.tagger.tagger import AnimaTagger
+    from anime_tools.tagger.readback import TagReadback
 
-    rb_gen = TagReadback(AnimaTagger(args.model_dir, device="cpu"), content_categories=("general",))
+    rb_gen = TagReadback(
+        AnimaTagger(args.model_dir, device="cpu"), content_categories=("general",)
+    )
 
     def general_tags(tags: List[str]) -> List[str]:
         """Caption tag strings → the general-content tag names the tagger recognizes."""
@@ -147,7 +197,11 @@ def main() -> None:
     distinct: Dict[str, float] = {}
     for t in eligible:
         af = freq[t] / n
-        gf = (corpus_df[t] / corpus_n) if corpus_n and corpus_df.get(t) else (1.0 / max(corpus_n, 1))
+        gf = (
+            (corpus_df[t] / corpus_n)
+            if corpus_n and corpus_df.get(t)
+            else (1.0 / max(corpus_n, 1))
+        )
         distinct[t] = round(af / gf, 2) if gf > 0 else float("inf")
     if args.min_distinct_ratio > 0:
         eligible = [t for t in eligible if distinct[t] >= args.min_distinct_ratio]
@@ -156,12 +210,21 @@ def main() -> None:
         eligible.sort(key=lambda t: freq[t], reverse=True)
     characteristic = eligible[: args.max_characteristic]
     char_freq = {t: round(freq[t] / n, 3) for t in characteristic}
-    log.info("artist %s: %d images, %d captioned, %d characteristic tags "
-             "(floor=%d imgs, min_distinct=%.1fx, corpus_n=%d)",
-             trigger, n, len(captions), len(characteristic), floor_count,
-             args.min_distinct_ratio, corpus_n)
-    log.info("characteristic: %s",
-             ", ".join(f"{t}({char_freq[t]},{distinct[t]}x)" for t in characteristic[:16]))
+    log.info(
+        "artist %s: %d images, %d captioned, %d characteristic tags "
+        "(floor=%d imgs, min_distinct=%.1fx, corpus_n=%d)",
+        trigger,
+        n,
+        len(captions),
+        len(characteristic),
+        floor_count,
+        args.min_distinct_ratio,
+        corpus_n,
+    )
+    log.info(
+        "characteristic: %s",
+        ", ".join(f"{t}({char_freq[t]},{distinct[t]}x)" for t in characteristic[:16]),
+    )
 
     # -- identity anchors for sparse stubs -------------------------------------
     count_freq: Counter = Counter()
@@ -183,19 +246,37 @@ def main() -> None:
     sparse: List[dict] = []
     # bare stub (identity-free content-wise) + one per top character.
     bare_tags = [trigger, top_count, "solo"]
-    sparse.append({"id": "sparse_bare", "text": ", ".join(bare_tags),
-                   "tags": bare_tags, "prompted": prompted_general(bare_tags)})
+    sparse.append(
+        {
+            "id": "sparse_bare",
+            "text": ", ".join(bare_tags),
+            "tags": bare_tags,
+            "prompted": prompted_general(bare_tags),
+        }
+    )
     for i, ch in enumerate(top_chars):
         t = [trigger, top_count, ch, "solo"]
-        sparse.append({"id": f"sparse_char{i}", "text": ", ".join(t),
-                       "tags": t, "prompted": prompted_general(t)})
+        sparse.append(
+            {
+                "id": f"sparse_char{i}",
+                "text": ", ".join(t),
+                "tags": t,
+                "prompted": prompted_general(t),
+            }
+        )
 
     # no_trigger = sparse minus the @artist trigger.
     no_trigger: List[dict] = []
     for s in sparse:
         t = [x for x in s["tags"] if x != trigger]
-        no_trigger.append({"id": s["id"].replace("sparse", "notrig"), "text": ", ".join(t),
-                           "tags": t, "prompted": prompted_general(t)})
+        no_trigger.append(
+            {
+                "id": s["id"].replace("sparse", "notrig"),
+                "text": ", ".join(t),
+                "tags": t,
+                "prompted": prompted_general(t),
+            }
+        )
 
     # detailed = deterministic sample of real captions.
     import random
@@ -211,8 +292,9 @@ def main() -> None:
         tags = captions[stem]
         text = ", ".join(tags)
         gen = prompted_general(tags)
-        detailed.append({"id": f"det{i}", "stem": stem, "text": text,
-                         "tags": tags, "prompted": gen})
+        detailed.append(
+            {"id": f"det{i}", "stem": stem, "text": text, "tags": tags, "prompted": gen}
+        )
         # omission: remove up to omit_top_m characteristic tags this caption carries
         # (ranked by artist frequency), keeping identity/order otherwise.
         present_char = [t for t in characteristic if t in set(gen)][: args.omit_top_m]
@@ -220,9 +302,16 @@ def main() -> None:
             continue  # nothing to omit -> not a useful leakage probe
         omit_set = set(present_char)
         kept = [t for t in tags if t.strip() not in omit_set]
-        omission.append({"id": f"omit{i}", "stem": stem, "text": ", ".join(kept),
-                         "tags": kept, "prompted": prompted_general(kept),
-                         "omitted": present_char})
+        omission.append(
+            {
+                "id": f"omit{i}",
+                "stem": stem,
+                "text": ", ".join(kept),
+                "tags": kept,
+                "prompted": prompted_general(kept),
+                "omitted": present_char,
+            }
+        )
 
     out = {
         "artist": trigger,
@@ -234,17 +323,35 @@ def main() -> None:
         "characteristic_distinctiveness": {t: distinct[t] for t in characteristic},
         "top_count": top_count,
         "top_characters": top_chars,
-        "params": {"freq_floor": args.freq_floor, "min_images": args.min_images,
-                   "floor_count": floor_count, "omit_top_m": args.omit_top_m,
-                   "num_detailed": args.num_detailed, "seed": args.seed},
-        "prompts": {"sparse": sparse, "detailed": detailed,
-                    "omission": omission, "no_trigger": no_trigger},
+        "params": {
+            "freq_floor": args.freq_floor,
+            "min_images": args.min_images,
+            "floor_count": floor_count,
+            "omit_top_m": args.omit_top_m,
+            "num_detailed": args.num_detailed,
+            "seed": args.seed,
+        },
+        "prompts": {
+            "sparse": sparse,
+            "detailed": detailed,
+            "omission": omission,
+            "no_trigger": no_trigger,
+        },
     }
-    out_path = Path(args.out) if args.out else (
-        REPO_ROOT / "bench" / "tag_dropout" / f"prompt_sets_{artist_slug}.json")
+    out_path = (
+        Path(args.out)
+        if args.out
+        else (REPO_ROOT / "bench" / "tag_dropout" / f"prompt_sets_{artist_slug}.json")
+    )
     out_path.write_text(json.dumps(out, indent=2, ensure_ascii=False) + "\n")
-    log.info("wrote %s  (sparse=%d detailed=%d omission=%d no_trigger=%d)",
-             out_path, len(sparse), len(detailed), len(omission), len(no_trigger))
+    log.info(
+        "wrote %s  (sparse=%d detailed=%d omission=%d no_trigger=%d)",
+        out_path,
+        len(sparse),
+        len(detailed),
+        len(omission),
+        len(no_trigger),
+    )
 
 
 if __name__ == "__main__":

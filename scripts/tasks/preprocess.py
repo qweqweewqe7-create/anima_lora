@@ -214,7 +214,7 @@ def _pop_explicit_demote_routes(extra) -> tuple[list[str], list[str]]:
     return routes, cleaned
 
 
-# Mirrors ``library.preprocess.autotag.MODES``; duplicated rather than imported
+# Mirrors ``anime_tools.stages.autotag.MODES``; duplicated rather than imported
 # so this module stays free of the PIL/torch import chain.
 _AUTOTAG_MODES = ("missing", "merge", "overwrite")
 
@@ -807,7 +807,7 @@ def _ensure_danbooru_tags() -> None:
     ``make download-danbooru-tags``. Best-effort: catch ``SystemExit``/
     ``OSError`` so a failed download skips rather than aborts.
     """
-    from library.captioning.correction import find_tag_csv
+    from anime_tools.captions.correction import find_tag_csv
 
     if find_tag_csv(ROOT) is not None:
         return

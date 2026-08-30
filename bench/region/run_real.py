@@ -234,7 +234,7 @@ def _pos_word(info: dict) -> str:
 
 
 def build_prompts(args, info: dict) -> dict[str, str]:
-    from library.captioning.position_clauses import (
+    from anime_tools.captions.position_clauses import (
         PositionClause,
         compose_caption,
         parse_caption,
@@ -435,7 +435,7 @@ def phase_tag(run_dir: Path, plan: list[dict]) -> dict[str, dict]:
     cache = run_dir / "tags.json"
     if cache.is_file():
         return json.loads(cache.read_text(encoding="utf-8"))
-    from library.captioning.anima_tagger import (
+    from anime_tools.tagger.tagger import (
         DEFAULT_TAGGER_DIR,
         AnimaTagger,
         ensure_tagger_checkpoint,
@@ -473,7 +473,7 @@ def phase_metrics(
 ) -> tuple[dict, list[dict]]:
     import cv2
 
-    from library.captioning.position_clauses import parse_caption
+    from anime_tools.captions.position_clauses import parse_caption
 
     persona = {t.lower() for t in args.persona}
     rows: list[dict] = []

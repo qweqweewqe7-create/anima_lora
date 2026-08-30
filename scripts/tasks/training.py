@@ -1128,7 +1128,7 @@ def _phash_edit_build_links(
     shuffles — that is how the colorize arm gets its own dropout regime inside a
     run whose global ``caption_tag_dropout_rate`` is 0.
     """
-    from library.preprocess.caption_variants import (
+    from anime_tools.captions.variants import (
         variants_sidecar_path,
         write_variants_sidecar,
     )

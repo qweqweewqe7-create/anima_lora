@@ -1,7 +1,7 @@
 """Anima Tagger task entry-points: vocab build / curation modes (``tagger``),
 predict (``test-tagger``), autotag, and the dbv4 checkpoint builder.
 
-``make tagger`` / ``make test-tagger`` invoke ``python -m scripts.anima_tagger.cli``
+``make tagger`` / ``make test-tagger`` invoke ``python -m anime_tools.tagger.cli.main``
 with the appropriate ``--mode``; extra args are forwarded verbatim. The PE-head
 training targets (``make preprocess-tagger`` / ``make tagger`` as a trainer)
 were archived 2026-08-27 with the dbv4 backend migration
@@ -15,7 +15,7 @@ from ._common import PY, run
 
 
 def _tagger(mode: str, extra):
-    run([PY, "-m", "scripts.anima_tagger.cli", "--mode", mode, *extra])
+    run([PY, "-m", "anime_tools.tagger.cli.main", "--mode", mode, *extra])
 
 
 def _mode_in(extra):
@@ -48,7 +48,7 @@ def cmd_tagger(extra):
     if mode is None:
         _tagger("build_vocab", extra)
     else:
-        run([PY, "-m", "scripts.anima_tagger.cli", *extra])
+        run([PY, "-m", "anime_tools.tagger.cli.main", *extra])
 
 
 def cmd_test_tagger(extra):
@@ -64,20 +64,20 @@ def cmd_test_tagger(extra):
 def cmd_autotag(extra):
     """Autotag a single image (CLI one-shot).
 
-    Thin wrapper over ``scripts.anima_tagger.autotag``: auto-downloads the
+    Thin wrapper over ``anime_tools.tagger.cli.autotag``: auto-downloads the
     tagger checkpoint on first use, runs it on ``--image``, and prints the
     predicted caption on one sentinel-prefixed stdout line. Handy for smoke-
     testing the tagger without the GUI (which runs a resident worker —
-    ``scripts.anima_tagger.autotag_server`` — for fast consecutive tagging).
+    ``anime_tools.tagger.cli.autotag_server`` — for fast consecutive tagging).
     Extra args (``--image``, ``--tagger_dir``, ``--device``) forwarded verbatim.
     """
-    run([PY, "-m", "scripts.anima_tagger.autotag", *extra])
+    run([PY, "-m", "anime_tools.tagger.cli.autotag", *extra])
 
 
 def cmd_tagger_dbv4(extra):
     """Build the dbv4-backed tagger checkpoint dir (external caformer backend).
 
-    ``python -m scripts.anima_tagger.build_dbv4_ckpt`` — copies our vocab /
+    ``python -m anime_tools.tagger.cli.build_dbv4_ckpt`` — copies our vocab /
     rules / groups / split from ``--src`` (default ``anima-tagger-v5``) next to
     a ``config.json`` naming the upstream ``animetimm/*.dbv4-full`` repo and
     thresholds seeded from its card. No weights are vendored (GPL-3.0, gated
@@ -85,4 +85,4 @@ def cmd_tagger_dbv4(extra):
     head (copyright / OC characters / people-count) on the GPU via
     ``make daemon-run ARGS="scripts/anima_tagger/train_sidecar.py"``.
     """
-    run([PY, "-m", "scripts.anima_tagger.build_dbv4_ckpt", *extra])
+    run([PY, "-m", "anime_tools.tagger.cli.build_dbv4_ckpt", *extra])

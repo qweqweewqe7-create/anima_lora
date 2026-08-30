@@ -25,7 +25,7 @@ from library.preprocess._progress import ProgressFn
 # variant sidecars before the encoder loads) and the GUI can reuse them. Re-export
 # here for backward compatibility (existing callers import them off this module /
 # the package façade).
-from library.preprocess.caption_variants import (  # noqa: F401
+from anime_tools.captions.variants import (  # noqa: F401
     build_erasure_token_pool,
     generate_caption_variants,
     read_variants_sidecar,
