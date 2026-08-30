@@ -78,7 +78,7 @@ def cmd_download_sam3(_extra):
 
 
 def cmd_download_pe(_extra):
-    # Only the .pt is needed; vision tower is vendored at library/models/pe.py.
+    # Only the .pt is needed; vision tower is vendored at anime_tools/vision/pe.py (library.models.pe).
     dst = ROOT / "models" / "pe"
     # Skip only the PE-Core fetch — still fall through to PE-Spatial below, which
     # may be missing even when PE-Core is on disk.

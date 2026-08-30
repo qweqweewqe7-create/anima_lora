@@ -27,10 +27,8 @@ def cmd_curate_group(extra):
             "scripts/curate/build_groups.py",
             "--source-dir",
             _path("source_image_dir", "image_dataset"),
-            # Grouping is curation-side and loads no encoder; the trainer
-            # injects its PE-Spatial embedder here (overridable via ARGS).
-            "--embedder",
-            "library.vision.grouping_embedder:pe_spatial_embedder",
+            # Embedder defaults to anime_tools' own PE-Spatial (Phase 2);
+            # override via ARGS="--embedder module:callable".
             *extra,
         ]
     )

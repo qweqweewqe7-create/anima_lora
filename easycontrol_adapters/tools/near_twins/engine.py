@@ -26,10 +26,11 @@ from PIL import Image
 # Run from the repo root; `library` is installed editable (`uv sync`).
 from library.vision.encoder import encode_pe_from_imageminus1to1  # noqa: F401  (kept for API parity)
 
-# Embedding primitive + member discovery promoted to the library. Re-exported
-# here so ``near_twin.outputs`` / ``__main__`` and any external importer keep
-# pulling these names from ``.engine`` unchanged.
-from library.vision.pe_features import (  # noqa: F401
+# Embedding primitive + member discovery live in ``anime_tools.grouping``
+# (curation split Phase 2). Re-exported here so ``near_twin.outputs`` /
+# ``__main__`` and any external importer keep pulling these names from
+# ``.engine`` unchanged.
+from anime_tools.grouping.features import (  # noqa: F401
     CACHE_ROOT,
     GRID_CACHE,
     GRID_NATIVE,
@@ -48,10 +49,10 @@ from library.vision.pe_features import (  # noqa: F401
     read_tags,
 )
 
-# Stage-B dense grid match promoted to the library so the dataset-grouping
-# curation tool shares the exact same near-twin gate. Re-exported here so
-# ``near_twin.outputs`` / ``__main__`` keep importing them from ``.engine``.
-from library.vision.pe_matching import (  # noqa: F401
+# Stage-B dense grid match shared with the dataset-grouping tool (same
+# near-twin gate). Re-exported here so ``near_twin.outputs`` / ``__main__``
+# keep importing them from ``.engine``.
+from anime_tools.grouping.matching import (  # noqa: F401
     MatchResult,
     _geom_filter,
     match_grids,

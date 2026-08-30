@@ -24,12 +24,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Move manifest (proposal §"Move manifest"). Directories are recursive; globs
 # are relative to the repo root.
 CURATION_PATHS: tuple[str, ...] = (
-    # Phase 1 (2026-08-30) moved captions / tagger / stages into the
-    # ``anime_tools`` package; what remains here is the Phase 2 set
-    # (masking + grouping + the task wrappers). ``anime_tools`` imports are
-    # allowed — that is the dependency direction.
+    # Phase 1 (2026-08-30) moved captions / tagger / stages and Phase 2 (same
+    # day) masking / grouping into the ``anime_tools`` package. What remains
+    # here is the trainer-side remainder that must keep the direction: the
+    # forwarding shells (deleted in Phase 3) and the ``make`` task wrappers.
+    # ``anime_tools`` imports are allowed — that is the dependency direction.
     "library/vision/pe_features.py",
     "library/vision/pe_matching.py",
+    "library/vision/grouping_embedder.py",
     "library/datasets/grouping.py",
     "scripts/curate/**/*.py",
     "scripts/preprocess/generate_masks.py",
@@ -49,6 +51,9 @@ CURATION_PATHS: tuple[str, ...] = (
 # ``library.preprocess.caption_variants`` …) are trainer-side forwarding modules
 # and are forbidden here too: curation code imports ``anime_tools`` directly.
 FORBIDDEN_ROOTS: tuple[str, ...] = ("library", "networks", "train")
+# The Phase 1/2 forwarding shims + shells are themselves trainer files that
+# exist only to redirect into ``anime_tools``; their single import is exempt.
+ALLOWED_MODULES: frozenset[str] = frozenset({"library._moved"})
 
 
 _IMPORT_RE = re.compile(
@@ -70,6 +75,8 @@ def _in_manifest(module: str, manifest: set[str]) -> bool:
 
 
 def _forbidden(module: str, manifest: set[str]) -> bool:
+    if module in ALLOWED_MODULES:
+        return False
     if not any(module == r or module.startswith(r + ".") for r in FORBIDDEN_ROOTS):
         return False
     return not _in_manifest(module, manifest)

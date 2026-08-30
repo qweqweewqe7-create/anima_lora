@@ -1,6 +1,35 @@
 # Curation split — tagger / masking / grouping / caption polishing → `sorryhyun/anime_tools`
 
-Status: **Phase 1 complete (2026-08-30).** `github.com/sorryhyun/anime_tools` exists (private until the trainer branch merges — flip with `gh repo edit sorryhyun/anime_tools --visibility public --accept-visibility-change-consequences`, same for `ComfyUI-Anima-Tagger`); captions + tagger + stages live there, the trainer depends on it, old paths are shims. Contract: `../anime_tools/docs/contract.md`. Next: Phase 2 (masking + grouping + GUI panels).
+Status: **Phase 2 complete (2026-08-30).** `github.com/sorryhyun/anime_tools` exists (private until the trainer branch merges — flip with `gh repo edit sorryhyun/anime_tools --visibility public --accept-visibility-change-consequences`, same for `ComfyUI-Anima-Tagger`); captions + tagger + stages (Phase 1) and masking + grouping + the vendored PE tower (Phase 2) live there, the trainer depends on it, old paths are shims. Contract: `../anime_tools/docs/contract.md`. Next: Phase 3 (delete shims, one release out).
+
+Phase 2 log:
+- 2026-08-30 — masking (`anime_tools/masking/cli/{generate_masks,generate_masks_mit,merge_masks,
+  probe_nms_pairs,probe_sam_masks}`) and grouping (`anime_tools/grouping/{features,matching,
+  groups,embedder}` + `cli/{build_groups,match_decensored,apply_decensored}`) moved; extras
+  `[grouping]` / `[masking]`; `tests/test_grouping_grid_match.py` moved with them.
+- **Decision reversed from Phase 0(b): PE-Spatial is owned by `anime_tools`.** The user wants a
+  standalone `anime_tools` to group with the *same* embedder the trainer uses, so the vendored
+  PE tower moved to `anime_tools/vision/pe.py` (+ `load_pe_spatial()`, Hub fetch via `_hf`,
+  anchored on `ANIME_TOOLS_MODELS`) and `build_groups` defaults to
+  `anime_tools.grouping.embedder:pe_spatial_embedder` — `make curate-group` no longer injects
+  anything (`--embedder` stays as the override). The trainer still needs the tower for REPA /
+  CMMD / PE caching, so `library/models/pe.py` is a **permanent re-export** (sys.modules alias,
+  not a deprecation shim) and the `library/vision/{encoder,encoders,buckets}.py` registry stays
+  trainer-side. Embedder dtype pinned to bf16 (the pre-split `load_pe_encoder` default) so
+  existing `$NEAR_TWIN_CACHE` entries stay valid.
+- **GUI panels stay in the trainer** (decision 2026-08-30; the proposal's `gui` extra is
+  dropped). The panels already talk to the package only through the `autotag_server` stdio
+  protocol, daemon jobs, and the torch-free grammar modules; moving 1.5k lines of Qt + ~200
+  i18n strings bought nothing since there is no standalone curation GUI (non-goal). MCP was
+  considered and rejected for the same reason — it would replace a process boundary that the
+  daemon bridge already covers, not relocate the widgets.
+- Guard test manifest = the forwarding shims/shells + `scripts/tasks/{tagger,masking,curate}.py`
+  (`library._moved` is the one allowed trainer import).
+- Exit gate: PE-Spatial embedder bit-exact old-vs-new on 20 images (`cls` + `grid16`
+  max|Δ| = 0); SAM + MIT + merged masks byte-identical on the same 20 images run through the
+  HEAD scripts vs the forwarding shells; trainer suite green (`test_caption_shuffle::
+  test_loader_randomized_draws_r_family_and_v0` flaked once — unseeded draw, passes on HEAD
+  too, pre-existing); package suite green.
 
 Phase 1 log:
 - 2026-08-30 — repo created (`anime_tools/{captions,tagger,stages}` + `_env/_walk/_hf/path_filter`
@@ -253,8 +282,7 @@ become shims that warn. Tagger node repo extracted, `_vendor` dropped. **Exit: `
 test-unit` green in both repos; `make preprocess` end-to-end on the live dataset produces
 byte-identical `.txt` + TE caches vs. pre-split (hash the caption master before/after).**
 
-**Phase 2 — masking + grouping + GUI.** Move the remaining extras; trainer GUI mounts the
-panels conditionally; `make mask|autotag|curate-group|…` forward to `anime-tools` with a
+**Phase 2 — masking + grouping (+ PE-Spatial; GUI panels stay).** Move the remaining extras; `make mask|autotag|curate-group|…` forward to `anime-tools` with a
 deprecation line. Windows tarball (GH #92): the git dependency resolves at `uv sync` like any
 other; the offline tarball vendors a checkout of the pinned tag (`filter="data"`, no symlinks —
 same rules as [[project_gh92_windows_backend_default_group]]). **Exit: GUI smoke in 4 languages (translator agent re-syncs the moved

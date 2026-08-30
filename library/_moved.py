@@ -1,5 +1,5 @@
 """Import-path forwarding for modules moved to ``anime_tools`` (curation split
-Phase 1, 2026-08-30 — ``docs/proposal/curation_repo_split.md``). Every shim is
+Phases 1–2, 2026-08-30 — ``docs/proposal/curation_repo_split.md``). Every shim is
 deleted in Phase 3; new code imports ``anime_tools.*`` directly."""
 
 from __future__ import annotations

@@ -80,7 +80,7 @@ except ImportError:  # dotenv is a soft dependency — env vars still work witho
 
 
 # Run from the repo root; `library` is installed editable (`uv sync`).
-from library.vision.grouping_embedder import pe_spatial_embedder
+from anime_tools.grouping.embedder import pe_spatial_embedder
 
 from .engine import (
     PairRecord,
