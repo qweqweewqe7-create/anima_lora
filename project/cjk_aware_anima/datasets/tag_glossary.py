@@ -4,7 +4,7 @@ Our captions are tag strings, so the JA side of the corpus is only as good as
 the JA wording of the tags — and the *wording* is the whole point: ext rows are
 only trained where the corpus visits them, so a JA caption saying 二本の髪 where
 users type ツインテール trains the wrong rows. That is the same
-distribution argument the proper-noun lexicon makes (``../done.md``), applied to
+distribution argument the proper-noun lexicon makes (``../findings.md``), applied to
 the general vocabulary.
 
 Machine translation is the wrong primary tool for this: it renders meaning, not

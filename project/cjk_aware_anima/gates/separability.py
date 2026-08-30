@@ -1,4 +1,4 @@
-"""Char-row separability probe — glyph-line ceilings, see done2.md (CPU-only).
+"""Char-row separability probe — glyph-line ceilings, see findings.md §6 (CPU-only).
 
 Glyph rendering needs visually distinct kanji (鎧 vs 錯) to arrive at
 cross-attn as *distinct vectors*, not just distinct ids. The `param=global`
@@ -6,7 +6,7 @@ correction has no per-row freedom so it should not be able to collapse rows —
 this measures that instead of assuming it. Measured verdicts + the
 byte-permutation init collision it surfaced (fixed in
 `ext_vocab.build_ext_table`) are recorded in
-project/cjk_aware_anima/done2.md.
+project/cjk_aware_anima/findings.md (§6).
 
 The measured set is every **single-character glyph row** in the ext table:
 the union of qwen-map tokens whose decoded surface is one CJK char (where the

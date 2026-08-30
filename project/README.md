@@ -44,19 +44,17 @@ Finished lines are listed in [`finished/README.md`](finished/README.md)
 
 Active projects:
 
-- [`cjk_aware_anima/`](cjk_aware_anima/) — native JA/CJK prompt conditioning
+- [`cjk_aware_anima/`](cjk_aware_anima/) — native JA prompt conditioning
   via an extended T5-side vocab distilled against the EN-translation teacher.
-  Probe + zero-shot ext vocab measured (`bench/cjk_adapter/`); the Phase 2a
-  data assets MT cannot produce are built ([`datasets/`](cjk_aware_anima/datasets/)
-  — Wikidata proper-noun lexicon, native-register manga eval set); Phase 2b is
-  closed (loop in `scripts/distill_cjk/`, one-off gate drivers in
-  [`gates/`](cjk_aware_anima/gates/)) and Phase 2c is running. Split four ways
-  instead of a single founding proposal: [`motivation.md`](cjk_aware_anima/motivation.md) (why,
-  incl. the directions already ruled out),
-  [`done.md`](cjk_aware_anima/done.md) (completed-item checklist),
-  [`plan.md`](cjk_aware_anima/plan.md) (what remains — live phase, deployment,
-  risks), and one **dated per-phase report** carrying the measured verdicts:
-  [`report_0816_phase2.md`](cjk_aware_anima/report_0816_phase2.md) (Phase 2b/2c,
-  incl. the two withdrawn metrics). Measured numbers stay with the code:
-  [`datasets/README.md`](cjk_aware_anima/datasets/README.md) and
-  `bench/cjk_adapter/results/`.
+  Encoder-side research is exhausted (rows-only design settled; rare kanji
+  character names fail under every measured lever — data, objective, adapter
+  capacity); **v1 ships `cjk_vocab_pack_synthja` once the glossary is signed
+  off**, and the one open research lever is a real co-occurrence corpus.
+  Home is three digests: [`findings.md`](cjk_aware_anima/findings.md)
+  (every settled verdict + ruled-out directions),
+  [`deliverables.md`](cjk_aware_anima/deliverables.md) (code, data builders,
+  packs, ship contract, blocker), [`plan.md`](cjk_aware_anima/plan.md) (Phase 3
+  ship → corpus extension → deferred glyph line). Measured tables stay in the
+  dated reports (`reports/0816_phase2.md`, `reports/0827_names_synth.md`,
+  `reports/0830_adapter_lora.md`), [`datasets/README.md`](cjk_aware_anima/datasets/README.md)
+  and `bench/cjk_{adapter,distill}/results/`.

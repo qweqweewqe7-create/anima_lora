@@ -1,7 +1,7 @@
 # CJK-aware Anima — Phase 2c item (b): synthetic name register (2026-08-27/28)
 
-*Line home: [`plan.md`](plan.md) · ledger [`done.md`](done.md) · prior verdicts
-[`report_0816_phase2.md`](report_0816_phase2.md).*
+*Line home: [`plan.md`](../plan.md) · verdict digest [`findings.md`](../findings.md) · prior verdicts
+[`0816_phase2.md`](0816_phase2.md).*
 
 Question under test: **can text pairs alone make a kanji character name render
 in a JA prompt?** (the user's question, 2026-08-27). Answer so far: **the rows
@@ -45,7 +45,7 @@ render because their captions are plentiful; the script is irrelevant.
 
 ## 3. Arm B — synthetic EN-context names (`cjk_vocab_pack_synth`)
 
-Builder: [`datasets/synth_names.py`](datasets/synth_names.py).
+Builder: [`datasets/synth_names.py`](../datasets/synth_names.py).
 
 - **Name source**: danbooru wiki 2026 snapshot (`other_names`, `post_count`,
   `category_name`) — carries full names the tag-pair set lacks (`博麗霊夢` vs
@@ -145,7 +145,7 @@ above floor in JA context → the objective, not the data, is the block
 4. **Phase 3 ship** when the grid passes: encoder + strategy shim out of
    `bench/`, sidecar as release asset, ComfyUI touchpoint. The synth registers
    ship *inside the pack*, nothing to distribute.
-5. The glyph line ([`plan2.md`](plan2.md)) stays behind Phase 3; AnimeText
+5. The glyph line (plan2, now parked in [`plan.md`](../plan.md) Phase 4) stays behind Phase 3; AnimeText
    (`deepghs/AnimeText`, detection-only, its test split is what
    `manga_text.py` already used) and PP-OCRv6 are its Phase-1 inputs, not
    this line's.

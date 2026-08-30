@@ -1,7 +1,7 @@
 # `datasets/` — corpus builders for the CJK distillation
 
 Data-side tooling for Phase 2a of [`../plan.md`](../plan.md). This file is the
-home of the measured results for everything below; [`../done.md`](../done.md)
+home of the measured results for everything below; [`../deliverables.md`](../deliverables.md)
 only lists what is finished.
 Everything writes into `assets/` (gitignored — regenerate rather than commit)
 except `tag_overrides.json`, which is hand-authored and committed. Run from the
@@ -301,7 +301,7 @@ is not unique because both boorus share each artist directory (`dan_` prefix =
 danbooru id space). First root wins, so the curated copy beats its own source.
 
 **What widening does and does not buy** — measured in
-[`../report_0816_phase2.md`](../report_0816_phase2.md#d1-wide--the-gelcrawl-widening-measured-2026-08-16).
+[`../reports/0816_phase2.md`](../reports/0816_phase2.md#d1-wide--the-gelcrawl-widening-measured-2026-08-16).
 It buys **visits** (500+ band 381 → 756, 4.3× total) and **not vocabulary**
 (ext rows visited flat at ~6,400), because the JA side is composed from a
 glossary that did not grow. Corollary worth keeping: the render grid's
@@ -383,4 +383,4 @@ knot" (the sense) while MT's お辞儀 round-trips its own string at 1.0 — so
 those rows go to `tag_glossary_review.md` (which now also surfaces
 `mt_verified` rows with a community rival, plus the D1-words katakana/kanji
 section) for the override pass. Measured in
-[`../report_0816_phase2.md`](../report_0816_phase2.md#d1-pairs-item-2--the-arbiter-re-selection-measured-2026-08-17).
+[`../reports/0816_phase2.md`](../reports/0816_phase2.md#d1-pairs-item-2--the-arbiter-re-selection-measured-2026-08-17).

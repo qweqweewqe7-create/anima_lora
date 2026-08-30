@@ -1,10 +1,10 @@
-# CJK-aware Anima — plan3: adapter capacity (ext-gated LoRA on the LLM Adapter)
+# CJK-aware Anima — report 0830: adapter capacity (plan3, ext-gated LoRA on the LLM Adapter) — CLOSED
 
-*Line home: [`plan.md`](plan.md) is the vocab-pack line (rows only, adapter
-frozen). This document promotes its **2-ii escalation rung** into its own
-line, now that the capacity signal it was gated on has appeared
-([`report_0827_names_synth.md`](report_0827_names_synth.md) §8–§9).
-Written 2026-08-29.*
+*Written 2026-08-29 as `plan3.md` (the promoted 2-ii rung of the old plan.md);
+kept verbatim as the measured record after the line closed 2026-08-30 — the
+planning parts are historical, the Phase 1 / Phase 2 / metric-curation
+sections are the verdicts. Digest: [`findings.md`](../findings.md) §4–5.
+Capacity signal it was gated on: [`0827_names_synth.md`](0827_names_synth.md) §8–§9.*
 
 Status: **CLOSED 2026-08-30 — Phase 2 reg arm passes every distill health
 metric and still fails gates 1 and 2** (§Phase 2 result). Pre-committed
