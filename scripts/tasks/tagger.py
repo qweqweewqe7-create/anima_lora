@@ -5,7 +5,7 @@ predict (``test-tagger``), autotag, and the dbv4 checkpoint builder.
 with the appropriate ``--mode``; extra args are forwarded verbatim. The PE-head
 training targets (``make preprocess-tagger`` / ``make tagger`` as a trainer)
 were archived 2026-08-27 with the dbv4 backend migration
-(``_archive/anima_tagger_training/``); sidecar training runs via
+(``../anime_tools/_archive/anima_tagger_training/``, moved with the curation split); sidecar training runs via
 ``make daemon-run ARGS="-m anime_tools.tagger.cli.train_sidecar"``.
 """
 

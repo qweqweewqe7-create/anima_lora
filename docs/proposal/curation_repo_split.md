@@ -1,6 +1,6 @@
 # Curation split — tagger / masking / grouping / caption polishing → `sorryhyun/anime_tools`
 
-Status: **Phases 0–3 complete (2026-08-30); Phase 3b (bench/docs relocation) planned.**
+Status: **Phases 0–3b complete (2026-08-30).** Remaining: flip both repos public, merge the trainer branch, the GH #92 tarball item.
 `github.com/sorryhyun/anime_tools` (package `anime_tools`, git dependency — no PyPI) owns the
 caption grammar + polishing stages, the Anima Tagger, masking (SAM3 / MIT / merge), grouping
 (PE-Spatial near-twin features → `groups.json`) and the vendored PE vision tower. The trainer
@@ -87,34 +87,33 @@ tarball (GH #92) must vendor a checkout of the pinned `anime_tools` rev
 (`filter="data"`, no symlinks) — a release-process item, tracked in
 [[project_gh92_windows_backend_default_group]].
 
-## Phase 3b — relocate tagger-only bench / docs / tests (audit 2026-08-30)
+## Phase 3b — relocate tagger-only bench / docs / tests (done 2026-08-30)
 
-Everything below imports only `anime_tools.*` (+ stdlib/torch) and is curation-shaped, so it
-moves to the package under the same one rule. Everything *not* listed stays on purpose.
+Everything that imported only `anime_tools.*` (+ stdlib/torch) and was curation-shaped moved
+to the package under the same one rule; package rev `971e229` (`v0.2.0`), trainer pin bumped.
 
-**Move:**
-- `bench/tagger_external/{calibration_check,probe_position_rescore}.py` + `README.md` +
-  `results/` → `../anime_tools/bench/tagger_external/`. The package has no `bench/` yet —
-  add a minimal `bench/_common.py` (the `result.json` envelope + run-dir helper; copy, don't
-  import `bench._common` from the trainer). `probe_position_rescore.py:35` still imports
-  `bench.tagger_external.run_bench`, which was archived 2026-08-30 — fix (inline
-  `collect_external` / `load_external` or drop the probe) **before** moving.
-- `bench/sam3_soft_prompt/*` → `../anime_tools/bench/sam3_soft_prompt/`. One trainer leak:
-  `library.preprocess._dataset` (the dataset walker) — swap for `anime_tools._walk` (the
-  contract's ≤50-line-helper rule), then it is clean.
-- Docs → `../anime_tools/docs/`: `docs/experimental/soft_prompt_for_sam.md` and
-  `docs/proposal/sam3_soft_prompt_expansion.md` (the shipped `caption-position` subject
-  detector lives in `anime_tools.stages.instance_detection`), and
-  `docs/findings/tagger_label_sharing_heads.md` (closed tagger-head finding; keep its pointer
-  to the trainer's `_archive/anima_tagger_training/pe_backend_removed_2026_08_30/`).
-  Leave 3-line "moved" pointers behind for one release, then delete them together with the
-  existing pointers (`docs/experimental/{anima_tagger,position_captions}.md`,
-  `docs/proposal/tagger_caformer_backend.md`).
-- `tests/test_grouped_loss_negweight.py` (imports only `anime_tools.captions.group_router`)
-  → package tests, unless `test_caption_drop_groups.py` / `test_tag_groups.py` already cover it.
-- Gitignored history: `_archive/{anima_tagger_training,tagger_eval,tagger_factored_head}`
-  (~2.1 GB) → the package's `_archive/`. No dependency effect either way; update the
-  `bench/tagger_external/README.md` pointer if it moves.
+**Moved** (package paths): `bench/{tagger_external,sam3_soft_prompt}/` (+ their gitignored
+`results/`), `docs/{soft_prompt_for_sam,sam3_soft_prompt_expansion,tagger_label_sharing_heads}.md`,
+`tests/test_grouped_loss_negweight.py` (the λ<1 `inactive_neg_weight` invariants — the package's
+`test_tagger_sentinel_groups.py` only covered λ=1), and the gitignored
+`_archive/{anima_tagger_training,tagger_eval,tagger_factored_head}` history (~2.1 GB; the one
+*tracked* file in there, `pe_backend_removed_2026_08_30/anima_tagger_model.py`, stays in the
+trainer since `_archive/bench/tagger_ceiling` still names it). Fixes made on the way, beyond
+the audit's list: the package got `bench/_common.py` as a **copy** of the trainer's envelope
+helper (never an import); every `sam3_soft_prompt` script also leaked `library.env.
+resolve_under_home` → `anime_tools._env.resolve_path` (plus the audited `walk_images` →
+`anime_tools._walk`); `probe_position_rescore.py` inlines `load_external` / `collect_external`
+from the archived `run_bench.py` and anchors `--model_dir` on the package's `_archive/`. It
+still reads the trainer's `bench/position_captions/results/` artifacts — run it from the
+trainer checkout (`make daemon-run ARGS="../anime_tools/bench/tagger_external/…"`), which is the
+allowed direction (tagger judging trainer output). Package `pyproject` gained a `bench`
+dependency group (scipy / opencv / matplotlib). Gate: all 8 moved scripts import + `--help`
+clean under the package env; package suite 327 passed (86 → +7 moved); trainer boundary /
+parity suites pass on the bumped rev; full `ruff check` on the package's stricter rule set.
+
+Trainer-side 3-line "moved" pointers were left at the three old doc paths for one release —
+delete them together with the Phase-1 pointers (`docs/experimental/{anima_tagger,
+position_captions}.md`, `docs/proposal/tagger_caformer_backend.md`).
 
 **Stays (tagger used as a *judge* of trainer output — trainer→package direction, allowed):**
 - `bench/{readback,tag_dropout,position_captions,region}/` — generate with the DiT
@@ -132,9 +131,6 @@ moves to the package under the same one rule. Everything *not* listed stays on p
   (`scripts/update.py` preserves it); not a duplicate.
 - `tests/{test_caption_variant_sidecars,test_curation_walk_parity,test_curation_boundary,
   test_caption_shuffle,test_read_caption}.py` — cross-boundary or trainer-side.
-
-Gate: same as Phases 1–2 — byte-identical bench outputs / passing tests before and after;
-bump the pinned rev + `uv lock` in the trainer when the package gains `bench/`.
 
 ## Open risks
 
