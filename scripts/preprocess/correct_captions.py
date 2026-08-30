@@ -115,7 +115,7 @@ def main() -> None:
         "--qwen3",
         type=str,
         default=None,
-        help="Qwen3 tokenizer path (tokenizer-only load; required for randomize).",
+        help="Qwen3 tokenizer directory (tokenizer-only load; required for randomize).",
     )
     parser.add_argument(
         "--t5_tokenizer_path",
@@ -123,7 +123,7 @@ def main() -> None:
         dest="t5_tokenizer_path",
         type=str,
         default=None,
-        help="T5 tokenizer path (default: library/anima/configs/t5_old/).",
+        help="T5 tokenizer directory (spiece.model + tokenizer.json).",
     )
     args = parser.parse_args()
 
@@ -141,14 +141,18 @@ def main() -> None:
     qwen3_tokenizer = None
     t5_tokenizer = None
     if randomize_rate > 0.0 and num_variants >= 2:
-        from library.anima.weights import load_qwen3_tokenizer, load_t5_tokenizer
+        from library.captioning.tokenizers import (
+            load_qwen3_tokenizer_from_dir,
+            load_t5_tokenizer_from_dir,
+        )
 
-        if not args.qwen3:
+        if not args.qwen3 or not args.t5_tokenizer_path:
             raise SystemExit(
-                "--caption_tag_randomize_rate > 0 requires --qwen3 (tokenizer path)."
+                "--caption_tag_randomize_rate > 0 requires --qwen3 and "
+                "--t5_tokenizer_path (tokenizer directories; `make` resolves them)."
             )
-        qwen3_tokenizer = load_qwen3_tokenizer(args.qwen3)
-        t5_tokenizer = load_t5_tokenizer(args.t5_tokenizer_path)
+        qwen3_tokenizer = load_qwen3_tokenizer_from_dir(args.qwen3)
+        t5_tokenizer = load_t5_tokenizer_from_dir(args.t5_tokenizer_path)
 
     stats = write_corrected_preprocess_captions(
         Path(args.src),

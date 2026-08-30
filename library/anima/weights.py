@@ -416,6 +416,24 @@ def _get_qwen_config_dir(qwen3_path: str) -> str:
     return config_dir
 
 
+def qwen3_tokenizer_dir(qwen3_path: str) -> str:
+    """Directory holding the tokenizer for ``qwen3_path`` (the path itself when
+    it is a model directory, else the bundled Qwen3/Qwen3.5 config dir).
+
+    Trainer-side resolver handed to curation stages (``--qwen3 <dir>``), which
+    load tokenizers from directories only (``library.captioning.tokenizers``).
+    """
+    qwen3_path = str(resolve_under_home(qwen3_path))
+    if os.path.isdir(qwen3_path):
+        return qwen3_path
+    return _get_qwen_config_dir(qwen3_path)
+
+
+def t5_tokenizer_dir() -> str:
+    """The bundled ``t5_old`` tokenizer config directory."""
+    return os.path.join(os.path.dirname(__file__), "configs", "t5_old")
+
+
 def load_qwen3_tokenizer(qwen3_path: str):
     """Load Qwen3/Qwen3.5 tokenizer only (without the text encoder model).
 

@@ -180,7 +180,7 @@ def generate_caption_variants(
     to scatter clause attributes across the whole caption and reassign them to
     the wrong subject.
     """
-    from library.anima import training as anima_train_utils
+    from library.captioning import shuffle as anima_train_utils
     from library.captioning.position_clauses import (
         PositionClause,
         compose_caption,

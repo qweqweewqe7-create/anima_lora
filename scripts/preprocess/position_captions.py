@@ -380,7 +380,7 @@ def parse_args() -> argparse.Namespace:
     c.add_argument(
         "--qwen3",
         default=None,
-        help="Qwen3 tokenizer path — enables the token-budget column in the report",
+        help="Qwen3 tokenizer directory — enables the token-budget column in the report",
     )
     c.add_argument("--max_tokens", type=int, default=DEFAULT_MAX_TOKENS)
     return p.parse_args()
@@ -589,9 +589,9 @@ def main() -> None:
 
     token_count_fn = None
     if args.qwen3:
-        from library.anima.weights import load_qwen3_tokenizer
+        from library.captioning.tokenizers import load_qwen3_tokenizer_from_dir
 
-        tokenizer = load_qwen3_tokenizer(args.qwen3)
+        tokenizer = load_qwen3_tokenizer_from_dir(args.qwen3)
 
         def token_count_fn(text: str) -> int:
             return len(tokenizer(text, add_special_tokens=True)["input_ids"])

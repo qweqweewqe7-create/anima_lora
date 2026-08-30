@@ -876,9 +876,19 @@ def cmd_preprocess_captions(extra, caption_config: dict[str, object] | None = No
             "--caption_tag_randomize_rate",
             randomize,
         ]
-        # Identity-randomize needs the tokenizer to build the erasure pool.
+        # Identity-randomize needs the tokenizers to build the erasure pool.
+        # The curation-side script loads tokenizers from *directories* only
+        # (it must not know the safetensors→bundled-config mapping), so
+        # resolve them here on the trainer side.
         if _float_or_zero(randomize) > 0.0 and n_variants >= 2:
-            cmd += ["--qwen3", _QWEN3_TOKENIZER]
+            from library.anima.weights import qwen3_tokenizer_dir, t5_tokenizer_dir
+
+            cmd += [
+                "--qwen3",
+                qwen3_tokenizer_dir(_QWEN3_TOKENIZER),
+                "--t5_tokenizer_path",
+                t5_tokenizer_dir(),
+            ]
     run(cmd)
 
 
