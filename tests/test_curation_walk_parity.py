@@ -1,4 +1,4 @@
-"""The curation-side copies in ``library/captioning/_walk.py`` must behave
+"""The curation-side copies in ``anime_tools._walk`` must behave
 exactly like the trainer originals they duplicate (both walk the same caption
 master). If one side changes, change the other — or this fails."""
 

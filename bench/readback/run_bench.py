@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Phase 0a — tag read-back validity (gate; no training, no new models).
 
-Validates the primitive in ``library/captioning/readback.py`` before any
+Validates the primitive in ``anime_tools.tagger.readback`` before any
 selection/RWR consumer is allowed to trust it. Everything here scores *cached*
 tagger PE features over the tagger's own held-out split — no re-encoding, no
 renders, seconds on one GPU.
@@ -158,7 +158,7 @@ def _collect_logits_dbv4(
     )
     if not cache_path.exists():
         raise SystemExit(
-            f"missing {cache_path} — run scripts/anima_tagger/train_sidecar.py "
+            f"missing {cache_path} — run python -m anime_tools.tagger.cli.train_sidecar "
             f"--cache_only first"
         )
     with safe_open(str(cache_path), "pt") as f:

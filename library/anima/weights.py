@@ -421,7 +421,7 @@ def qwen3_tokenizer_dir(qwen3_path: str) -> str:
     it is a model directory, else the bundled Qwen3/Qwen3.5 config dir).
 
     Trainer-side resolver handed to curation stages (``--qwen3 <dir>``), which
-    load tokenizers from directories only (``library.captioning.tokenizers``).
+    load tokenizers from directories only (``anime_tools.captions.tokenizers``).
     """
     qwen3_path = str(resolve_under_home(qwen3_path))
     if os.path.isdir(qwen3_path):

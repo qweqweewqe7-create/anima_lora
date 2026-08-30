@@ -281,7 +281,7 @@ COMMANDS = {
         "CAPTION_CORPUS_DIR in .env), or any other CLI mode via "
         'ARGS="--mode predict|scan_role_markers|derive_groups". PE-head '
         "training was archived 2026-08-27 — sidecar training runs via "
-        "daemon-run scripts/anima_tagger/train_sidecar.py.",
+        "daemon-run -m anime_tools.tagger.cli.train_sidecar.",
     ),
     "test-tagger": (
         tagger.cmd_test_tagger,
@@ -292,7 +292,7 @@ COMMANDS = {
         tagger.cmd_tagger_dbv4,
         "Build the dbv4-backed (external caformer_b36) tagger checkpoint dir "
         "from the archived anima-tagger-v5's vocab; sidecar training runs via "
-        "daemon-run scripts/anima_tagger/train_sidecar.py.",
+        "daemon-run -m anime_tools.tagger.cli.train_sidecar.",
     ),
     "autotag": (
         tagger.cmd_autotag,

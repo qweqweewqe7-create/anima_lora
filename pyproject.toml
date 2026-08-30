@@ -34,10 +34,12 @@ dependencies = [
     "Pillow",
     "psutil",
     "opencv-python>=4.11.0.86",
-    # Masking
+    # Masking moved to anime-tools[masking] (curation split); sam3 stays a
+    # direct dep for bench/position_captions/probe_autocaption.py and
+    # albumentations for project/finished/sr. segmentation-models-pytorch has
+    # no trainer-side user any more and rides only on the package extra.
     "pyyaml",
     "sam3 @ git+https://github.com/facebookresearch/sam3.git",
-    "segmentation-models-pytorch>=0.3.4",
     "albumentations>=1.4.0",
     "packaging",
     "pycocotools>=2.0.11",
@@ -129,7 +131,7 @@ override-dependencies = [
 # (the `anime-tools-dev` group swaps in ../anime_tools as an editable path
 # source; it conflicts with the default `anime-tools-git` group by design).
 anime-tools = [
-    { git = "https://github.com/sorryhyun/anime_tools", rev = "3e1668cda53dc828d11cf3b78b56c18f9c7cdb35", group = "anime-tools-git" },
+    { git = "https://github.com/sorryhyun/anime_tools", rev = "a3b3a4a12bd83fe50d13d4c141eb7fc6d136c2bc", group = "anime-tools-git" },
     { path = "../anime_tools", editable = true, group = "anime-tools-dev" },
 ]
 torch = [

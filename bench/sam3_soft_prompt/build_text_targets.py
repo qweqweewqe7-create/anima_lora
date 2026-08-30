@@ -53,12 +53,7 @@ from library.preprocess._dataset import walk_images  # noqa: E402
 
 
 def _mit_module():
-    spec = importlib.util.spec_from_file_location(
-        "generate_masks_mit", ROOT / "scripts/preprocess/generate_masks_mit.py"
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    return importlib.import_module("anime_tools.masking.cli.generate_masks_mit")
 
 
 def parse_args() -> argparse.Namespace:

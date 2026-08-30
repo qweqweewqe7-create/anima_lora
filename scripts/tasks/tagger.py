@@ -6,7 +6,7 @@ with the appropriate ``--mode``; extra args are forwarded verbatim. The PE-head
 training targets (``make preprocess-tagger`` / ``make tagger`` as a trainer)
 were archived 2026-08-27 with the dbv4 backend migration
 (``_archive/anima_tagger_training/``); sidecar training runs via
-``make daemon-run ARGS="scripts/anima_tagger/train_sidecar.py"``.
+``make daemon-run ARGS="-m anime_tools.tagger.cli.train_sidecar"``.
 """
 
 from __future__ import annotations
@@ -83,6 +83,6 @@ def cmd_tagger_dbv4(extra):
     thresholds seeded from its card. No weights are vendored (GPL-3.0, gated
     — fetched under the user's HF token on first use). Then train the sidecar
     head (copyright / OC characters / people-count) on the GPU via
-    ``make daemon-run ARGS="scripts/anima_tagger/train_sidecar.py"``.
+    ``make daemon-run ARGS="-m anime_tools.tagger.cli.train_sidecar"``.
     """
     run([PY, "-m", "anime_tools.tagger.cli.build_dbv4_ckpt", *extra])

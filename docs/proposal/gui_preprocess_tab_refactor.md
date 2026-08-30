@@ -111,8 +111,8 @@ one-liner over `knobs.py`. Target ≲ 500 lines.
 
 | Layer | Status | Work |
 |---|---|---|
-| `library/captioning/tag_drop_groups.py` + `correction.py` | done | — |
-| `scripts/preprocess/correct_captions.py --caption_drop_groups` | done | — |
+| `anime_tools.captions.tag_drop_groups` + `correction` | done | — |
+| `anime_tools.stages.cli.correct_captions --caption_drop_groups` | done | — |
 | `tasks.py preprocess`: env `CAPTION_DROP_GROUPS` / `caption_drop_groups` toml / CLI | done | — |
 | `configs/preprocess.toml` commented key | done | — |
 | GUI | **pending** | Phase 2 below: one `Knob` row + a `tag_groups` widget |

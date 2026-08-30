@@ -28,7 +28,7 @@ one multi-concept sweep; promote whichever clears its gate.
   (zero-proposal 310 → 4 corpus-wide, 0 degenerate survivors, 0 whole-canvas
   junk; `caption-position` 433 → 439 proposed with 0 wrong new clauses).
 - `--prompt_embed` plumbing on `position_captions.py` / `audit_multiview.py` /
-  `probe_nms_pairs.py` (`library/preprocess/instance_detection.py::
+  `probe_nms_pairs.py` (`anime_tools.stages.instance_detection::
   resolve_prompt_embed`); `report.json` stamps `prompt_embed_sha256`.
 - `ab_position_captions.py` runs a per-side detector when the B prompt
   differs — the consumer-side A/B for any subject-prompt candidate.
@@ -37,7 +37,7 @@ one multi-concept sweep; promote whichever clears its gate.
   prompt boxes a drawn boy in 11 / 1045 boy-tagged images and the corpus has
   7 boy-only images, so boy positives must come from those 11 + the region
   task's own crops, not from the caption count axis.
-- `scripts/preprocess/generate_masks.py::detect_union` + `configs/sam_mask.yaml`
+- `anime_tools.masking.cli.generate_masks::detect_union` + `configs/sam_mask.yaml`
   per-pattern prompt routing — the bubble / text consumer (becomes per-pattern
   *prompt file* routing).
 

@@ -147,12 +147,12 @@ python scripts/preprocess/resize_images.py --src $KO/src --dst $KO/resized \
 
 # 3. Masks (recommended for a text slice — this is what keeps the glyphs
 #    pixel-exact in the condition instead of screentoned into mush).
-python scripts/preprocess/generate_masks_mit.py --image-dir $KO/resized \
+python -m anime_tools.masking.cli.generate_masks_mit --image-dir $KO/resized \
     --mask-dir /tmp/ko-mit --model-path models/mit/model.pth --recursive
-python scripts/preprocess/generate_masks.py --config configs/sam_mask.yaml \
+python -m anime_tools.masking.cli.generate_masks --config configs/sam_mask.yaml \
     --image-dir $KO/resized --mask-dir /tmp/ko-sam \
     --checkpoint models/sam3/sam3.pt --batch-size 4 --recursive
-python scripts/preprocess/merge_masks.py /tmp/ko-sam /tmp/ko-mit --output-dir $KO/masks
+python -m anime_tools.masking.cli.merge_masks /tmp/ko-sam /tmp/ko-mit --output-dir $KO/masks
 
 # 4. Stage + preprocess into the slice's own trees. `ARGS` is appended last, so
 #    these path flags override the slug-derived defaults.

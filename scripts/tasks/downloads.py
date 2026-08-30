@@ -44,7 +44,7 @@ TAGGER_CKPT_REPO = "sorryhyun/anima-tagger"
 TAGGER_CKPT_SUBFOLDER = "dbv4"
 TAGGER_CKPT_REL = "models/captioners/anima-tagger-dbv4"
 # Required-file set of a dbv4 checkpoint dir; mirrors
-# library/captioning/anima_tagger.py::DBV4_REQUIRED_FILES (duplicated rather
+# anime_tools.tagger.tagger.DBV4_REQUIRED_FILES (duplicated rather
 # than imported — that module pulls torch, and the task runner stays import-light).
 TAGGER_CKPT_REQUIRED = ("config.json", "vocab.json", "rules.yaml")
 # Backbone facts come from the torch-free anime_tools.tagger.dbv4_meta so the
@@ -136,7 +136,7 @@ def cmd_download_tagger(_extra):
     # Just the Tagger ``vocab.json`` (~0.7 MB) that caption-index/preprocess need.
     # The full model is not fetched here, so this won't clobber a local model.safetensors.
     # Tracks the live checkpoint (``TAGGER_HF_SUBFOLDER`` / ``DEFAULT_TAGGER_DIR``
-    # in library/captioning/anima_tagger.py) so the vocab matches the model that
+    # in anime_tools.tagger.tagger) so the vocab matches the model that
     # actually runs. For the whole tagger (head + backbone) see
     # ``cmd_download_tagger_model``.
     sub = TAGGER_CKPT_SUBFOLDER

@@ -52,7 +52,7 @@ that a select-only re-run would resurrect without cond latents):
    ``{base}/select/{solo,pair}``; record slice + character names in
    ``{base}/select.json``. Stale symlinks are pruned.
 2. **Sam** (GPU) — SAM3 concept segmentation via
-   ``scripts/preprocess/generate_masks.py`` (low threshold: 0.7 misses ~45%
+   ``anime_tools.masking.cli.generate_masks`` (low threshold: 0.7 misses ~45%
    of solo images on nude/close-up/stylized art; 0.4 recovers them with no
    measured over-inclusion, probed 2026-08-23): ``{base}/masks`` = girl
    (pairs: girl minus boy), ``{base}/masks_boy`` = boy/man/male and
@@ -269,7 +269,8 @@ def _run_sam(
     cfg_path.write_text(json.dumps(cfg), encoding="utf-8")  # JSON is valid YAML
     cmd = [
         sys.executable,
-        "scripts/preprocess/generate_masks.py",
+        "-m",
+        "anime_tools.masking.cli.generate_masks",
         "--config",
         str(cfg_path),
         "--image-dir",

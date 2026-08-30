@@ -18,7 +18,7 @@ This bench measures that claim directly:
       the removal stacks wrappers and compounds the cond. Latents decode at
       the end with one VAE load, after the DiT is freed.
   Phase B (GPU) — SAM3-segment ``girl`` in every output via
-      ``scripts/preprocess/generate_masks.py`` (focus mode, threshold 0.4 —
+      ``anime_tools.masking.cli.generate_masks`` (focus mode, threshold 0.4 —
       the dataset-staging setting).
   Phase C — metrics against each sample's paint mask:
       * iou               — IoU(paint, generated-girl mask)
@@ -442,7 +442,8 @@ def phase_segment(args, run_dir: Path) -> None:
     subprocess.run(
         [
             sys.executable,
-            "scripts/preprocess/generate_masks.py",
+            "-m",
+            "anime_tools.masking.cli.generate_masks",
             "--config",
             str(cfg_path),
             "--image-dir",

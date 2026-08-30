@@ -1,7 +1,7 @@
 """A/B two SAM3 subject prompts side by side — text vs text, or text vs a
 learned soft prompt — as contact sheets plus a numeric report.
 
-Same shape as `scripts/preprocess/ab_position_captions.py`: one image encode,
+Same shape as `anime_tools.stages.cli.ab_position_captions`: one image encode,
 one grounding pass per side, a sheet only where the sides disagree, and an
 `index.html` ordered most-changed-first. Sides are ``--a`` / ``--b``; a side
 ending in ``.safetensors`` is loaded as a soft prompt, anything else is text.

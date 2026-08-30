@@ -4,7 +4,7 @@
 This is the inference twin of the training ``anima_daemon/``: same
 **discoverability** skin (a localhost HTTP port + a pidfile both written to a
 fixed per-user location), wrapped around the **resident-model** lifetime the
-``scripts/anima_tagger/autotag_server.py`` worker pioneered. The engine itself is
+``anime_tools.tagger.cli.autotag_server`` worker pioneered. The engine itself is
 already done — ``generate(args, settings, shared_models=…)`` reuses a warm DiT
 out of ``shared_models["model"]`` and never frees it — so this file is mostly the
 HTTP shell + discovery + a coexistence handshake.

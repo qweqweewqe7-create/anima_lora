@@ -22,7 +22,7 @@ DEFAULT_AUTOTAG_CONFIDENCE = 0.5
 DEFAULT_CAPTION_INSERT_NO_ARTIST = True
 DEFAULT_CAPTION_VALIDATE_ARTIST_TAGS = False
 # Dataset-tab grouping defaults (`curate-group`); mirrors
-# library.datasets.grouping.DEFAULT_* so the GUI stays torch-free.
+# anime_tools.grouping.groups.DEFAULT_* so the GUI stays torch-free.
 DEFAULT_GROUP_MATCH_FRAC_MIN = 0.25
 DEFAULT_GROUP_CELL_MATCH_MIN = 0.93
 DEFAULT_THEME_COLOR = "#3c78c8"  # backward compat; live accent comes from gui/theme.py

@@ -5,7 +5,7 @@ serve many generations over a localhost HTTP port, instead of paying the
 model-load cost per image. It's the inference counterpart of the training
 `anima_daemon/`: same discoverability skin (a localhost port + a pidfile at a
 fixed per-user location), wrapped around the resident-model lifetime the Anima
-Tagger's `scripts/anima_tagger/autotag_server.py` worker established.
+Tagger's `anime_tools.tagger.cli.autotag_server` worker established.
 
 The generation engine is unchanged — the server is a thin HTTP shell over the
 existing programmatic API (`get_generation_settings` → `generate(…,

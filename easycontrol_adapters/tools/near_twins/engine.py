@@ -4,7 +4,7 @@
 The pair-mining core of the near-twin tag-gap miner: the same-size/tag-pivot
 prune, the dense grid match, the discriminators, and ``run_artist`` (Stages
 A/B). The reusable embedding half — member discovery, PE-Spatial encoding, and
-the per-image feature cache — was promoted to ``library.vision.pe_features`` and
+the per-image feature cache — was promoted to ``anime_tools.grouping.features`` and
 is re-imported below (names preserved for backward compatibility). Rendering and
 export live in ``near_twin.outputs``; the CLI + config layering in
 ``near_twin.__main__`` (see that module's docstring for the full pipeline).
@@ -151,7 +151,7 @@ def select_identity_members(
 
 # ---------------------------------------------------------------------------- Stage B match
 # ``match_grids`` / ``MatchResult`` / ``_geom_filter`` now live in
-# ``library.vision.pe_matching`` (re-exported at the top of this module).
+# ``anime_tools.grouping.matching`` (re-exported at the top of this module).
 
 
 def _largest_blob(cells: set[int], G: int) -> tuple[int, set[int]]:

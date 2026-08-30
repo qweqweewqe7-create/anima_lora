@@ -11,7 +11,7 @@ or an outcome measurement. What it is (grounded in code, not lore):
 
 - **Cache-time, not train-time.** `make preprocess` materializes
   `{stem}.variants.txt` sidecars via
-  `library/preprocess/caption_variants.py::generate_caption_variants`:
+  `anime_tools.captions.variants::generate_caption_variants`:
   v0 = pristine caption, v1..v3 smart-shuffled (`@artist` prefix and section
   anchors protected), then per-tag dropout at
   `caption_tag_dropout_rate = 0.1` (live default, `configs/preprocess.toml`).
@@ -207,7 +207,7 @@ Only the axis Phase 1 implicates:
 
 ## References
 
-- `library/preprocess/caption_variants.py` — the mechanism under test.
+- `anime_tools.captions.variants` — the mechanism under test.
 - `configs/preprocess.toml` (`caption_shuffle_variants=4`,
   `caption_tag_dropout_rate=0.1`, `caption_tag_randomize_rate=0.0`).
 - `docs/proposal/tag_readback_reward.md` + `bench/readback/` — the validated

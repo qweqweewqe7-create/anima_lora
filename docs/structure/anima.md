@@ -68,7 +68,7 @@ rendering*: [`docs/findings/freetext_text_rendering.md`](../findings/freetext_te
 attributes Anima's inability to draw Korean to the DiT's visual glyph head ("Qwen3
 already understands Korean semantically"), but that eval used an English control, which
 differs from Korean in *both* the glyph prior *and* this `<unk>` collapse — so the two
-were never separated. See also `library/preprocess/caption_variants.py` (filler-token
+were never separated. See also `anime_tools.captions.variants` (filler-token
 selection already works around T5's English-centric vocab).
 
 `AnimaTokenizeStrategy.tokenize()` returns four tensors, all shape `(B, 512)`:

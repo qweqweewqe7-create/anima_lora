@@ -164,7 +164,7 @@ bootstrap rollout, first 200 steps identity-only for warmup, 15% (image) / 10%
   — the hard architectural problem is mostly already paid for.
 - **The VLM data pipeline is half-built.** BYG needs per-image
   `(src_caption, instruction, tgt_caption, reverse_instruction)`. We have
-  **Anima Tagger** (`library/captioning/`) producing src captions, and the
+  **Anima Tagger** (`anime_tools.tagger`) producing src captions, and the
   caption-index artifact (`caption_index.json`) for grouping. The
   edit-taxonomy + reverse-instruction generation (paper App. D) is the new
   piece, but it's an offline VLM pass, not training infra.
@@ -322,7 +322,7 @@ project's primary dataset, not just an inversion set). No paired targets needed.
 
 New script: `scripts/byg/build_edit_tuples.py` — emits a JSONL sidecar per image
 via tag-swap by default, with a `--vlm` flag (and per-category routing) for the
-style tail, mirroring `scripts/anima_tagger/cli.py`. The VLM pass — *if* enabled
+style tail, mirroring `anime_tools.tagger.cli.main`. The VLM pass — *if* enabled
 on the full corpus — is the single biggest *non-training* lift; the tag-swap
 default makes a first run essentially free.
 

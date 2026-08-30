@@ -8,7 +8,7 @@ Covers:
   flat-fallback, missing.
 - ``library.datasets.subsets._resolve_default_mask_dir`` — priority order
   across the new + legacy candidates.
-- ``scripts.preprocess.merge_masks`` end-to-end through ``main()`` — `(rel_dir,
+- ``anime_tools.masking.cli.merge_masks`` end-to-end through ``main()`` — `(rel_dir,
   name)` keying, flat-to-flat passthrough, mixed nested+flat inputs.
 - ``scripts.preprocess.resize_images.process_image`` — writes under
   ``out_dir/<rel>/`` and mirrors the caption sidecar.
@@ -200,18 +200,10 @@ def test_resolve_default_mask_dir_priority(
 
 
 def _run_merge(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> None:
-    """Run ``scripts/preprocess/merge_masks.py:main`` with the given argv."""
-    repo_root = Path(__file__).resolve().parent.parent
-    preprocess_dir = repo_root / "scripts" / "preprocess"
-    monkeypatch.syspath_prepend(str(preprocess_dir))
+    """Run ``anime_tools.masking.cli.merge_masks:main`` with the given argv."""
     monkeypatch.setattr(sys, "argv", ["merge_masks.py", *argv])
-
-    # Force a fresh import each test — main() reads sys.argv at call time but
-    # the module-level imports run once; reusing it across tests is fine.
-    if "merge_masks" in sys.modules:
-        merge_masks = sys.modules["merge_masks"]
-    else:
-        merge_masks = importlib.import_module("merge_masks")
+    # main() reads sys.argv at call time; the module-level imports run once.
+    merge_masks = importlib.import_module("anime_tools.masking.cli.merge_masks")
     merge_masks.main()
 
 

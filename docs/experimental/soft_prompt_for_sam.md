@@ -164,7 +164,7 @@ the dbv4 tagger*.
   (tracked, 165 KB; sha256 `2b690f78…`) and made the default `--prompt_embed`
   of `position_captions.py`, `audit_multiview.py`, `probe_nms_pairs.py`
   (`DEFAULT_SUBJECT_PROMPT_EMBED` + `resolve_prompt_embed` in
-  `library/preprocess/instance_detection.py`). `--prompt_embed none` = the
+  `anime_tools.stages.instance_detection`). `--prompt_embed none` = the
   plain text prompt; a *missing default file* degrades to text with a warning,
   an explicit missing path raises. Part prompts (`face`, …) stay textual.
 - `caption-position`'s `report.json` stamps `prompt`, `prompt_embed` and
@@ -250,8 +250,8 @@ Reusable: `build_text_targets.py` / `eval_text_prompt.py` are the generic
 make daemon-run ARGS="bench/sam3_soft_prompt/build_targets.py"          # pseudo-labels + splits
 make daemon-run ARGS="bench/sam3_soft_prompt/train_soft_prompt.py --init 'anime girl' --label x"
 make daemon-run ARGS="bench/sam3_soft_prompt/ab_sam3_prompt.py --which disagree --b <soft_prompt.safetensors>"
-make daemon-run ARGS="scripts/preprocess/probe_nms_pairs.py --prompt_embed <soft_prompt.safetensors>"
-make daemon-run ARGS="scripts/preprocess/ab_position_captions.py --a_flags= --b_flags='--prompt_embed <file>'"
+make daemon-run ARGS="-m anime_tools.masking.cli.probe_nms_pairs --prompt_embed <soft_prompt.safetensors>"
+make daemon-run ARGS="-m anime_tools.stages.cli.ab_position_captions --a_flags= --b_flags='--prompt_embed <file>'"
 make daemon-run ARGS="bench/sam3_soft_prompt/pair_negatives.py build [--count_filter any_boy]"
 make caption-position ARGS="--prompt_embed none"                        # back to the text prompt
 ```
@@ -267,6 +267,6 @@ make caption-position ARGS="--prompt_embed none"                        # back t
 | `bench/sam3_soft_prompt/build_text_targets.py` | MIT (UNet++ + CTD gate) → DETR targets + negatives + 1/8 hash holdout for the text row |
 | `bench/sam3_soft_prompt/eval_text_prompt.py` | box recall / FP-per-img / px recall / over-mask vs MIT per floor for any prompt spec; `--sheets` |
 | `bench/sam3_soft_prompt/pair_negatives.py` | `build`: tagger-labelled boy / girl boxes on boy-tagged images; `eval`: boy-box rate + girl recall on held-out rows |
-| `library/preprocess/instance_detection.py` | `DEFAULT_SUBJECT_PROMPT_EMBED`, `resolve_prompt_embed`, `prompt_embed_sha256` |
-| `scripts/preprocess/position_captions.py::build_detect_fn` | installs the prompt on the subject pass; accepts a loaded `model`/`processor` so the A/B can build a second detector |
-| `scripts/preprocess/ab_position_captions.py` | per-side detector when the B prompt differs; per-side status counts |
+| `anime_tools.stages.instance_detection` | `DEFAULT_SUBJECT_PROMPT_EMBED`, `resolve_prompt_embed`, `prompt_embed_sha256` |
+| `anime_tools.stages.position_captions::build_detect_fn` | installs the prompt on the subject pass; accepts a loaded `model`/`processor` so the A/B can build a second detector |
+| `anime_tools.stages.cli.ab_position_captions` | per-side detector when the B prompt differs; per-side status counts |

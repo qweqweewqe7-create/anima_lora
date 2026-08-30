@@ -24,7 +24,8 @@ def cmd_curate_group(extra):
     run(
         [
             PY,
-            "scripts/curate/build_groups.py",
+            "-m",
+            "anime_tools.grouping.cli.build_groups",
             "--source-dir",
             _path("source_image_dir", "image_dataset"),
             # Embedder defaults to anime_tools' own PE-Spatial (Phase 2);

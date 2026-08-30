@@ -25,7 +25,7 @@ from gui import DEFAULT_AUTOTAG_CONFIDENCE, ROOT, get_setting
 from gui import daemon as gui_daemon
 
 # Stdio protocol sentinels of the resident autotag worker (kept in sync with
-# ``scripts/anima_tagger/autotag_server.py``). Hardcoded rather than imported
+# ``anime_tools.tagger.cli.autotag_server``). Hardcoded rather than imported
 # because that module pulls in torch, which the GUI must stay free of.
 _AUTOTAG_READY = "ANIMA_AUTOTAG_READY"
 _AUTOTAG_RESULT_PREFIX = "ANIMA_AUTOTAG_RESULT\t"

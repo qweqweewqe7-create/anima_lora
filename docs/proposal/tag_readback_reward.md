@@ -1,7 +1,7 @@
 # Tag read-back reward — one verified judge for selection, and the RWR artist LoRA rebuilt on it
 
 Status: **Phase 0a PASS (tagger judge, content-tag axis).** The scoring primitive
-(`library/captioning/readback.py::TagReadback`), the validity harness
+(`anime_tools.tagger.readback::TagReadback`), the validity harness
 (`bench/readback/run_bench.py`), and the turbo render driver
 (`bench/readback/render_turbo.py`) are built and run. Verdict: the tagger read-back
 is a valid per-image caption-*adherence* instrument, on both real and generated
@@ -192,7 +192,7 @@ As PR #67 Phase 1 (grow with `turbo + base` → score → top-k → CFM inner lo
 gradient never through rollouts), with three revisions:
 
 - **Self-caption the grow pool.** Every selected candidate is re-tagged
-  (`scripts/anima_tagger/cli.py` path) and FM-trains against **the caption read
+  (`anime_tools.tagger.cli.main` path) and FM-trains against **the caption read
   back from it**, not the prompt that rolled it. This closes the pairing hole:
   dropout-prompt candidates get a caption at all, loose-prompt candidates stop
   training caption↔image pairs that never matched, and turbo's degraded

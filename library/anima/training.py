@@ -29,8 +29,7 @@ import logging  # noqa: E402
 logger = logging.getLogger(__name__)
 
 
-# Caption shuffle grammar moved to library/captioning/shuffle.py (curation side,
-# anime_tools-bound). Re-exported here so trainer callers keep their import path.
+# Caption shuffle grammar lives in anime_tools.captions.shuffle (curation side). Re-exported here so trainer callers keep their import path.
 from anime_tools.captions.shuffle import (  # noqa: E402,F401
     NO_ARTIST_SENTINEL,
     _is_artist_tag,

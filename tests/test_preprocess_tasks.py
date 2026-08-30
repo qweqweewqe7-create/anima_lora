@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 
+def _entry(cmd: list[str]) -> str:
+    """The child's entry: the module of a ``-m`` invocation (the ``anime_tools``
+    caption stages) or the script path (trainer-side cache scripts)."""
+    return cmd[2] if cmd[1] == "-m" else cmd[1]
+
+
 def test_preprocess_te_uses_corrected_resized_captions(monkeypatch):
     from scripts.tasks import preprocess
 
@@ -30,9 +36,10 @@ def test_preprocess_te_uses_corrected_resized_captions(monkeypatch):
     assert len(calls) == 2
     caption_cmd, te_cmd = calls
 
-    assert caption_cmd[:2] == [
+    assert caption_cmd[:3] == [
         preprocess.PY,
-        "scripts/preprocess/correct_captions.py",
+        "-m",
+        "anime_tools.stages.cli.correct_captions",
     ]
     assert caption_cmd[caption_cmd.index("--src") + 1] == "image_dataset"
     assert caption_cmd[caption_cmd.index("--dst") + 1] == "post_image_dataset/resized"
@@ -107,7 +114,7 @@ def test_preprocess_te_runs_correction_for_trigger_word_without_correct_order(
     # and the TE cache then reads the corrected captions from the resized dir.
     assert len(calls) == 2
     caption_cmd, te_cmd = calls
-    assert caption_cmd[1] == "scripts/preprocess/correct_captions.py"
+    assert _entry(caption_cmd) == "anime_tools.stages.cli.correct_captions"
     assert caption_cmd[caption_cmd.index("--caption_trigger_word") + 1] == (
         "@dataset-trigger"
     )
@@ -246,7 +253,7 @@ def test_preprocess_chains_position_clauses_before_the_caption_step(monkeypatch)
 
     assert order == ["resize", "vae", "position", "te"]
     (cmd,) = calls
-    assert cmd[:2] == [preprocess.PY, "scripts/preprocess/position_captions.py"]
+    assert cmd[:3] == [preprocess.PY, "-m", "anime_tools.stages.cli.position_captions"]
     assert cmd[-1] == "--apply"
 
 
@@ -290,11 +297,11 @@ def test_preprocess_captions_runs_the_master_stages_when_configured(monkeypatch)
 
     preprocess.cmd_preprocess_captions([])
 
-    scripts = [cmd[1] for cmd in calls]
+    scripts = [_entry(cmd) for cmd in calls]
     assert scripts == [
-        "scripts/preprocess/autotag_captions.py",
-        "scripts/preprocess/position_captions.py",
-        "scripts/preprocess/correct_captions.py",
+        "anime_tools.stages.cli.autotag_captions",
+        "anime_tools.stages.cli.position_captions",
+        "anime_tools.stages.cli.correct_captions",
     ]
     # In-pipeline stages write for real — a dry run here would leave the mirror
     # encoding the un-rewritten caption.
@@ -326,12 +333,12 @@ def test_master_stages_inherit_an_explicit_path_pattern(monkeypatch):
 
     preprocess.cmd_preprocess_captions(["--path_pattern", "artistA/*"])
 
-    assert [cmd[1] for cmd in calls] == [
-        "scripts/preprocess/autotag_captions.py",
-        "scripts/preprocess/position_captions.py",
+    assert [_entry(cmd) for cmd in calls] == [
+        "anime_tools.stages.cli.autotag_captions",
+        "anime_tools.stages.cli.position_captions",
         # The mirror rides along whenever position clauses are on — they land in
         # `resized/`, so every other caption has to be mirrored there too.
-        "scripts/preprocess/correct_captions.py",
+        "anime_tools.stages.cli.correct_captions",
     ]
     for cmd in calls:
         # Present, and emitted exactly once — the argv builder resolves the
@@ -371,9 +378,9 @@ def test_preprocess_captions_runs_the_stages_even_with_correction_off(monkeypatc
 
     preprocess.cmd_preprocess_captions([])
 
-    assert [cmd[1] for cmd in calls] == [
-        "scripts/preprocess/position_captions.py",
-        "scripts/preprocess/correct_captions.py",
+    assert [_entry(cmd) for cmd in calls] == [
+        "anime_tools.stages.cli.position_captions",
+        "anime_tools.stages.cli.correct_captions",
     ]
     # Nothing to correct and no variants — the mirror runs in passthrough.
     assert "--no_correct" in calls[1]
@@ -399,9 +406,9 @@ def test_preprocess_te_reads_resized_when_position_clauses_are_on(monkeypatch):
 
     preprocess.cmd_preprocess_te([])
 
-    assert [cmd[1] for cmd in calls] == [
-        "scripts/preprocess/position_captions.py",
-        "scripts/preprocess/correct_captions.py",
+    assert [_entry(cmd) for cmd in calls] == [
+        "anime_tools.stages.cli.position_captions",
+        "anime_tools.stages.cli.correct_captions",
         "scripts/preprocess/cache_text_embeddings.py",
     ]
     te_cmd = calls[-1]
@@ -434,14 +441,14 @@ def test_preprocess_chain_runs_each_master_stage_once(monkeypatch):
 
     preprocess.cmd_preprocess([])
 
-    scripts = [cmd[1] for cmd in calls]
-    assert scripts.count("scripts/preprocess/autotag_captions.py") == 1
-    assert scripts.count("scripts/preprocess/position_captions.py") == 1
+    scripts = [_entry(cmd) for cmd in calls]
+    assert scripts.count("anime_tools.stages.cli.autotag_captions") == 1
+    assert scripts.count("anime_tools.stages.cli.position_captions") == 1
     # Order is unchanged: the caption rewrites, then the mirror, then the encode.
     assert scripts == [
-        "scripts/preprocess/autotag_captions.py",
-        "scripts/preprocess/position_captions.py",
-        "scripts/preprocess/correct_captions.py",
+        "anime_tools.stages.cli.autotag_captions",
+        "anime_tools.stages.cli.position_captions",
+        "anime_tools.stages.cli.correct_captions",
         "scripts/preprocess/cache_text_embeddings.py",
     ]
 
@@ -527,7 +534,7 @@ def test_preprocess_chains_autotag_first(monkeypatch):
 
     def fake_run(cmd, **_kwargs):
         calls.append(cmd)
-        order.append("autotag" if "autotag_captions.py" in cmd[1] else "position")
+        order.append("autotag" if "autotag_captions" in _entry(cmd) else "position")
 
     monkeypatch.setattr(preprocess, "run", fake_run)
     monkeypatch.setenv("CAPTION_AUTOTAG", "1")
@@ -538,9 +545,10 @@ def test_preprocess_chains_autotag_first(monkeypatch):
 
     assert order == ["resize", "autotag", "vae", "position", "te"]
     autotag_cmd = calls[0]
-    assert autotag_cmd[:2] == [
+    assert autotag_cmd[:3] == [
         preprocess.PY,
-        "scripts/preprocess/autotag_captions.py",
+        "-m",
+        "anime_tools.stages.cli.autotag_captions",
     ]
     assert autotag_cmd[-3:] == ["--mode", "merge", "--apply"]
 

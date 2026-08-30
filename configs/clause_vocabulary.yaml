@@ -1,6 +1,6 @@
 # Which tags may enter a position clause — the tag-GROUP policy behind
 # `make caption-position` (v2 rewrite). Loaded by
-# `library/captioning/clause_vocabulary.py`; the group names must exist in the
+# `anime_tools.captions.clause_vocabulary`; the group names must exist in the
 # tagger checkpoint's own `groups.yaml` (unknown ones are warned about at load,
 # because a typo here would silently disable a gate rather than fail).
 #

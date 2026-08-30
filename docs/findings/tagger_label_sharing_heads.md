@@ -1,7 +1,7 @@
 # Anima Tagger — label-sharing heads REFUTED (issue #94), 2026-08-26
 
 **Status: CLOSED / archived.** The factored head (`FactoredHead`, formerly
-`tag_factors.py` under `library/captioning/`, `--tag_head_kind_core/_spatial`,
+`tag_factors.py` under the then-`library.captioning` package (now `anime_tools.tagger`), `--tag_head_kind_core/_spatial`,
 `--factored_rank`, `--factored_min_tags_per_word`) was removed from the tree;
 the code, its unit test, and the full working-tree patch live in
 `_archive/tagger_factored_head/tag_factors.py` and its siblings. The shipped tagger keeps the flat linear

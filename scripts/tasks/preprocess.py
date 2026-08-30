@@ -250,7 +250,7 @@ def _caption_correction_config(extra) -> tuple[dict[str, object], list[str]]:
             _boolish(overrides.get("caption_trigger_at_front"), False),
         ),
         # Tag groups stripped at mirror time (GH #95) — comma-separated slugs
-        # / taxonomy-path prefixes, see library/captioning/tag_drop_groups.py.
+        # / taxonomy-path prefixes, see anime_tools.captions.tag_drop_groups.
         "drop_groups": str(
             env_drop_groups
             if env_drop_groups is not None
@@ -849,13 +849,14 @@ def cmd_preprocess_captions(extra, caption_config: dict[str, object] | None = No
     if not correct and n_variants <= 0 and not caption_config.get("position_clauses"):
         print("  [preprocess] caption correction disabled")
         return
-    # correct_captions.py loads the Danbooru tag KB unconditionally — fetch it
+    # correct_captions loads the Danbooru tag KB unconditionally — fetch it
     # on demand so a GUI preprocess that skipped the download doesn't abort.
     _ensure_danbooru_tags()
     pp_args = _resolved_path_pattern_args(extra)
     cmd = [
         PY,
-        "scripts/preprocess/correct_captions.py",
+        "-m",
+        "anime_tools.stages.cli.correct_captions",
         "--src",
         _path("source_image_dir", "image_dataset"),
         "--dst",
@@ -1022,7 +1023,8 @@ def cmd_caption_index(extra):
     run(
         [
             PY,
-            "scripts/preprocess/build_caption_index.py",
+            "-m",
+            "anime_tools.captions.index",
             "--src",
             _path("source_image_dir", "image_dataset"),
             *pp_args,
@@ -1031,8 +1033,9 @@ def cmd_caption_index(extra):
     )
 
 
-def _caption_master_argv(script: str, extra) -> list[str]:
-    """Child argv (no interpreter) for a caption-rewrite pass.
+def _caption_master_argv(module: str, extra) -> list[str]:
+    """Child argv (no interpreter) for a caption-rewrite pass, as a ``-m``
+    module invocation into ``anime_tools``.
 
     Both passes take the same ``--src``/``--dst`` pair; they differ in which
     side they *write* (autotag the master, position clauses the derived
@@ -1040,7 +1043,8 @@ def _caption_master_argv(script: str, extra) -> list[str]:
     from the tail so an explicit ``--path_pattern`` isn't emitted twice.
     """
     return [
-        script,
+        "-m",
+        module,
         "--src",
         _path("source_image_dir", "image_dataset"),
         "--dst",
@@ -1054,14 +1058,14 @@ def _caption_position_argv(extra) -> list[str]:
     """Child argv for the position-clause pass — shared by the standalone
     ``caption-position`` target and the in-pipeline stage so the two can't
     drift on paths/scoping."""
-    return _caption_master_argv("scripts/preprocess/position_captions.py", extra)
+    return _caption_master_argv("anime_tools.stages.cli.position_captions", extra)
 
 
 def _caption_autotag_argv(extra) -> list[str]:
     """Child argv for the batch autotag pass — shared by the standalone
     ``caption-autotag`` target and the in-pipeline stage so the two can't
     drift on paths/scoping."""
-    return _caption_master_argv("scripts/preprocess/autotag_captions.py", extra)
+    return _caption_master_argv("anime_tools.stages.cli.autotag_captions", extra)
 
 
 # Caption-rewrite stages (autotag -> image_dataset/*.txt, position clauses ->

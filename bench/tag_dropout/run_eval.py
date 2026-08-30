@@ -6,7 +6,7 @@ The reusable render+score half of the tag-dropout proposal
 (from :mod:`bench.tag_dropout.prompt_sets`) and one or more LoRA arms, renders
 every (prompt, seed) cell with matched noise across arms, and scores three
 group-relative content-adherence quantities via the frozen tag-readback judge
-(``library/captioning/readback.py``):
+(``anime_tools.tagger.readback``):
 
 * **richness** = readback(render, characteristic_set ∖ prompted) on the *sparse*
   and *no_trigger* prompts — did characteristic content appear unprompted?

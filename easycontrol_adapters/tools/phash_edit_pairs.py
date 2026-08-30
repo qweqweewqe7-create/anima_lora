@@ -59,7 +59,7 @@ Instruction format (``--instruction_format``)
 Both are flat comma bags, so the TE caching pass can shuffle them safely. The
 literal ``Add: a, b. Remove: c.`` phrasing is **not** offered: the period is the
 position-clause delimiter, and ``parse_caption`` glues it into a single tag
-(``'smile. Remove: hat'``) — see ``library/captioning/position_clauses.py``.
+(``'smile. Remove: hat'``) — see ``anime_tools.captions.position_clauses``.
 """
 
 from __future__ import annotations

@@ -6,8 +6,8 @@ The one rule of that split is::
 
     anima_lora (trainer) ──depends on──▶ anime_tools        never the reverse
 
-This test pins the boundary *before* the move so it cannot regress: every file
-in the move manifest must not import the DiT/VAE/adapter side. If a curation
+This test pins the boundary so it cannot regress: every trainer-side file that
+drives the curation package must not import the DiT/VAE/adapter side. If a curation
 feature needs something from the trainer, move that leaf into the curation set
 (or duplicate a ≤50-line pure helper) — do not add an exemption here.
 """
@@ -24,21 +24,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # Move manifest (proposal §"Move manifest"). Directories are recursive; globs
 # are relative to the repo root.
 CURATION_PATHS: tuple[str, ...] = (
-    # Phase 1 (2026-08-30) moved captions / tagger / stages and Phase 2 (same
-    # day) masking / grouping into the ``anime_tools`` package. What remains
-    # here is the trainer-side remainder that must keep the direction: the
-    # forwarding shells (deleted in Phase 3) and the ``make`` task wrappers.
-    # ``anime_tools`` imports are allowed — that is the dependency direction.
-    "library/vision/pe_features.py",
-    "library/vision/pe_matching.py",
-    "library/vision/grouping_embedder.py",
-    "library/datasets/grouping.py",
-    "scripts/curate/**/*.py",
-    "scripts/preprocess/generate_masks.py",
-    "scripts/preprocess/generate_masks_mit.py",
-    "scripts/preprocess/merge_masks.py",
-    "scripts/preprocess/probe_nms_pairs.py",
-    "scripts/preprocess/probe_sam_masks.py",
+    # Phases 1–2 (2026-08-30) moved captions / tagger / stages / masking /
+    # grouping into the ``anime_tools`` package and Phase 3 deleted the
+    # forwarding shims + shells. What remains here is the trainer-side
+    # remainder that must keep the direction: the ``make`` task wrappers that
+    # invoke ``python -m anime_tools.…``. ``anime_tools`` imports are allowed —
+    # that is the dependency direction. The package's own boundary is guarded
+    # by its ``tests/test_boundary.py``.
     "scripts/tasks/tagger.py",
     "scripts/tasks/masking.py",
     "scripts/tasks/curate.py",
@@ -47,13 +39,10 @@ CURATION_PATHS: tuple[str, ...] = (
 # Anything under ``library.`` that is not itself in the manifest is trainer-only
 # (``library.env`` / ``library.log`` / ``library.io`` / ``library.datasets`` /
 # ``library.runtime`` included — the curation side uses ``anime_tools.{_env,_walk,_hf}``),
-# plus ``networks`` and ``train``. The Phase 1 shims (``library.captioning.*``,
-# ``library.preprocess.caption_variants`` …) are trainer-side forwarding modules
-# and are forbidden here too: curation code imports ``anime_tools`` directly.
+# plus ``networks`` and ``train``. Curation code imports ``anime_tools`` directly —
+# the Phase 1–2 forwarding shims (``library.captioning.*`` …) are gone.
 FORBIDDEN_ROOTS: tuple[str, ...] = ("library", "networks", "train")
-# The Phase 1/2 forwarding shims + shells are themselves trainer files that
-# exist only to redirect into ``anime_tools``; their single import is exempt.
-ALLOWED_MODULES: frozenset[str] = frozenset({"library._moved"})
+ALLOWED_MODULES: frozenset[str] = frozenset()
 
 
 _IMPORT_RE = re.compile(

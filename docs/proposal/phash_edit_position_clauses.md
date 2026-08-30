@@ -29,7 +29,7 @@ variant-axis prior of booru variant series).
 ## Proposal
 
 Emit mined instructions as **position clauses** — the repo's existing caption
-grammar (`library/captioning/position_clauses.py`) — with the header derived
+grammar (`anime_tools.captions.position_clauses`) — with the header derived
 from the pair's own pixel diff at mining time:
 
 ```
@@ -146,7 +146,7 @@ Probe (`run_edit_probe.py`, extended):
   `bench/phash_edit/results/20260821-2225-diffloc/` (per_pair.csv + example
   panels per class).
 - Probe + copy-lock evidence: `bench/phash_edit/report.md`.
-- Grammar: `library/captioning/position_clauses.py`; conventions in the
+- Grammar: `anime_tools.captions.position_clauses`; conventions in the
   `captions` skill.
 - Miner config: `configs/easycontrol/phash_edit.toml` (the `[staging]`
   tables survive re-mines verbatim; the blueprint below the sentinel is

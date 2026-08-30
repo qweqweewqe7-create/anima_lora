@@ -412,7 +412,8 @@ def phase_segment(run_dir: Path) -> None:
     subprocess.run(
         [
             sys.executable,
-            "scripts/preprocess/generate_masks.py",
+            "-m",
+            "anime_tools.masking.cli.generate_masks",
             "--config",
             str(cfg_path),
             "--image-dir",

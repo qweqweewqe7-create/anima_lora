@@ -47,7 +47,7 @@ DEFAULT_CAPTION_TRIGGER_WORD = ""
 DEFAULT_CAPTION_TRIGGER_AT_FRONT = False
 DEFAULT_CAPTION_POSITION_CLAUSES = False
 DEFAULT_CAPTION_AUTOTAG = False
-# Mirrors library.preprocess.autotag.MODES — kept as a literal so the GUI
+# Mirrors anime_tools.stages.autotag.MODES — kept as a literal so the GUI
 # doesn't drag in the PIL/torch import chain (see gui/CLAUDE.md).
 CAPTION_AUTOTAG_MODES = ("missing", "merge", "overwrite")
 DEFAULT_CAPTION_AUTOTAG_MODE = "missing"

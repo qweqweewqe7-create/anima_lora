@@ -24,13 +24,13 @@ shuffle / `@no-artist` grammar (`library.anima.training` re-exports it).
 
 ## Trainer targets (all forward to `anime_tools` CLIs)
 
-| Target | Shell (pins `ANIMA_HOME`) | Package entry | Notes |
-|---|---|---|---|
-| `make caption-autotag` | `scripts/preprocess/autotag_captions.py` | `anime_tools.stages.cli.autotag_captions` | dry-run default; `--mode missing\|merge\|overwrite`; `ARGS="--apply"` then **`make preprocess-te`** |
-| `make caption-position` | `scripts/preprocess/position_captions.py` | `anime_tools.stages.cli.position_captions` | SAM3 → tagger → v2 rewrite; dry-run default, GPU — route through the daemon |
-| `make preprocess-captions` | `scripts/preprocess/correct_captions.py` | `anime_tools.stages.cli.correct_captions` | corrected mirror + `.variants.txt` under `post_image_dataset/resized/`; `--caption_drop_groups` |
-| `make caption-index` | `scripts/preprocess/build_caption_index.py` | `anime_tools.captions.index` | `post_image_dataset/captions/caption_index.json` |
-| `make autotag` / `make tagger*` | `scripts/anima_tagger/*.py` | `anime_tools.tagger.cli.*` | single-image / vocab build / dbv4 ckpt |
+| Target | Package entry (`python -m …`; `run()` exports `ANIMA_HOME`) | Notes |
+|---|---|---|
+| `make caption-autotag` | `anime_tools.stages.cli.autotag_captions` | dry-run default; `--mode missing\|merge\|overwrite`; `ARGS="--apply"` then **`make preprocess-te`** |
+| `make caption-position` | `anime_tools.stages.cli.position_captions` | SAM3 → tagger → v2 rewrite; dry-run default, GPU — route through the daemon |
+| `make preprocess-captions` | `anime_tools.stages.cli.correct_captions` | corrected mirror + `.variants.txt` under `post_image_dataset/resized/`; `--caption_drop_groups` |
+| `make caption-index` | `anime_tools.captions.index` | `post_image_dataset/captions/caption_index.json` |
+| `make autotag` / `make tagger*` | `anime_tools.tagger.cli.*` | single-image / vocab build / dbv4 ckpt |
 
 Stage wiring (`scripts/tasks/preprocess.py`): autotag runs **first** (right after
 resize, `--apply`), then position clauses, then correction/variants, then TE —
