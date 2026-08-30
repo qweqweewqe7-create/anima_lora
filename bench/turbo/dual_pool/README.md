@@ -1,7 +1,7 @@
 # Dual-pool gradient routing — Phase 0 A/B
 
 Wiring + smoke A/B for the proposal in
-[`docs/proposal/turbo_dual_pool_grad_routing.md`](../../../docs/proposal/turbo_dual_pool_grad_routing.md)
+`_archive/proposals/turbo_dual_pool_grad_routing.md` (gitignored, local)
 (PR #73). Split the turbo student into two always-on plain-LoRA pools — pool A
 (diversity) sees **only** the step-0 diversity gradient, pool B (quality) **only**
 the DMD/GAN/CDM refinement gradients — and check whether that parameter-level

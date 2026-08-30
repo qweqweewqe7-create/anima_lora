@@ -553,7 +553,7 @@ class TurboConfig:
     # k serves denoise step k. Off → single-head student.
     per_step_expert: bool
     step_expert_K: int
-    # Dual-pool gradient routing (docs/proposal/turbo_dual_pool_grad_routing.md):
+    # Dual-pool gradient routing (_archive/proposals/turbo_dual_pool_grad_routing.md):
     # two always-on plain-LoRA pools — pool A (div_pool_rank) sees only the
     # step-0 diversity gradient, pool B (student_rank) only the DMD/GAN/CDM
     # refinement gradients. Merged ΔW_A+ΔW_B saves as one plain LoRA. Requires

@@ -1,4 +1,4 @@
-"""Soft-rank caption-discrimination auxiliary (docs/proposal/turbo_caption_ranking.md).
+"""Soft-rank caption-discrimination auxiliary (_archive/proposals/turbo_caption_ranking.md).
 
 DP-DMD distillation degrades the teacher's caption discriminability, concentrated
 at the student's step-0 state (σ → 1) — at σ=1.0 a quarter of anchors lose to a

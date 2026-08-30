@@ -54,7 +54,7 @@ def cmd_lora(extra):
 
 
 def cmd_register(extra):
-    """Register-token adapter on a FROZEN Anima DiT (docs/proposal/headroom_register_tokens.md).
+    """Register-token adapter on a FROZEN Anima DiT (_archive/proposals/headroom_register_tokens.md).
 
     DSR-style register tokens inserted at ``insert_block`` (default 8) plus a
     trained self-attn QKV surface (``networks/methods/register.py`` /

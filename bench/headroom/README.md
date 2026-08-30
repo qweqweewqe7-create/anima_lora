@@ -1,7 +1,7 @@
 # bench/headroom — is the unprompted border a rendered self-attention sink?
 
 Phase-0 investigation for the *headroom (register) tokens* proposal
-(`docs/proposal/headroom_register_tokens.md`, PR #68). **Design-only proposal;
+(`_archive/proposals/headroom_register_tokens.md`, PR #68). **Design-only proposal;
 this bench is the falsifiable kill gate that ran before any training or new
 network code.** Verdict below: **RQ1 falsified — the border is a text-controllable
 data prior, not a relocatable sink.** The DSR sink itself is real, always-present,

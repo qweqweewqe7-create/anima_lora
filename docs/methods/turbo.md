@@ -370,6 +370,28 @@ forwards). **Decision gate 1:** A/B `weight_gen` 0 vs 0.03 at fixed seed/data/st
 2-step `--cfg 1.0`, ship only on a CMMD/A-B win without diversity collapse (reuse
 `diversity.py`).
 
+## Soft-rank caption auxiliary (`[softrank]`, default off)
+
+Phase-0 of the caption-ranking line (2026-06-11, `bench/turbo/results/20260611-2020-phase0-turboN1250/`)
+confirmed the 4-step student follows prompts worse than the teacher. The wired
+answer is a differentiable ranking term: every `every_n` steps the student also
+denoises the same noise under `k` caption-negatives (no-grad), and a pairwise-sigmoid
+soft-rank loss (`scripts/distill_turbo/softrank.py`) pushes the matched caption to
+rank first. It joins the split-backward diversity pass, so `weight=0` is
+byte-identical DP-DMD.
+
+| Key (`[softrank]` / CLI) | Default | Meaning |
+|---|---|---|
+| `weight` / `--softrank_weight` | 0 (off) | Loss weight; A/B was planned at 0.05 |
+| `k` / `--softrank_k` | 2 | Caption negatives per step (≥2; each is one extra student forward) |
+| `every_n` / `--softrank_every_n` | 4 | Apply on every n-th step |
+| `softness` / `--softrank_softness` | 0.1 | Sigmoid temperature (→0 = hard rank) |
+| `pool_size` / `--softrank_pool_size` | 64 | Negative-caption pool |
+
+Regression probe: `bench/turbo/caption_ranking_probe.py --adapter <ckpt>`. The
+ship-gate A/B (0 vs 0.05) was never run — treat the knob as experimental. Tests:
+`tests/test_turbo_softrank.py`. Design: `_archive/proposals/turbo_caption_ranking.md`.
+
 ## Limitations & composition
 
 - **Plain-LoRA bake is the hard constraint.** Anything needing a step-size or

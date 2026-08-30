@@ -26,7 +26,7 @@ pragmatic cut, with two deliberate deviations:
    position-selective revision: it parameterizes register *content* per-block
    (DSR Theory-2). NB it deliberately does NOT touch the adoption question
    (attention routing to registers), which belongs to the headroom Phase-2
-   unfrozen-QKV sweep (`docs/proposal/headroom_register_tokens.md`).
+   unfrozen-QKV sweep (`_archive/proposals/headroom_register_tokens.md`).
 
 ### Arms (all trained by `run_bench.py` via train.py, baseline recipe)
 

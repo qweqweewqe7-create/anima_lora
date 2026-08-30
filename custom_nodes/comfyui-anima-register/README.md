@@ -4,7 +4,7 @@ Run a **register-token adapter** (DSR-style non-decoded self-attention tokens +
 trained self-attn QKV surface) on a stock Anima MODEL. Train one with
 `train.py --method register` (`networks/methods/register.py`,
 `configs/methods/register.toml`). This is the inference/eyeball vehicle for the
-`docs/proposal/headroom_register_tokens.md` line — there is no automated Anima
+`_archive/proposals/headroom_register_tokens.md` line — there is no automated Anima
 quality reward, so a human-in-ComfyUI A/B is the quality gate.
 
 ## Node

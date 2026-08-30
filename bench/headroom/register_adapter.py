@@ -5,7 +5,7 @@ sequence: a true residual-carrying scratchpad (concat once at the block-stack
 entry, carried through all blocks, stripped before unpatchify/decode). This is
 the DSR "diffusion register" (arXiv:2605.05206) retrofitted onto a frozen
 pretrained DiT on a small adapter budget — the open, Anima-specific question
-(`docs/proposal/headroom_register_tokens.md`, RQ3-first redesign in
+(`_archive/proposals/headroom_register_tokens.md`, RQ3-first redesign in
 `bench/headroom/README.md`).
 
 Two arms adjudicate *why* the DSR sink is load-bearing (bench README §"Where
@@ -91,7 +91,7 @@ class RegisterAdapter(nn.Module):
         # parameter (base weight stays frozen — same reachability as unfreezing
         # qkv_proj, but zero-init so it's a step-0 no-op and merges cleanly).
         # This is the proposal's K36-b8-QKV arm ("max reachability — the arm the
-        # negative most likely mispriced"), docs/proposal/headroom_register_tokens.md.
+        # negative most likely mispriced"), _archive/proposals/headroom_register_tokens.md.
         self.lora = nn.ModuleDict()
         self.qkv_delta = nn.ParameterDict()
         for bi in self.target_blocks:

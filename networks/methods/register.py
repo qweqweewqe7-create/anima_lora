@@ -18,7 +18,7 @@ Same DSR mechanism (arXiv:2605.05206) retrofitted onto a frozen pretrained DiT:
   at block ``__call__`` granularity, outside the compiled ``_forward``).
 * A trained self-attn QKV surface on the target blocks — either a low-rank
   LoRA (`qkv_mode="lora"`) or a full-rank ΔW (`qkv_mode="unfrozen"`, the DSR
-  sweet-spot reachability arm, proposal `docs/proposal/headroom_register_tokens.md`).
+  sweet-spot reachability arm, proposal `_archive/proposals/headroom_register_tokens.md`).
 
 Two arms (proposal §Arms; `bench/headroom/README.md`):
 

@@ -1,5 +1,5 @@
 # Dual-pool gradient routing — Phase 0 Arm A (dual 32/32).
-# docs/proposal/turbo_dual_pool_grad_routing.md
+# _archive/proposals/turbo_dual_pool_grad_routing.md
 #
 # Derived from configs/gui-methods/custom/superturbo.toml (the CDM + div0.1
 # recipe) with EXACTLY ONE change vs Arm B: the student's r=64 is split into two

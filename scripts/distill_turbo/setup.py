@@ -442,7 +442,7 @@ def build_run(args, cfg: TurboConfig) -> RunContext:
         # full AdamW moment sets and is the largest transient in the process.
         resume_state = None
 
-    # Soft-rank caption auxiliary (docs/proposal/turbo_caption_ranking.md): ranks
+    # Soft-rank caption auxiliary (_archive/proposals/turbo_caption_ranking.md): ranks
     # the matched caption against k shuffled-caption negatives at the DP-DMD
     # step-0 anchor. weight=0 → fully off, byte-identical DP-DMD. Negatives come
     # from a cross-step pool (CaptionNegativePool) so the term fires even at

@@ -1,7 +1,7 @@
 """Curation → trainer dependency-direction guard.
 
 The curation half of the tree (tagger, masking, grouping, caption polishing) is
-being split into ``sorryhyun/anime_tools`` (``docs/proposal/curation_repo_split.md``).
+split into ``sorryhyun/anime_tools`` (contract: ``../anime_tools/docs/contract.md``).
 The one rule of that split is::
 
     anima_lora (trainer) ──depends on──▶ anime_tools        never the reverse

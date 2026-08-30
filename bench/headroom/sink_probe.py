@@ -1,6 +1,6 @@
 """RQ1 / Phase-0 sink probe for the *headroom (register) tokens* proposal.
 
-Design: ``docs/proposal/headroom_register_tokens.md`` (merged PR #68). This is the
+Design: ``_archive/proposals/headroom_register_tokens.md`` (merged PR #68). This is the
 falsifiable kill gate that runs BEFORE any training or new network code: does the
 base DiT actually manufacture a *relocatable, border-located, self-attention* sink
 at generation time? If not, unprompted borders are a data-prior / VAE-edge problem

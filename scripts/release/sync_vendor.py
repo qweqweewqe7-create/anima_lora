@@ -5,7 +5,7 @@ to a bundled vendor copy when the host install isn't sitting inside the
 anima_lora repo. This script keeps those vendor copies fresh.
 
 Four targets (the tagger node no longer vendors anything — it depends on the
-``anime_tools`` package and lives in its own repo, ``ComfyUI-Anima-Tagger``):
+``anime_tools`` package and lives in that repo, ``anime_tools/comfyui/anima_tagger/``):
 
 * ``custom_nodes/comfyui-anima-directedit/_vendor/`` — directedit primitives,
   trimmed sampling helper, the trimmed ``CONSTANT_TOKEN_BUCKETS`` constant,

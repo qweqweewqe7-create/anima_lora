@@ -1,5 +1,5 @@
 # Dual-pool gradient routing — Phase 0 Arm B (rank-matched single r=64 baseline).
-# docs/proposal/turbo_dual_pool_grad_routing.md
+# _archive/proposals/turbo_dual_pool_grad_routing.md
 #
 # Identical to arm_A_dual_32_32.toml in EVERY field except the student layout:
 # one r=64 plain-LoRA stack with joint (unrouted) gradients — the shipped
