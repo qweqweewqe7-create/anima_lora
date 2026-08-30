@@ -20,6 +20,21 @@ from library.captioning.path_filter import filter_paths_by_glob
 IMAGE_EXTENSIONS: list[str] = [".png", ".jpg", ".jpeg", ".webp", ".bmp"]
 IMAGE_EXTENSIONS.extend([ext.upper() for ext in IMAGE_EXTENSIONS])
 
+# Optional-plugin formats, mirrored from the trainer's image_utils so both
+# walkers see the same files (the parity test pins this).
+try:
+    import pillow_avif  # noqa: F401
+
+    IMAGE_EXTENSIONS.extend([".avif", ".AVIF"])
+except Exception:
+    pass
+for _jxl_plugin in ("jxlpy", "pillow_jxl"):
+    try:
+        __import__(_jxl_plugin)
+    except Exception:
+        continue
+    IMAGE_EXTENSIONS.extend([".jxl", ".JXL"])
+
 
 def glob_images_pathlib(dir_path: Path, recursive: bool) -> list[Path]:
     out: list[Path] = []

@@ -1,6 +1,6 @@
 # Curation split — tagger / masking / grouping / caption polishing → `sorryhyun/anime_tools`
 
-Status: **Phase 0 in progress (started 2026-08-30).** Nothing moved yet.
+Status: **Phase 0 complete (2026-08-30).** Nothing moved to a new repo yet; the seam is cut and guarded in-tree. Contract: [`anime_tools_contract.md`](anime_tools_contract.md).
 
 Phase 0 log:
 - 2026-08-30 — guard test `tests/test_curation_boundary.py` landed (task d). It caught three
@@ -10,8 +10,17 @@ Phase 0 log:
   `correct_captions.py` / `position_captions.py` go through `library/captioning/tokenizers.py`,
   which takes tokenizer **directories** — the trainer wrapper (`scripts/tasks/preprocess.py`)
   resolves `.safetensors` → bundled config dir via `library.anima.weights.qwen3_tokenizer_dir`.
-  Remaining: (a) contract.md, (b) grouping embedder injection + `"pe"` tagger backend removal,
-  (c) inline `IMAGE_TRANSFORMS` / glob helper / `hf_download`, model-path resolution decision.
+- 2026-08-30 — (b) grouping takes an injected `Embedder` (`library/vision/grouping_embedder.py`
+  is the trainer's PE-Spatial one; CLI `--embedder module:callable`); the legacy `"pe"` tagger
+  backend is **deleted** (`anima_tagger_model.py`, the PE cache builders, `bench/tagger_external/
+  run_bench.py` → `_archive/anima_tagger_training/pe_backend_removed_2026_08_30/`); the tagger
+  node's `_vendor` no longer ships `library/vision`.
+- 2026-08-30 — (c) `path_filter.py` + `hf_download.py` moved under `library/captioning/` (shims
+  left); `library/captioning/{_env,_walk}.py` are the curation-side home/path/logging + walker
+  copies (parity-tested). The guard now forbids **every** non-manifest `library.*` import and
+  passes. Model-path resolution decided: `ANIME_TOOLS_HOME` → `ANIMA_HOME` → checkout root.
+- 2026-08-30 — (a) `anime_tools_contract.md` written. **Phase 0 exit met: tests green, no
+  behavior change** (1757 passed).
 
 ## Why
 
@@ -242,7 +251,7 @@ updated.
 - **Model-path resolution.** The tagger checkpoint (`models/captioners/anima-tagger-dbv4`) and
   the gated dbv4 backbone resolve via `library.env.anima_home()` + `hf_download` today. The
   curation package needs its own `ANIMA_CURATE_MODELS` (default `~/.anima/models`) and the
-  trainer passes its dir explicitly. Decide in Phase 0.
+  trainer passes its dir explicitly. **Decided in Phase 0** — see the contract §4 (`ANIME_TOOLS_HOME` / `ANIME_TOOLS_MODELS`).
 - **Grouping without PE.** A standalone `anime-tools group` run (no trainer installed) needs
   an embedder; dbv4 backbone features are the candidate default but the grid-match grouping was
   tuned on PE-Spatial — bench before calling them interchangeable
