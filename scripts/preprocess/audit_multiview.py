@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from library.env import resolve_under_home  # noqa: E402
+from library.captioning._env import resolve_path  # noqa: E402
 from library.preprocess.instance_detection import (  # noqa: E402
     DEFAULT_SUBJECT_PROMPT_EMBED,
 )
@@ -188,9 +188,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    src = resolve_under_home(args.src)
-    dst = resolve_under_home(args.dst)
-    report_dir = resolve_under_home(args.report_dir)
+    src = resolve_path(args.src)
+    dst = resolve_path(args.dst)
+    report_dir = resolve_path(args.report_dir)
 
     detect_fn, part_detect_fn, sam_model, sam_processor = build_detect_fn(args)
 
@@ -201,7 +201,7 @@ def main() -> None:
     )
 
     ckpt_dir = ensure_tagger_checkpoint(
-        resolve_under_home(args.tagger_dir or DEFAULT_TAGGER_DIR)
+        resolve_path(args.tagger_dir or DEFAULT_TAGGER_DIR)
     )
     print(f"Loading Anima Tagger from {ckpt_dir}...", flush=True)
     tagger = AnimaTagger(ckpt_dir, device=args.device)

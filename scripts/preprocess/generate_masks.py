@@ -16,7 +16,7 @@ import yaml
 from PIL import Image
 from tqdm import tqdm
 
-from library.datasets.subsets import filter_paths_by_glob
+from library.captioning.path_filter import filter_paths_by_glob
 from library.preprocess import walk_images
 
 

@@ -101,7 +101,7 @@ def load_dbv4_card(
     repo: str = DEFAULT_DBV4_REPO, revision: Optional[str] = None
 ) -> Dbv4Card:
     """Fetch + parse ``selected_tags.csv`` and ``meta.json`` for ``repo``."""
-    from library.runtime.hf_download import hf_download
+    from library.captioning._hf import hf_download
 
     hint = gated_hint(repo)
     tags_csv = hf_download(
@@ -274,7 +274,7 @@ class Dbv4Backend:
     def _load_model(self) -> nn.Module:
         import timm
 
-        from library.runtime.hf_download import hf_download
+        from library.captioning._hf import hf_download
 
         card = self.card
         weights = hf_download(

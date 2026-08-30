@@ -116,7 +116,7 @@ def ensure_tagger_checkpoint(
         return ckpt_dir
     from huggingface_hub.utils import EntryNotFoundError
 
-    from library.runtime.hf_download import hf_download
+    from library.captioning._hf import hf_download
 
     logger.info(
         "AnimaTagger: %s missing required files — fetching %s%s (one-time).",
@@ -195,7 +195,7 @@ def ensure_tagger_backbone(ckpt_dir: str | Path) -> str:
             f"ANIMA_TAGGER_NO_AUTOFETCH is set. Run `make download-tagger-model` "
             f"({gated_hint(repo)})."
         )
-    from library.runtime.hf_download import hf_download
+    from library.captioning._hf import hf_download
 
     logger.info(
         "AnimaTagger: backbone %s not cached — fetching under your HF token "

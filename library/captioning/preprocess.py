@@ -16,7 +16,7 @@ from library.captioning.position_clauses import (
     has_clauses,
     parse_caption,
 )
-from library.preprocess._dataset import walk_images
+from library.captioning._walk import walk_images
 from library.preprocess.caption_variants import (
     build_erasure_token_pool,
     generate_caption_variants,

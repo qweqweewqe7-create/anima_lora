@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from library.env import resolve_under_home  # noqa: E402
+from library.captioning._env import resolve_path  # noqa: E402
 from library.preprocess.autotag import (  # noqa: E402
     MODES,
     AutotagOptions,
@@ -96,8 +96,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    resized_dir = resolve_under_home(args.dst)
-    source_dir = resolve_under_home(args.src)
+    resized_dir = resolve_path(args.dst)
+    source_dir = resolve_path(args.src)
     if not resized_dir.exists():
         raise SystemExit(
             f"resized dir not found: {resized_dir} — run `make preprocess-resize` first"
@@ -123,7 +123,7 @@ def main() -> None:
         progress=progress,
     )
 
-    report_dir = resolve_under_home(args.report_dir)
+    report_dir = resolve_path(args.report_dir)
     report_dir.mkdir(parents=True, exist_ok=True)
     report = {
         "mode": args.mode,

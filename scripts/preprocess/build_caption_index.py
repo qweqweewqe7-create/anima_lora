@@ -44,10 +44,10 @@ from pathlib import Path
 # Shared torch-free tag-shape primitives, kept in sync with the Anima Tagger
 # vocab build (scripts/anima_tagger/vocab.py).
 from library.captioning.taxonomy import is_artist_tag, is_count_tag, is_rating_tag
-from library.datasets.image_utils import IMAGE_EXTENSIONS
-from library.datasets.subsets import filter_paths_by_glob
-from library.io.cache import caption_key
-from library.io.walk import safe_walk
+from library.captioning._walk import IMAGE_EXTENSIONS
+from library.captioning.path_filter import filter_paths_by_glob
+from library.captioning._walk import caption_key
+from library.captioning._walk import safe_walk
 
 
 DEFAULT_VOCAB = "models/captioners/anima-tagger-dbv4/vocab.json"

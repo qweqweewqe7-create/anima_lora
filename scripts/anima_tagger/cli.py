@@ -30,8 +30,8 @@ import logging
 import os
 from pathlib import Path
 
-from library.env import load_dotenv  # noqa: E402
-from library.log import setup_logging  # noqa: E402
+from library.captioning._env import load_dotenv  # noqa: E402
+from library.captioning._env import setup_logging  # noqa: E402
 
 # Pull CAPTION_CORPUS_DIR from anima_lora/.env before argparse builds defaults;
 # CLI flags still win over env values.

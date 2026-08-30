@@ -587,7 +587,7 @@ def _iter_captions(
     ``stats.seen``, the ``no-caption`` skip, and the progress callback (over
     *every* walked image, not only the captioned ones) are handled here.
     """
-    from library.preprocess._dataset import walk_images
+    from library.captioning._walk import walk_images
 
     images = walk_images(resized_dir, recursive=True, pattern=path_pattern)
     stats.seen = len(images)

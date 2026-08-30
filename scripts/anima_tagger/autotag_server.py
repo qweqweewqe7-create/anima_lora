@@ -38,8 +38,8 @@ from library.captioning.anima_tagger import (
     AnimaTagger,
     ensure_tagger_checkpoint,
 )
-from library.env import resolve_under_home
-from library.log import setup_logging
+from library.captioning._env import resolve_path
+from library.captioning._env import setup_logging
 
 READY = "ANIMA_AUTOTAG_READY"
 RESULT_PREFIX = "ANIMA_AUTOTAG_RESULT\t"
@@ -64,7 +64,7 @@ def main() -> None:
     import torch
     from PIL import Image
 
-    ckpt_dir = ensure_tagger_checkpoint(resolve_under_home(args.tagger_dir))
+    ckpt_dir = ensure_tagger_checkpoint(resolve_path(args.tagger_dir))
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     tagger = AnimaTagger(ckpt_dir, device=device)
     # Warm the lazily-loaded PE encoders with a tiny dummy image so the first
@@ -99,7 +99,7 @@ def main() -> None:
         if not path:
             continue
         try:
-            image_path = resolve_under_home(path)
+            image_path = resolve_path(path)
             if not image_path.exists():
                 _emit(ERROR_PREFIX + f"image not found: {image_path}")
                 continue

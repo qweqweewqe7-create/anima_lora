@@ -308,7 +308,7 @@ def test_backbone_preflight_skips_fetch_when_cached(tmp_path, monkeypatch):
     _write_ckpt(tmp_path)
     monkeypatch.setattr("library.captioning.dbv4_meta.backbone_cached", lambda _r: True)
     monkeypatch.setattr(
-        "library.runtime.hf_download.hf_download",
+        "library.captioning._hf.hf_download",
         lambda **_k: (_ for _ in ()).throw(AssertionError("must not fetch")),
     )
     from library.captioning.dbv4_meta import backbone_repo_for
@@ -326,7 +326,7 @@ def test_backbone_preflight_fetches_every_file_when_uncached(tmp_path, monkeypat
     )
     calls = []
     monkeypatch.setattr(
-        "library.runtime.hf_download.hf_download",
+        "library.captioning._hf.hf_download",
         lambda **kw: calls.append(kw["filename"]) or "/x",
     )
     at.ensure_tagger_backbone(tmp_path)
@@ -348,7 +348,7 @@ def test_hf_download_translates_gated_repo_error(monkeypatch):
     import huggingface_hub
     from huggingface_hub.utils import GatedRepoError
 
-    from library.runtime.hf_download import hf_download
+    from library.captioning._hf import hf_download
 
     import httpx
 

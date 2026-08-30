@@ -503,7 +503,7 @@ def run_multiview_audit(
     reported relative so the caller can decide which tree to edit. Nothing here
     writes.
     """
-    from library.preprocess._dataset import walk_images
+    from library.captioning._walk import walk_images
 
     options = options or PositionCaptionOptions()
     stats = MultiviewAuditStats()

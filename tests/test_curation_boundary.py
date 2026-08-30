@@ -54,18 +54,12 @@ CURATION_PATHS: tuple[str, ...] = (
     "scripts/tasks/curate.py",
 )
 
-# Trainer-only roots. ``library.vision`` (PE loader) is deliberately *not* here:
-# it stays in the trainer but the seam (grouping's injected embedder, the
-# tagger's dropped ``"pe"`` backend) is handled by Phase 0 tasks (b)/(c), and
-# ``library.preprocess._dataset`` / ``library.datasets.subsets`` are Phase 0 (c)
-# helper-inlining targets — they get added here as each lands.
-FORBIDDEN_ROOTS: tuple[str, ...] = (
-    "library.anima",
-    "library.models",
-    "library.training",
-    "networks",
-    "train",  # repo-root train.py
-)
+# Anything under ``library.`` that is not itself in the manifest is trainer-only
+# (``library.env`` / ``library.log`` / ``library.io`` / ``library.datasets`` /
+# ``library.runtime`` included — the curation set carries its own tiny copies in
+# ``library/captioning/{_env,_walk,_hf}.py``), plus ``networks`` and ``train``.
+FORBIDDEN_ROOTS: tuple[str, ...] = ("library", "networks", "train")
+
 
 _IMPORT_RE = re.compile(
     r"^\s*(?:from\s+(?P<from>[\w.]+)\s+import|import\s+(?P<mod>[\w.]+))",
@@ -80,18 +74,24 @@ def _curation_files() -> list[Path]:
     return sorted(files)
 
 
-def _forbidden(module: str) -> bool:
-    return any(
-        module == root or module.startswith(root + ".") for root in FORBIDDEN_ROOTS
-    )
+def _in_manifest(module: str, manifest: set[str]) -> bool:
+    rel = module.replace(".", "/")
+    return rel + ".py" in manifest or any(m.startswith(rel + "/") for m in manifest)
+
+
+def _forbidden(module: str, manifest: set[str]) -> bool:
+    if not any(module == r or module.startswith(r + ".") for r in FORBIDDEN_ROOTS):
+        return False
+    return not _in_manifest(module, manifest)
 
 
 def _violations(path: Path) -> list[str]:
     text = path.read_text(encoding="utf-8")
+    manifest = {str(p.relative_to(REPO_ROOT)) for p in _curation_files()}
     out: list[str] = []
     for m in _IMPORT_RE.finditer(text):
         mod = m.group("from") or m.group("mod")
-        if _forbidden(mod):
+        if _forbidden(mod, manifest):
             line = text.count("\n", 0, m.start()) + 1
             out.append(f"{path.relative_to(REPO_ROOT)}:{line}: {m.group(0).strip()}")
     return out

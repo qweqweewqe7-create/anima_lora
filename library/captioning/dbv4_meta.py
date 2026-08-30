@@ -47,6 +47,6 @@ def backbone_repo_for(ckpt_dir: str | Path) -> str:
 
 def backbone_cached(repo: str) -> bool:
     """True when every backbone file is already in the local hub cache (offline)."""
-    from library.runtime.hf_download import hf_file_cached
+    from library.captioning._hf import hf_file_cached
 
     return all(hf_file_cached(repo, f) for f in DBV4_BACKBONE_FILES)

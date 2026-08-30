@@ -143,7 +143,7 @@ def run_autotag_captions(
     ``tag_fn`` takes a PIL image and returns a caption string — normally
     ``AnimaTagger.predict_caption`` bound to ``min_confidence``.
     """
-    from library.preprocess._dataset import walk_images
+    from library.captioning._walk import walk_images
 
     options = options or AutotagOptions()
     stats = AutotagStats()
@@ -220,9 +220,9 @@ def build_tag_fn(
         AnimaTagger,
         ensure_tagger_checkpoint,
     )
-    from library.env import resolve_under_home
+    from library.captioning._env import resolve_path
 
-    resolved = resolve_under_home(str(ckpt_dir or DEFAULT_TAGGER_DIR))
+    resolved = resolve_path(str(ckpt_dir or DEFAULT_TAGGER_DIR))
     ensure_tagger_checkpoint(resolved)
     tagger = AnimaTagger(ckpt_dir=resolved, device=device)
 

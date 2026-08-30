@@ -31,7 +31,7 @@ from typing import Mapping
 import yaml
 
 from library.captioning.taxonomy import is_artist_tag, is_count_tag, is_rating_tag
-from library.env import resolve_under_home
+from library.captioning._env import resolve_path
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +84,7 @@ def load_clause_groups(path: str | Path = CLAUSE_GROUPS_CONFIG) -> ClauseGroups:
     read at two different strengths (may a tag LEAVE the bag vs may it ENTER a
     clause at all).
     """
-    with open(resolve_under_home(path), encoding="utf-8") as f:
+    with open(resolve_path(path), encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
 
     def names(key: str) -> frozenset[str]:

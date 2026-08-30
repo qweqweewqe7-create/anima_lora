@@ -43,8 +43,8 @@ if str(ROOT) not in sys.path:
 from PIL import Image, ImageDraw  # noqa: E402
 
 from library.captioning.position_clauses import parse_caption  # noqa: E402
-from library.env import resolve_under_home  # noqa: E402
-from library.preprocess._dataset import walk_images  # noqa: E402
+from library.captioning._env import resolve_path  # noqa: E402
+from library.captioning._walk import walk_images  # noqa: E402
 
 # Only the drawing helpers are borrowed — the palette below is this sheet's own,
 # since an A/B page reads by A-vs-B contrast rather than by verdict.
@@ -227,8 +227,8 @@ def write_index(out_dir: Path, rows: list[dict], labels: tuple[str, str]) -> Pat
 
 def main() -> None:
     args = parse_args()
-    src, dst = resolve_under_home(args.src), resolve_under_home(args.dst)
-    out_dir = resolve_under_home(args.out)
+    src, dst = resolve_path(args.src), resolve_path(args.dst)
+    out_dir = resolve_path(args.out)
     (out_dir / "sheets").mkdir(parents=True, exist_ok=True)
     labels = (
         args.a_label or args.a_flags or "shipped",
@@ -263,7 +263,7 @@ def main() -> None:
     )
 
     ckpt = ensure_tagger_checkpoint(
-        resolve_under_home(detect_args.tagger_dir or DEFAULT_TAGGER_DIR)
+        resolve_path(detect_args.tagger_dir or DEFAULT_TAGGER_DIR)
     )
     tagger = AnimaTagger(ckpt, device=args.device)
     vocabulary = load_clause_vocabulary(ckpt)

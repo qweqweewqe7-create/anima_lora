@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from library.env import resolve_under_home  # noqa: E402
+from library.captioning._env import resolve_path  # noqa: E402
 from library.preprocess.multiview_audit import (  # noqa: E402
     apply_curated,
     revert_curated,
@@ -64,10 +64,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    source_dir = resolve_under_home(args.source)
+    source_dir = resolve_path(args.source)
 
     if args.revert:
-        manifest_path = resolve_under_home(args.revert)
+        manifest_path = resolve_path(args.revert)
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         results = revert_curated(
             manifest["entries"], source_dir=source_dir, apply=args.apply
@@ -85,14 +85,14 @@ def main() -> None:
     if not args.accept:
         print("either --accept <list> or --revert <manifest> is required")
         sys.exit(2)
-    report_path = resolve_under_home(args.report)
+    report_path = resolve_path(args.report)
     report = json.loads(report_path.read_text(encoding="utf-8"))
     rows = (
         report["images"] if isinstance(report, dict) and "images" in report else report
     )
     accepted = {
         line.strip()
-        for line in resolve_under_home(args.accept).read_text().splitlines()
+        for line in resolve_path(args.accept).read_text().splitlines()
         if line.strip() and not line.strip().startswith("#")
     }
 
@@ -107,7 +107,7 @@ def main() -> None:
         print(f"  !! not-in-report: {image}")
 
     manifest_path = (
-        resolve_under_home(args.manifest)
+        resolve_path(args.manifest)
         if args.manifest
         else report_path.parent / "curated_manifest.json"
     )

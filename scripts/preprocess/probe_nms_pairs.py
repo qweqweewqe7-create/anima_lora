@@ -41,11 +41,11 @@ if str(ROOT) not in sys.path:
 
 from PIL import Image  # noqa: E402
 
-from library.env import resolve_under_home  # noqa: E402
+from library.captioning._env import resolve_path  # noqa: E402
 from library.preprocess.instance_detection import (  # noqa: E402
     DEFAULT_SUBJECT_PROMPT_EMBED,
 )
-from library.preprocess._dataset import walk_images  # noqa: E402
+from library.captioning._walk import walk_images  # noqa: E402
 from library.preprocess.position_captions import (  # noqa: E402
     box_containment,
     box_iou,
@@ -120,7 +120,7 @@ def main() -> None:
     # SAM3 sees the lowest floor once; each floor's population is a re-filter.
     args.score_threshold = min(args.floors)
     detect_fn, _part, model, processor = build_detect_fn(args)
-    dst = resolve_under_home(args.dst)
+    dst = resolve_path(args.dst)
     images = walk_images(dst, recursive=True, pattern=args.path_pattern)
     print(f"{len(images)} images, floors {args.floors}", flush=True)
 
@@ -212,7 +212,7 @@ def main() -> None:
     whole = [p for p in proposals if p["area_frac"] >= 0.9 and p["fill"] is not None]
     summary["whole_canvas_fills"] = sorted(p["fill"] for p in whole)
 
-    out = resolve_under_home(args.out)
+    out = resolve_path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(
         json.dumps(

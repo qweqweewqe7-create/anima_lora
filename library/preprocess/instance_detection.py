@@ -37,11 +37,11 @@ def resolve_prompt_embed(spec: str | None) -> Path | None:
     """
     import warnings
 
-    from library.env import resolve_under_home
+    from library.captioning._env import resolve_path
 
     if spec is None or spec.strip().lower() in _PROMPT_EMBED_OFF:
         return None
-    path = resolve_under_home(spec)
+    path = resolve_path(spec)
     if path.exists():
         return path
     if spec == DEFAULT_SUBJECT_PROMPT_EMBED:

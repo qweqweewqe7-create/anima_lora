@@ -58,7 +58,7 @@ def test_safe_walk_matches_oswalk_without_links(tmp_path):
 
 
 def test_hf_download_classifies_only_transport_errors():
-    from library.runtime import hf_download as H
+    from library.captioning import _hf as H
 
     import requests
 
@@ -74,7 +74,7 @@ def test_hf_download_classifies_only_transport_errors():
 
 
 def test_ensure_hf_timeouts_pins_env(monkeypatch):
-    from library.runtime.hf_download import ensure_hf_timeouts
+    from library.captioning._hf import ensure_hf_timeouts
 
     monkeypatch.delenv("HF_HUB_DOWNLOAD_TIMEOUT", raising=False)
     monkeypatch.delenv("HF_HUB_ETAG_TIMEOUT", raising=False)

@@ -21,8 +21,8 @@ from library.captioning.anima_tagger import (
     AnimaTagger,
     ensure_tagger_checkpoint,
 )
-from library.env import resolve_under_home
-from library.log import setup_logging
+from library.captioning._env import resolve_path
+from library.captioning._env import setup_logging
 
 # Sentinel prefix the GUI greps for in the job's stdout. Tab-separated so the
 # caption (which contains commas + spaces) survives intact on one line.
@@ -52,11 +52,11 @@ def main() -> None:
     import torch
     from PIL import Image
 
-    image_path = resolve_under_home(args.image)
+    image_path = resolve_path(args.image)
     if not image_path.exists():
         raise SystemExit(f"image not found: {image_path}")
 
-    ckpt_dir = ensure_tagger_checkpoint(resolve_under_home(args.tagger_dir))
+    ckpt_dir = ensure_tagger_checkpoint(resolve_path(args.tagger_dir))
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     tagger = AnimaTagger(ckpt_dir, device=device)
     caption = tagger.predict_caption(

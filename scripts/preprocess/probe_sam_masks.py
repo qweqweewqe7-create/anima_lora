@@ -39,8 +39,8 @@ if str(ROOT) not in sys.path:
 
 from PIL import Image, ImageDraw  # noqa: E402
 
-from library.env import resolve_under_home  # noqa: E402
-from library.preprocess._dataset import walk_images  # noqa: E402
+from library.captioning._env import resolve_path  # noqa: E402
+from library.captioning._walk import walk_images  # noqa: E402
 
 COLORS = [
     (255, 60, 60),
@@ -118,10 +118,10 @@ def parse_args() -> argparse.Namespace:
 
 def resolve_images(args: argparse.Namespace) -> list[Path]:
     if args.images:
-        return [resolve_under_home(i) for i in args.images]
+        return [resolve_path(i) for i in args.images]
     if not args.path_pattern:
         raise SystemExit("pass image paths or --path_pattern")
-    dst = resolve_under_home(args.dst)
+    dst = resolve_path(args.dst)
     return sorted(walk_images(dst, recursive=True, pattern=args.path_pattern))
 
 
@@ -255,7 +255,7 @@ def main() -> None:
     if not prompts:
         raise SystemExit("--prompts is empty")
     paths = resolve_images(args)
-    out_root = resolve_under_home(args.out)
+    out_root = resolve_path(args.out)
     # A lone image with a lone prompt is the original single-shot diagnostic —
     # keep it chatty (dtype / value range / alignment), stay terse for a sweep.
     verbose = len(paths) == 1 and len(prompts) == 1
@@ -266,7 +266,7 @@ def main() -> None:
     model = build_sam3_image_model(
         device=args.device,
         eval_mode=True,
-        checkpoint_path=str(resolve_under_home(args.checkpoint)),
+        checkpoint_path=str(resolve_path(args.checkpoint)),
         load_from_HF=False,
     )
     processor = Sam3Processor(model, confidence_threshold=args.threshold)
@@ -305,7 +305,7 @@ def main() -> None:
         print(f"  wrote: {out_dir}")
 
     summary_path = (
-        resolve_under_home(args.summary) if args.summary else out_root / "probe.json"
+        resolve_path(args.summary) if args.summary else out_root / "probe.json"
     )
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(
