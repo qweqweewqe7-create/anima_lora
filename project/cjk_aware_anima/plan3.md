@@ -301,6 +301,46 @@ trace). Nothing composed. Two conclusions:
 reference for a future DiT-side-target line; nothing in it ships. 2-iii
 (full adapter finetune) stays not-proposed.
 
+### Metric curation (2026-08-30, post-close) — what can and cannot see this failure
+
+Assets: `assets/grid_labels.json` (eyeball verdicts for 5 arms × 7–9 prompts,
+ordinal `identity` / `attributes` / `stray`), `assets/ja_eval_prompts_residual.json`
+(each character prompt with its name-stripped twin), and
+`bench/cjk_adapter/residual_probe.py` — scores every pack in one daemon job
+and rank-correlates each candidate column against the labels. Run:
+`bench/cjk_adapter/results/20260830-2230-residual-probe` (31 labelled points).
+
+The probe isolates the **name contribution** `Δ = pool(full) − pool(name-stripped)`
+on teacher (EN) and student (`ja_ext`) and reports `cos(Δ_S, Δ_T)`, the norm
+ratio, and the *margin* (own-character cos minus best other-character cos).
+
+| column | Spearman ρ | AUC (identity 1 vs 0) | within-prompt concordance |
+|---|---|---|---|
+| `res_margin_tags_nc` | **0.72** | **0.94** | 2/6 |
+| `res_cos_tags` | 0.65 | 0.89 | 1/6 |
+| `full_cos_ext_vs_en` (the distill-style control) | 0.47 | 0.79 | 0/6 |
+
+Reading, in two halves:
+
+- **Absolute level: yes.** Reimu's student residual has margin 0.03–0.07 in
+  *every* arm (`synth_bal` … `lora16_reg`) — it is no closer to Reimu's
+  teacher residual than to Asuka's — while the teacher itself separates the
+  three characters at 0.78 and Miku's student margin sits at 0.37–0.46. The
+  whole-vector cosine (0.64–0.70 on the same prompts) hid this. So an
+  adapter-space quantity *does* witness "no identity was written": margin ≈ 0
+  is a hard fail that the distill loop could have reported at step 250.
+- **Ranking arms: no.** Within a prompt the LoRA arms *raise* every residual
+  column (r1 margin .074 → .143, a1 .076 → .18) while the render got worse —
+  the LoRA is trained to align this very quantity, so it is Goodharted the
+  moment it is optimised. Between-prompt separation is what the 0.94 AUC is
+  made of.
+
+Consequence for the metric stack: the residual margin is a cheap **floor
+gate** (≈ 0 ⇒ don't bother rendering) and a diagnostic, not a selector.
+Arm-vs-arm selection needs a DiT-side read — the turbo-4-step + Tagger
+render scorer (candidate 3) is the one to build; the velocity probe
+(candidate 2) is unnecessary if that lands.
+
 ### Ship (folds into plan.md Phase 3)
 
 The pack becomes three files: `.safetensors` (rows) + `.json` (mapping,
