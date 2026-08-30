@@ -186,7 +186,7 @@ def test_dbv4_dir_loads_without_model_weights(tmp_path, monkeypatch):
     assert at.ensure_tagger_checkpoint(tmp_path) == tmp_path
     t = _tagger(tmp_path, {"1girl": 0.95, "solo": 0.9, "explicit": 0.9}, monkeypatch)
     assert t.backend_kind == "dbv4"
-    assert t.model is None
+    assert not hasattr(t, "model")  # PE head is gone
     assert t.cfg.n_tags == N
     out = t.predict(IMG)
     for k in ("rating", "rating_scores", "scores", "kept", "thresholds"):
@@ -285,8 +285,18 @@ def test_sidecar_round_trip(tmp_path):
 def test_unknown_backend_rejected(tmp_path):
     _write_ckpt(tmp_path)
     (tmp_path / "config.json").write_text(json.dumps({"backend": "wat"}))
-    with pytest.raises(ValueError, match="unknown tagger backend"):
+    with pytest.raises(ValueError, match="unsupported tagger backend"):
         at.AnimaTagger(tmp_path, device="cpu")
+
+
+def test_legacy_pe_backend_rejected(tmp_path):
+    """The in-house PE dual-encoder head was removed 2026-08-30; a legacy
+    checkpoint (``backend`` absent or ``"pe"``) must fail loudly at load."""
+    _write_ckpt(tmp_path)
+    for cfg in ({}, {"backend": "pe"}):
+        (tmp_path / "config.json").write_text(json.dumps(cfg))
+        with pytest.raises(ValueError, match="'pe' dual-encoder head was removed"):
+            at.AnimaTagger(tmp_path, device="cpu")
 
 
 # --------------------------------------------------------------------------- #

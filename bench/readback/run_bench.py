@@ -113,96 +113,22 @@ def parse_args() -> argparse.Namespace:
 
 
 # --------------------------------------------------------------------------- #
-# Cached dual-encoder forward (mirrors bench/tagger_eval/run_bench.collect_logits)
+# Cached forward off the sidecar trainer's dbv4 feature cache
 # --------------------------------------------------------------------------- #
 def collect_logits(
     args: argparse.Namespace, model_dir: Path, cfg_d: dict, split_stems: List[str]
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.device]:
-    """Forward ``split_stems`` through the dual-encoder head off cached features.
+    """Forward ``split_stems`` through the tagger head off cached features.
 
     Returns ``(tag_logits [N, n_tags] fp32 cpu, multi_hot [N, n_tags] cpu,
     device)`` in loader-emission order — the two rows always align.
     """
-    if cfg_d.get("backend") == "dbv4":
-        return _collect_logits_dbv4(args, model_dir, cfg_d, split_stems)
-
-    from torch.utils.data import DataLoader
-
-    from library.captioning.anima_tagger_data import (
-        BucketBatchSampler,
-        CachedDualDataset,
-        TaggerManifest,
-        collate_dual_token_batch,
-    )
-    from library.captioning.anima_tagger_model import AnimaTaggerConfig, AnimaTaggerHead
-    from library.vision.encoders import get_encoder_info
-    from safetensors.torch import load_file as st_load
-    from library.captioning.feature_cache import cache_dir_for, feature_cache_root
-
-    cfg = AnimaTaggerConfig.from_dict(cfg_d["model"])
-    model = AnimaTaggerHead(cfg)
-    model.load_state_dict(st_load(str(model_dir / "model.safetensors")))
-    device = torch.device(
-        args.device or ("cuda" if torch.cuda.is_available() else "cpu")
-    )
-    model.to(device).eval()
-
-    pool_kind = str(cfg_d.get("pool_kind", cfg.pool_kind))
-    pool_kind_aux = str(cfg_d.get("pool_kind_aux", cfg.pool_kind_aux))
-    encoder = cfg_d.get("encoder", "pe")
-    aux_encoder = cfg_d.get("aux_encoder", "pe_spatial")
-
-    feature_root = feature_cache_root(args)
-    cache_dir = cache_dir_for(feature_root, pool_kind, encoder)
-    cache_dir_aux = cache_dir_for(feature_root, pool_kind_aux, aux_encoder)
-    for d in (cache_dir, cache_dir_aux):
-        if not d.exists():
-            raise SystemExit(
-                f"missing feature cache {d} — run the tagger `--mode build_features` "
-                f"with the encoder/pool flags the trainer used."
-            )
-    spec = get_encoder_info(encoder).bucket_spec if pool_kind == "map" else None
-    spec_aux = (
-        get_encoder_info(aux_encoder).bucket_spec if pool_kind_aux == "map" else None
-    )
-    manifest = TaggerManifest.from_path(model_dir / "dataset.json")
-    ds = CachedDualDataset(
-        manifest,
-        cache_dir,
-        pool_kind,
-        spec,
-        cache_dir_aux,
-        pool_kind_aux,
-        spec_aux,
-        stems_subset=split_stems,
-    )
-    sampler = BucketBatchSampler(
-        ds.buckets, batch_size=args.batch_size, seed=args.seed, shuffle=False
-    )
-    loader = DataLoader(
-        ds,
-        batch_sampler=sampler,
-        num_workers=args.feature_cache_workers,
-        collate_fn=collate_dual_token_batch,
-        pin_memory=True,
-    )
-    autocast = (
-        torch.amp.autocast("cuda", dtype=torch.bfloat16)
-        if device.type == "cuda"
-        else torch.autocast("cpu", enabled=False)
-    )
-    logit_chunks: List[torch.Tensor] = []
-    mh_chunks: List[torch.Tensor] = []
-    with torch.no_grad(), autocast:
-        for batch in loader:
-            tokens, tokens_aux, mh, _rate, _people, _bucket = batch
-            tl, _rl, _pl = model(
-                tokens.to(device, non_blocking=True),
-                tokens_aux.to(device, non_blocking=True),
-            )
-            logit_chunks.append(tl.float().cpu())
-            mh_chunks.append(mh)
-    return torch.cat(logit_chunks, dim=0), torch.cat(mh_chunks, dim=0), device
+    if cfg_d.get("backend") != "dbv4":
+        raise SystemExit(
+            "bench/readback: only dbv4-backed tagger checkpoints are supported "
+            "(the PE dual-encoder head was removed 2026-08-30)."
+        )
+    return _collect_logits_dbv4(args, model_dir, cfg_d, split_stems)
 
 
 def _collect_logits_dbv4(

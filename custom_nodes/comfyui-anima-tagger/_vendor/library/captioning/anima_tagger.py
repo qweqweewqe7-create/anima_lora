@@ -9,7 +9,7 @@ Checkpoint layout (produced by ``python -m scripts.anima_tagger.cli``):
 
     ckpt_dir/
       config.json              # model config + training metadata
-      model.safetensors        # AnimaTaggerHead state dict
+      sidecar.safetensors      # optional linear sidecar head (dbv4 lacks)
       thresholds.safetensors   # per-tag F1-optimal thresholds
       vocab.json               # tag list with category + median_pos + group info
       rules.yaml               # caption-normalization rules snapshot
@@ -20,13 +20,10 @@ When ``groups.yaml`` is present, prediction is group-aware: ``softmax`` and
 group logits) instead of the sigmoid threshold. Ungrouped/multi-label tags
 use the standard threshold path.
 
-Two backends, selected by ``config.json["backend"]``:
+One backend, ``config.json["backend"] == "dbv4"`` (the legacy in-house
+``"pe"`` dual-encoder head was removed 2026-08-30 — curation split Phase 0;
+its trainer + data builders live in ``_archive/anima_tagger_training/``):
 
-* ``"pe"`` (default when absent) — the in-house dual-encoder head
-  (PE-Core + PE-Spatial, hard-routed): PE-Core drives rating/people-count/
-  identity tags, PE-Spatial drives localized tags, both loaded lazily and
-  run per image. Pre-dual / v1 single-encoder checkpoints no longer load
-  (``config.json`` must carry ``aux_encoder`` + ``model.d_in_aux``).
 * ``"dbv4"`` — an off-the-shelf danbooru tagger (``animetimm/*.dbv4-full``,
   GPL-3.0 + gated, **never vendored** — fetched under the user's HF token)
   projected onto our vocab (``library/captioning/dbv4_backend.py``), plus an
@@ -36,8 +33,8 @@ Two backends, selected by ``config.json["backend"]``:
   Build one with ``python -m scripts.anima_tagger.build_dbv4_ckpt``.
 
 Everything after the score vector — thresholds, softmax groups, count dedupe,
-character floor, top-1 copyright, OC-suffix rule, slot order — is backend-
-agnostic post-processing of ``{tag: prob}`` and runs identically for both.
+character floor, top-1 copyright, slot order — is backend-agnostic
+post-processing of ``{tag: prob}``.
 
 Captions are emitted in Anima's canonical slot order:
 ``rating, count_tags, characters, copyrights, @artists, generals``, with
@@ -55,15 +52,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import numpy as np
 import torch
 from PIL import Image
 from safetensors.torch import load_file as st_load
 
 from library.captioning import tag_groups as tg
 from library.captioning import tag_rules as tr
-from library.captioning.anima_tagger_data import pil_resize_to_bucket
-from library.captioning.anima_tagger_model import AnimaTaggerConfig, AnimaTaggerHead
 from library.captioning.dbv4_backend import (
     UNSUPPORTED_LOGIT,
     Dbv4Backend,
@@ -73,12 +67,6 @@ from library.captioning.dbv4_backend import (
     rename_recovery_from_rules,
 )
 from library.captioning.taxonomy import classify_people
-from library.datasets.image_utils import IMAGE_TRANSFORMS
-from library.vision.encoder import (
-    VisionEncoderBundle,
-    encode_pe_from_imageminus1to1,
-    load_pe_encoder,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -260,16 +248,6 @@ def dedupe_count_tags(kept: Dict[str, float]) -> None:
             kept.pop(name)
 
 
-# Trailing parens suffix, e.g. "nejet (kawakami rokkaku)". Booru OC convention:
-# when copyright is `original`/meta, the parens content is the artist's name.
-_OC_SUFFIX_RE = re.compile(r"\(([^()]+)\)\s*$")
-
-# Copyrights that mean "no franchise" — `original` plus meta-publisher imprints.
-_META_COPYRIGHTS = frozenset(
-    {"original", "melonbooks", "toranoana", "comic kairakuten"}
-)
-
-
 # Canonical caption-format slot order (matches Anima training captions).
 SLOT_ORDER: Tuple[str, ...] = (
     "rating",
@@ -378,12 +356,9 @@ class AnimaTagger:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = torch.device(device)
         self.dtype = dtype
-        self.pe_ckpt = Path(pe_ckpt) if pe_ckpt else None
-        # None -> registry default (PE-Spatial-B16-512 at models/pe/...).
-        self.pe_aux_ckpt = Path(pe_aux_ckpt) if pe_aux_ckpt else None
-        # kept for ComfyUI-node call-site compat but are no-ops now (PE-LoRA
-        # was removed when the tagger collapsed to dual-encoder frozen-trunk).
-        del pe_lora_path, pe_lora_disabled
+        # Accepted for call-site compat (ComfyUI workflows / old scripts) but
+        # no-ops: the PE dual-encoder backend and PE-LoRA are gone.
+        del pe_ckpt, pe_aux_ckpt, pe_lora_path, pe_lora_disabled
         # Absolute confidence floor for characters, above the per-tag F1
         # threshold (some F1 thresholds are ~0.05, too permissive on its own).
         self._character_floor = float(character_floor)
@@ -392,14 +367,14 @@ class AnimaTagger:
             cfg_d = json.load(f)
         self._cfg_d = cfg_d
         self.backend_kind: str = str(cfg_d.get("backend", "pe"))
-        if self.backend_kind not in ("pe", "dbv4"):
+        if self.backend_kind != "dbv4":
             raise ValueError(
-                f"unknown tagger backend {self.backend_kind!r} in "
-                f"{self.ckpt_dir / 'config.json'} (expected 'pe' or 'dbv4')"
+                f"unsupported tagger backend {self.backend_kind!r} in "
+                f"{self.ckpt_dir / 'config.json'}: the legacy in-house 'pe' "
+                "dual-encoder head was removed 2026-08-30. Use a dbv4-backed "
+                f"checkpoint (default {DEFAULT_TAGGER_DIR}; `make download-models` "
+                "or `python -m scripts.anima_tagger.build_dbv4_ckpt`)."
             )
-        self.encoder_name: str = cfg_d.get("encoder", "pe")
-        self.aux_encoder_name: Optional[str] = cfg_d.get("aux_encoder")
-        self.model: Optional[AnimaTaggerHead] = None
         self._dbv4: Optional[Dbv4Backend] = None
         self._sidecar: Optional[SidecarHead] = None
 
@@ -438,10 +413,7 @@ class AnimaTagger:
 
         self.n_tags = len(self.tag_entries)
         self.rules = tr.load_rules(self.ckpt_dir / "rules.yaml")
-        if self.backend_kind == "pe":
-            self._init_pe_backend(cfg_d)
-        else:
-            self._init_dbv4_backend(cfg_d)
+        self._init_dbv4_backend(cfg_d)
         if int(self.cfg.n_tags) != self.n_tags:
             raise ValueError(
                 f"vocab.json has {self.n_tags} tags but the head expects {self.cfg.n_tags}"
@@ -504,28 +476,10 @@ class AnimaTagger:
                     continue
                 if count_re.match(e.name):
                     self._multi_count_names.add(e.name)
-        self._encoder: Optional[VisionEncoderBundle] = None
-        self._encoder_aux: Optional[VisionEncoderBundle] = None
 
     # ------------------------------------------------------------------ #
     # Backend construction
     # ------------------------------------------------------------------ #
-
-    def _init_pe_backend(self, cfg_d: dict) -> None:
-        """In-house dual-encoder head: PE-Core + PE-Spatial, always both."""
-        if not self.aux_encoder_name:
-            raise ValueError(
-                f"config.json has model.d_in_aux set but no top-level "
-                f"'aux_encoder' field — can't determine which auxiliary "
-                f'encoder to load. Re-train or hand-add `"aux_encoder": '
-                f'"pe_spatial"` to {self.ckpt_dir / "config.json"}.'
-            )
-        self.cfg = AnimaTaggerConfig.from_dict(cfg_d["model"])
-        self.model = AnimaTaggerHead(self.cfg)
-        self.model.load_state_dict(st_load(str(self.ckpt_dir / "model.safetensors")))
-        self.model.to(self.device).eval()
-        for p in self.model.parameters():
-            p.requires_grad_(False)
 
     def _init_dbv4_backend(self, cfg_d: dict) -> None:
         """External dbv4 tagger projected onto our vocab (+ optional sidecar)."""
@@ -580,91 +534,18 @@ class AnimaTagger:
             f"{len(self._sidecar.people_count_labels)} people",
         )
 
-    def _bundle(self) -> VisionEncoderBundle:
-        if self._encoder is None:
-            self._encoder = load_pe_encoder(
-                self.device,
-                name=self.encoder_name,
-                model_id=str(self.pe_ckpt) if self.pe_ckpt else None,
-                dtype=self.dtype,
-            )
-        return self._encoder
-
-    def _bundle_aux(self) -> VisionEncoderBundle:
-        """Lazy-load the auxiliary (PE-Spatial) encoder."""
-        if self._encoder_aux is None:
-            # None -> registry default, auto-fetched from HF when absent
-            self._encoder_aux = load_pe_encoder(
-                self.device,
-                name=self.aux_encoder_name,
-                model_id=str(self.pe_aux_ckpt) if self.pe_aux_ckpt else None,
-                dtype=self.dtype,
-            )
-        return self._encoder_aux
-
-    @torch.no_grad()
-    def _encode_image(self, pil_img: Image.Image) -> torch.Tensor:
-        """Image → main encoder feature on ``self.device``.
-
-        Shape depends on ``cfg.pool_kind``:
-          * ``mean`` → ``[d_enc]`` mean-pooled feature.
-          * ``map`` → ``[T, d_enc]`` token sequence; head's MAPHead pools
-            internally.
-        """
-        return self._encode_with(pil_img, self._bundle(), self.cfg.pool_kind)
-
-    @torch.no_grad()
-    def _encode_image_aux(self, pil_img: Image.Image) -> torch.Tensor:
-        """Image → aux encoder feature, shape per ``cfg.pool_kind_aux``
-        (mirrors :meth:`_encode_image` for the auxiliary encoder)."""
-        return self._encode_with(
-            pil_img,
-            self._bundle_aux(),
-            self.cfg.pool_kind_aux,
-        )
-
-    @torch.no_grad()
-    def _encode_with(
-        self,
-        pil_img: Image.Image,
-        bundle: VisionEncoderBundle,
-        pool_kind: str,
-    ) -> torch.Tensor:
-        """Shared image → feature path used by both encoders.
-
-        Each bundle has its own bucket spec so the same source image is
-        re-bucketed independently per encoder. Returns ``[T, d_enc]`` tokens
-        for ``pool_kind="map"``, or mean-pooled ``[d_enc]`` for ``"mean"``.
-        """
-        pil_resized = pil_resize_to_bucket(pil_img.convert("RGB"), bundle.bucket_spec)
-        tensor = IMAGE_TRANSFORMS(np.array(pil_resized)).unsqueeze(0)
-        feats_list = encode_pe_from_imageminus1to1(bundle, tensor, same_bucket=True)
-        feats = feats_list[0]
-        if pool_kind == "mean":
-            return feats.mean(dim=0).to(torch.float32)
-        return feats.to(torch.float32)
-
     @torch.no_grad()
     def _heads_forward(
         self, pil_img: Image.Image
     ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-        """Backend-agnostic head pass.
+        """Head pass: dbv4 backend + optional sidecar.
 
         Returns ``(tag_logits[n_tags], rating_probs[n_ratings], people_probs
-        [n_people] | None)`` on ``self.device``. For dbv4 the tag logits are the
+        [n_people] | None)`` on ``self.device``. The tag logits are the
         projected sigmoid probs mapped back through logit(); tags the backend
         cannot emit sit at ``UNSUPPORTED_LOGIT`` (never clear any threshold,
         never win a group argmax).
         """
-        if self.backend_kind == "pe":
-            feat = self._encode_image(pil_img).unsqueeze(0).to(self.device)
-            feat_aux = self._encode_image_aux(pil_img).unsqueeze(0).to(self.device)
-            tag_logits, rating_logits, people_logits = self.model(feat, feat_aux)
-            people = (
-                people_logits.softmax(dim=-1)[0] if people_logits is not None else None
-            )
-            return tag_logits[0], rating_logits.softmax(dim=-1)[0], people
-
         out = self._dbv4.forward([pil_img])
         probs = torch.zeros(self.n_tags)
         probs[self._align_ours] = out.probs[0, self._align_ext]
@@ -846,34 +727,10 @@ class AnimaTagger:
             for _, name in cat_scored[1:]:
                 kept.pop(name, None)
 
-        # With `original`/meta copyright, keep a character only when its
-        # parens-suffix matches the surviving artist (sans `@`) — the
-        # artist's named OC `<name> (<artist>)`.
-        # The dbv4 backend never emits @artist (out of scope by decision), so
-        # the check has nothing to compare against — skip it there rather
-        # than dropping every OC (measured: 9 of 12 lost character hits on
-        # the position-caption gate were mignon OCs killed here).
-        if self.backend_kind != "dbv4" and any(c in kept for c in _META_COPYRIGHTS):
-            artist_suffix = next(
-                (
-                    e.name[1:].lower()
-                    for e in self.tag_entries
-                    if e.category == "artist"
-                    and e.name in kept
-                    and e.name.startswith("@")
-                ),
-                None,
-            )
-            for e in self.tag_entries:
-                if e.category != "character" or e.name not in kept:
-                    continue
-                m = _OC_SUFFIX_RE.search(e.name)
-                if (
-                    m is None
-                    or artist_suffix is None
-                    or m.group(1).strip().lower() != artist_suffix
-                ):
-                    kept.pop(e.name, None)
+        # (The former OC-suffix rule — keep a character under `original`/meta
+        # copyright only when its parens-suffix matched the surviving @artist —
+        # was PE-only: dbv4 never emits @artist, so there is nothing to compare
+        # against and the rule dropped real OCs. Removed with the PE backend.)
 
         out["kept"] = kept
         return out
