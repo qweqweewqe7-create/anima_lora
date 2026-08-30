@@ -10,9 +10,11 @@ native 512x512 bucket → a global CLS descriptor + a 32x32 patch grid pooled to
 is encoder-agnostic in name but the features are PE-Spatial-B16-512 specific —
 consumers that change the encoder must use a fresh cache root.
 
-The encoder *bundle* is loaded by the caller via
-``library.vision.load_pe_encoder(device, name="pe_spatial")`` and passed in, so
-this module never owns the model lifetime. ``easycontrol_adapters.tools.near_twins.engine``
+The encoder is passed in as an :class:`Embedder` (``.device`` / ``.dtype`` +
+``__call__(batch) -> (cls, grid16)``); the trainer's PE-Spatial implementation
+is ``library.vision.grouping_embedder.pe_spatial_embedder``. This module never
+owns the model lifetime and never imports the PE loader (curation side of the
+``anime_tools`` split). ``easycontrol_adapters.tools.near_twins.engine``
 re-exports these names for backward compatibility.
 """
 
@@ -25,10 +27,10 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from PIL import Image
 
 CACHE_ROOT = Path(
@@ -190,16 +192,20 @@ def _collate(batch):
     return idxs, tens, oks
 
 
-@torch.no_grad()
-def _forward_pe(bundle, batch: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
-    """Run PE-Spatial on a [B, 3, 512, 512] device batch → (cls, grid16) numpy."""
-    out = bundle.encoder(batch)
-    lhs = out.last_hidden_state.float()  # [B, 1+1024, 768]
-    cls = F.normalize(lhs[:, 0], dim=-1)  # global descriptor
-    grid = lhs[:, 1:].reshape(lhs.shape[0], GRID_NATIVE, GRID_NATIVE, -1)
-    g = grid.permute(0, 3, 1, 2)  # [B, 768, 32, 32]
-    g16 = F.adaptive_avg_pool2d(g, GRID_CACHE).permute(0, 2, 3, 1)  # [B, 16, 16, 768]
-    return cls.cpu().numpy(), g16.cpu().numpy().astype(np.float16)
+@runtime_checkable
+class Embedder(Protocol):
+    """Image-batch → (global descriptor, pooled patch grid) for the feature cache.
+
+    ``batch`` arrives on ``self.device`` in ``self.dtype`` as ``[B, 3, 512, 512]``
+    in ``[-1, 1]``; return ``(cls [B, D] L2-normed float32, grid16 [B, 16, 16, D]
+    float16)`` as numpy. The cache format is embedder-agnostic in *name* only —
+    switch embedders with a fresh ``$NEAR_TWIN_CACHE`` root.
+    """
+
+    device: torch.device
+    dtype: torch.dtype
+
+    def __call__(self, batch: torch.Tensor) -> tuple[np.ndarray, np.ndarray]: ...
 
 
 @dataclass
@@ -214,9 +220,9 @@ def _save_feature(cache_path: Path, f: Feature) -> None:
 
 
 def embed_members(
-    bundle, members: list[Member], batch_size: int, num_workers: int = 4
+    embedder: Embedder, members: list[Member], batch_size: int, num_workers: int = 4
 ) -> dict[str, Feature]:
-    """Load cached PE-Spatial features; embed + cache any misses once.
+    """Load cached features; embed + cache any misses once via ``embedder``.
 
     Misses are streamed through a ``DataLoader``: worker processes decode +
     resize the next batches while the GPU runs the current forward, the batch is
@@ -241,7 +247,7 @@ def embed_members(
     if not todo:
         return feats
 
-    pin = bundle.device.type == "cuda"
+    pin = embedder.device.type == "cuda"
     loader = torch.utils.data.DataLoader(
         _ImageDataset(todo),
         batch_size=batch_size,
@@ -257,8 +263,8 @@ def embed_members(
     pbar = tqdm(total=len(todo), desc="embedding", unit="img", file=sys.stderr)
     with ThreadPoolExecutor(max_workers=2) as saver:
         for idxs, tens, oks in loader:
-            batch = tens.to(bundle.device, bundle.dtype, non_blocking=pin)
-            cls_b, grid_b = _forward_pe(bundle, batch)
+            batch = tens.to(embedder.device, embedder.dtype, non_blocking=pin)
+            cls_b, grid_b = embedder(batch)
             for k, i in enumerate(idxs):
                 if not oks[k]:
                     print(

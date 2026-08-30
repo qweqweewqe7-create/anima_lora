@@ -12,6 +12,7 @@ cache, so a re-run — or a re-run at different thresholds — is cheap.
 """
 
 import argparse
+import importlib
 from pathlib import Path
 
 from library.datasets.grouping import (
@@ -22,6 +23,25 @@ from library.datasets.grouping import (
     DEFAULT_SIM_MIN,
     build_groups,
 )
+
+# The trainer's grouping embedder (PE-Spatial). Lives on the trainer side of the
+# anime_tools split, so it is referenced by *string* here and injected by
+# `make curate-group` — this script must not import it.
+DEFAULT_TRAINER_EMBEDDER = "library.vision.grouping_embedder:pe_spatial_embedder"
+
+
+def load_embedder(spec: str | None, *, device: str | None):
+    """Resolve ``module:callable`` and call it with ``device=``."""
+    if not spec:
+        raise SystemExit(
+            "--embedder is required (grouping loads no encoder itself). "
+            f"With the trainer installed: --embedder {DEFAULT_TRAINER_EMBEDDER}"
+        )
+    mod_name, _, attr = spec.partition(":")
+    if not attr:
+        raise SystemExit(f"--embedder must be `module:callable`, got {spec!r}")
+    factory = getattr(importlib.import_module(mod_name), attr)
+    return factory(device=device)
 
 
 def main() -> None:
@@ -67,14 +87,23 @@ def main() -> None:
         default=2,
         help="drop groups smaller than this (1 keeps singletons)",
     )
-    p.add_argument("--encoder", default="pe_spatial", help="PE encoder name")
-    p.add_argument("--batch-size", type=int, default=16, help="PE embed batch size")
+    p.add_argument(
+        "--embedder",
+        default=None,
+        help=(
+            "dotted factory `module:callable(device=...)` returning a grouping "
+            "Embedder. The trainer's `make curate-group` passes "
+            f"`{DEFAULT_TRAINER_EMBEDDER}`; required when run standalone."
+        ),
+    )
+    p.add_argument("--batch-size", type=int, default=16, help="embed batch size")
     p.add_argument(
         "--num-workers", type=int, default=4, help="DataLoader image-decode workers"
     )
     p.add_argument("--device", default=None, help="cuda|cpu (default: auto)")
     args = p.parse_args()
 
+    embedder = load_embedder(args.embedder, device=args.device)
     m = build_groups(
         Path(args.source_dir),
         Path(args.out),
@@ -84,8 +113,7 @@ def main() -> None:
         grid=args.grid,
         ratio=args.ratio,
         min_size=args.min_size,
-        encoder=args.encoder,
-        device=args.device,
+        embedder=embedder,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
     )

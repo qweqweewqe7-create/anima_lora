@@ -80,7 +80,7 @@ except ImportError:  # dotenv is a soft dependency — env vars still work witho
 
 
 # Run from the repo root; `library` is installed editable (`uv sync`).
-from library.vision import load_pe_encoder
+from library.vision.grouping_embedder import pe_spatial_embedder
 
 from .engine import (
     PairRecord,
@@ -410,11 +410,11 @@ def main(argv: list[str] | None = None) -> int:
 
     device = torch.device(args.device)
     print(f"Loading PE-Spatial-B16-512 on {device}…", file=sys.stderr)
-    bundle = load_pe_encoder(device, name="pe_spatial")
+    embedder = pe_spatial_embedder(device, name="pe_spatial")
 
     all_pairs: list[PairRecord] = []
     for artist, members in pairable.items():
-        feats = embed_members(bundle, members, args.batch_size, args.num_workers)
+        feats = embed_members(embedder, members, args.batch_size, args.num_workers)
         pairs = run_artist(artist, members, feats, args, target_tags)
         if pairs:
             print(f"  {artist}: {len(pairs)} pair(s)", file=sys.stderr)

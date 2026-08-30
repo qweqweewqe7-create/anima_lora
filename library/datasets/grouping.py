@@ -155,17 +155,21 @@ def build_groups(
     grid: int = DEFAULT_GRID,
     ratio: float = DEFAULT_RATIO,
     min_size: int = 2,
-    encoder: str = "pe_spatial",
-    device: str | None = None,
+    embedder,
     batch_size: int = 16,
     num_workers: int = 4,
 ) -> dict:
     """Embed every image under ``source_dir``, cluster per-artist, write a manifest.
 
+    ``embedder`` is a :class:`library.vision.pe_features.Embedder` (the trainer
+    supplies ``library.vision.grouping_embedder.pe_spatial_embedder()``); its
+    ``.device`` also hosts the grid-match pass. Grouping never loads an encoder
+    itself — curation side of the ``anime_tools`` split.
+
     Groups are connected components over the near-twin grid gate
     (:func:`library.vision.pe_matching.match_grids`): two images share a group
     when ``match_frac >= match_frac_min`` at per-cell floor ``cell_match_min``.
-    Reuses the shared PE-Spatial feature cache (``library.vision.pe_features``),
+    Reuses the shared feature cache (``library.vision.pe_features``),
     so a re-run after the near-twin miner — or a re-run with different
     thresholds — is just the (cached) matching pass. Returns the manifest dict
     (also written to ``out_path`` as JSON).
@@ -173,10 +177,8 @@ def build_groups(
     # Lazy torch-backed imports so the pure helpers above import without torch.
     import sys
 
-    import torch
     from tqdm import tqdm
 
-    from library.vision import load_pe_encoder
     from library.vision.pe_features import Member, embed_members, iter_images
 
     source_dir = Path(source_dir)
@@ -185,7 +187,7 @@ def build_groups(
     manifest: dict = {
         "version": MANIFEST_VERSION,
         "source_dir": str(source_dir),
-        "encoder": encoder,
+        "encoder": getattr(embedder, "name", type(embedder).__name__),
         "cell_match_min": cell_match_min,
         "match_frac_min": match_frac_min,
         "sim_min": sim_min,
@@ -217,9 +219,8 @@ def build_groups(
         )
         for p in paths
     ]
-    dev = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
-    bundle = load_pe_encoder(dev, name=encoder)
-    feats = embed_members(bundle, members, batch_size, num_workers)
+    dev = embedder.device
+    feats = embed_members(embedder, members, batch_size, num_workers)
 
     groups: list[dict] = []
     gid = 0
