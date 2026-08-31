@@ -56,6 +56,13 @@ fixes the yardstick.
 
 ## Phase K1 — corpus (CPU except the two `--mt` passes)
 
+**DONE 2026-08-31** → [`reports/0831_ko_phase_k1.md`](reports/0831_ko_phase_k1.md):
+62,494 pairs (tags/tags_alt/names 50,190 + names_synth_ko 12,304), glossary
+99.66% occ coverage, gate green on every t*/q*/n*/c* prompt except t5's 똑
+(K1.5 decision). Plan deviation that helped: the KR KB
+(`models/danbooru_tags_classified.csv`) is the KO tag-pair analog — 83.6% of
+general types — wired as `src: "kb"`. K2 blocked on K1.5.
+
 Mirror the JA builders; do not fork the pipeline, parameterise it. Every
 step writes `assets/*_ko.*` next to the JA asset.
 
@@ -106,6 +113,10 @@ step writes `assets/*_ko.*` next to the JA asset.
    before training, not after.
 
 ## Phase K1.5 — user inspection of the corpus (human; added 2026-08-31)
+
+**PENDING — the current blocker.** Artifacts ready: `tag_glossary_review_ko.md`
+(top-200), `spotcheck_ko.md`, the gate table + known-issue list in
+`reports/0831_ko_phase_k1.md` §Known review classes.
 
 After K1 completes, before any GPU is spent on K2 staging/training, the user
 inspects the corpus and signs off:
