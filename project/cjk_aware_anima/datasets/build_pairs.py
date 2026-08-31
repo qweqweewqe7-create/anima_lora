@@ -231,22 +231,25 @@ def compose(
     return out, missing, spans
 
 
-def build_d1(captions, glossary, args, rng) -> list[dict]:
+def build_d1(captions, glossary, args, rng, joiner_rng=None) -> list[dict]:
+    suffix = "" if args.lang == "ja" else f"_{args.lang}"
     pairs = []
     for image_id, en in captions:
         segs = split_caption(en)
-        for register, alt in (("tags", False), ("tags_alt", True)):
-            if register == "tags_alt" and not args.alt_register:
+        for base, alt in (("tags", False), ("tags_alt", True)):
+            register = base + suffix
+            if base == "tags_alt" and not args.alt_register:
                 continue
             ja, missing, spans = compose(
                 segs, glossary, alt=alt, rng=rng, min_f1=args.alt_min_f1
             )
-            joiner = pick_joiner(rng)
+            joiner = pick_joiner(joiner_rng)
             pairs.append(
                 {
                     "id": f"D1/{image_id}/{register}",
                     "source": "D1",
                     "register": register,
+                    "lang": args.lang,
                     "en": en,
                     "ja": joiner.join(ja),
                     "joiner": joiner,
@@ -278,7 +281,9 @@ def pick_joiner(rng: random.Random | None) -> str:
     return JOINER_ALT if rng.random() < ALT_JOINER_FRAC else JOINER
 
 
-def build_names(captions, glossary, rng: random.Random | None = None) -> list[dict]:
+def build_names(
+    captions, glossary, rng: random.Random | None = None, lang: str = "ja"
+) -> list[dict]:
     """Name-swap register: only character/copyright segments go JA.
 
     A name is an entity identity, not a wording choice — 黄泉 and
@@ -318,12 +323,14 @@ def build_names(captions, glossary, rng: random.Random | None = None) -> list[di
             out.append(ja)
         if not n_swapped:
             continue
+        suffix = "" if lang == "ja" else f"_{lang}"
         joiner = pick_joiner(rng)
         pairs.append(
             {
-                "id": f"D1/{image_id}/names",
+                "id": f"D1/{image_id}/names{suffix}",
                 "source": "D1",
-                "register": "names",
+                "register": "names" + suffix,
+                "lang": lang,
                 "en": en,
                 "ja": joiner.join(out),
                 "joiner": joiner,
@@ -446,29 +453,39 @@ def ext_coverage(pairs: list[dict], args) -> dict:
     # The ext table spans all of CJK including zh/ko, so its 58,968 rows are the
     # wrong denominator for a ja-only corpus — codepoint classes are the honest
     # readout.
-    kana_total = {chr(c) for c in range(0x3041, 0x3097)} | {
-        chr(c) for c in range(0x30A1, 0x30FB)
-    }
     seen: collections.Counter = collections.Counter()
     for p in pairs:
         seen.update(p["ja"])
-    kana_seen = {c for c in seen if c in kana_total}
-    kanji_seen = {c for c in seen if "一" <= c <= "鿿"}
-
-    return {
+    out = {
         "ext_rows_total": n_rows,
         "ext_rows_visited": len(visits),
         "ext_rows_visited_pct": round(100 * len(visits) / n_rows, 2),
         "visits_total": sum(visits.values()),
         "rows_by_visit_band": bands,
+        "top_rows": visits.most_common(20),
+    }
+    if getattr(args, "lang", "ja") == "ko":
+        # KO analog of the script-class readout: hangul syllables seen
+        hangul_seen = {c for c in seen if "가" <= c <= "힣"}
+        out |= {
+            "hangul_codepoints_seen": len(hangul_seen),
+            "hangul_seen_once_only": sum(1 for c in hangul_seen if seen[c] == 1),
+        }
+        return out
+    kana_total = {chr(c) for c in range(0x3041, 0x3097)} | {
+        chr(c) for c in range(0x30A1, 0x30FB)
+    }
+    kana_seen = {c for c in seen if c in kana_total}
+    kanji_seen = {c for c in seen if "一" <= c <= "鿿"}
+    out |= {
         "kana_codepoints_seen": len(kana_seen),
         "kana_codepoints_total": len(kana_total),
         "kana_saturation_pct": round(100 * len(kana_seen) / len(kana_total), 1),
         "kana_unseen": "".join(sorted(kana_total - kana_seen)),
         "kanji_codepoints_seen": len(kanji_seen),
         "kanji_seen_once_only": sum(1 for c in kanji_seen if seen[c] == 1),
-        "top_rows": visits.most_common(20),
     }
+    return out
 
 
 def write_spotcheck(pairs: list[dict], path: Path, n: int, rng: random.Random) -> None:
@@ -502,6 +519,16 @@ def write_spotcheck(pairs: list[dict], path: Path, n: int, rng: random.Random) -
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--lang",
+        default="ja",
+        choices=["ja", "ko"],
+        help="student-side language (plan_ko.md K1: KO renames registers to "
+        "tags_ko/tags_alt_ko/names_ko, stamps lang on every record, joins "
+        "rng-free with ', ' — nobody types 、 in Korean — and skips D2/D6, "
+        "which have no native KO source; the record field stays `ja` = "
+        "'student text')",
     )
     ap.add_argument("--glossary", type=Path, default=ASSETS / "tag_glossary_ja.json")
     ap.add_argument(
@@ -550,20 +577,26 @@ def main() -> None:
     ap.add_argument("--no-coverage", action="store_true", help="skip the ext histogram")
     args = ap.parse_args()
 
+    if args.lang != "ja" and args.glossary == ASSETS / "tag_glossary_ja.json":
+        args.glossary = ASSETS / f"tag_glossary_{args.lang}.json"
+    suffix = "" if args.lang == "ja" else f"_{args.lang}"
+
     rng = random.Random(args.seed)
     glossary = json.loads(args.glossary.read_text())["tags"]
     roots = [(p, False) for p in args.captions]
     roots += [(p, True) for p in (args.raw_captions or [])]
     captions = load_captions(roots, args.tag_rules)
 
-    pairs = (
-        build_d1(captions, glossary, args, rng)
-        + build_names(captions, glossary, rng)
-        + build_d6(glossary, args, rng)
-        + build_d2(args, rng)
+    joiner_rng = rng if args.lang == "ja" else None
+    pairs = build_d1(captions, glossary, args, rng, joiner_rng) + build_names(
+        captions, glossary, joiner_rng, args.lang
     )
+    if args.lang == "ja":
+        pairs += build_d6(glossary, args, rng) + build_d2(args, rng)
+    else:
+        print(f"  [pairs] D6/D2 skipped for lang={args.lang} (no native source)")
     args.out.mkdir(parents=True, exist_ok=True)
-    with (args.out / "pairs.jsonl").open("w", encoding="utf-8") as f:
+    with (args.out / f"pairs{suffix}.jsonl").open("w", encoding="utf-8") as f:
         for p in pairs:
             f.write(json.dumps(p, ensure_ascii=False) + "\n")
 
@@ -578,12 +611,12 @@ def main() -> None:
     }
     if not args.no_coverage:
         report["ext_coverage"] = ext_coverage(pairs, args)
-    (args.out / "coverage.json").write_text(
+    (args.out / f"coverage{suffix}.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8"
     )
-    write_spotcheck(pairs, args.out / "spotcheck.md", args.spotcheck, rng)
+    write_spotcheck(pairs, args.out / f"spotcheck{suffix}.md", args.spotcheck, rng)
 
-    print(f"wrote {args.out}/pairs.jsonl  ({len(pairs)} pairs)")
+    print(f"wrote {args.out}/pairs{suffix}.jsonl  ({len(pairs)} pairs)")
     for k, v in report["by_register"].items():
         print(f"    {k:18s} {v}")
     if "ext_coverage" in report:

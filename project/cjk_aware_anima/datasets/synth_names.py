@@ -140,6 +140,32 @@ def name_family(
     return out
 
 
+def ko_family(names: list[str]) -> list[str]:
+    """KO name family: hangul wordings, longest full name primary.
+
+    Sources are ordered canonical-first by the caller (lexicon ko label →
+    KR-KB keywords → wiki ``other_names``); the overlap filter drops
+    franchise/meme aliases that share no syllable with the full name
+    (``동방`` on hakurei_reimu), the KO analog of the JA anchor rule.
+    """
+    cands: list[str] = []
+    for n in names:
+        if tag_glossary.is_korean(n) and not DIGIT.search(n) and n not in cands:
+            cands.append(n)
+    if not cands:
+        return []
+    # Primary = the first candidate (sources are canonical-first), stretched to
+    # a same-name superset if one exists (미쿠 → 하츠네 미쿠). max-by-length is
+    # wrong here: on souryuu_asuka_langley it promotes the KB alias
+    # 시키나미 아스카 랑그레이 — a different continuity's identity.
+    primary = max(
+        (n for n in cands if cands[0] in n.replace(" ", "") or cands[0] in n),
+        key=len,
+        default=cands[0],
+    )
+    return [primary] + [n for n in cands if n != primary and set(n) & set(primary)]
+
+
 def load_captions(root: Path) -> list[tuple[str, list[str]]]:
     out = []
     for p in sorted(root.rglob("*.txt")):
@@ -153,6 +179,14 @@ def load_captions(root: Path) -> list[tuple[str, list[str]]]:
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--lang",
+        default="ja",
+        choices=["ja", "ko"],
+        help="student-side language: ko mints names_synth_ko from the KO name "
+        "sources (lexicon ko labels → KR KB keywords → wiki other_names), "
+        "allocates by hangul-syllable visits, joins rng-free with ', '",
     )
     ap.add_argument("--wiki", type=Path, default=DEFAULT_WIKI)
     ap.add_argument("--captions", type=Path, default=DEFAULT_CAPTIONS)
@@ -215,11 +249,42 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+    if args.lang != "ja":
+        if args.pairs == DEFAULT_PAIRS:
+            args.pairs = DEFAULT_OUT / f"pairs_{args.lang}.jsonl"
+        if args.glossary == tag_glossary.DEFAULT_OUT:
+            args.glossary = tag_glossary.ASSETS / f"tag_glossary_{args.lang}.json"
+    suffix = "" if args.lang == "ja" else f"_{args.lang}"
     rng = random.Random(args.seed)
 
     wiki = load_wiki(args.wiki)
-    tp = tag_pairs.load_pairs()
-    inventory = tag_glossary.ja_kanji_inventory(args.wiki)
+    tp = tag_pairs.load_pairs() if args.lang == "ja" else {}
+    inventory = (
+        tag_glossary.ja_kanji_inventory(args.wiki) if args.lang == "ja" else set()
+    )
+    kr_kb: dict[str, list[str]] = {}
+    lex_chars: dict = {}
+    lex_frs: dict = {}
+    if args.lang == "ko":
+        kr_kb = tag_glossary.load_kr_kb(REPO / "models" / "danbooru_tags_classified.csv")
+        lex = json.loads(
+            (tag_glossary.ASSETS / "wikidata_lexicon.json").read_text(encoding="utf-8")
+        )
+        lex_chars, lex_frs = lex["characters"], lex["franchises"]
+
+    def is_row_char(c: str) -> bool:
+        """chars whose ext-row visits the allocation tracks (kanji / hangul)."""
+        if args.lang == "ja":
+            return bool(tag_glossary.HAN.match(c))
+        return "가" <= c <= "힣"
+
+    def family(tag: str, names: list[str], *, expand: bool = True) -> list[str]:
+        if args.lang == "ja":
+            return name_family(names, tp.get(tag, []), inventory, expand=expand)
+        lex_e = lex_chars.get(tag) or lex_frs.get(tag) or {}
+        pool = ([lex_e["ko"]] if lex_e.get("ko") else []) + kr_kb.get(tag, []) + names
+        return ko_family(pool)
+
     print(
         f"wiki: {len(wiki)} character/copyright tags; inventory {len(inventory)} kanji"
     )
@@ -253,7 +318,7 @@ def main() -> None:
         r = wiki.get(t)
         if not r or r["cat"] != "character":
             continue
-        fam = name_family(r["names"], tp.get(t, []), inventory)
+        fam = family(t, r["names"])
         if not fam:
             continue
         cp = None
@@ -272,16 +337,14 @@ def main() -> None:
                     ),
                     None,
                 )
-        cp_ja = (
-            name_family(wiki[cp]["names"], tp.get(cp, []), inventory, expand=False)
-            if cp
-            else []
-        )
+        cp_ja = family(cp, wiki[cp]["names"], expand=False) if cp else []
         targets.append((t, fam, cp, cp_ja))
         if len(targets) >= args.max_names:
             break
-    n_kanji = sum(1 for _, fam, _, _ in targets if tag_glossary.HAN.search(fam[0]))
-    print(f"targets {len(targets)} ({n_kanji} with kanji in the primary name)")
+    n_native = sum(
+        1 for _, fam, _, _ in targets if tag_glossary.NATIVE_RE[args.lang].search(fam[0])
+    )
+    print(f"targets {len(targets)} ({n_native} with native script in the primary name)")
     for t, fam, cp, cp_ja in targets[:5] + [x for x in targets if x[0] in args.extra]:
         print(f"   {t:32s} {fam} | {cp} → {cp_ja[:1]}")
 
@@ -294,19 +357,23 @@ def main() -> None:
     with args.pairs.open(encoding="utf-8") as f:
         for line in f:
             rec = json.loads(line)
-            if rec.get("register") in ("tags", "tags_alt", "names"):
+            if rec.get("register") in (
+                "tags" + suffix,
+                "tags_alt" + suffix,
+                "names" + suffix,
+            ):
                 for sp in rec.get("spans") or []:
                     if sp.get("via") != "en_pinned":
-                        visits.update(c for c in sp["ja"] if tag_glossary.HAN.match(c))
+                        visits.update(c for c in sp["ja"] if is_row_char(c))
     alloc: dict[str, int] = {}
     order = sorted(
         targets,
         key=lambda x: min(
-            (visits[c] for c in x[1][0] if tag_glossary.HAN.match(c)), default=10**9
+            (visits[c] for c in x[1][0] if is_row_char(c)), default=10**9
         ),
     )
     for t, fam, _, _ in order:
-        kanji = [c for c in fam[0] if tag_glossary.HAN.match(c)]
+        kanji = [c for c in fam[0] if is_row_char(c)]
         need = max((args.floor - visits[c] for c in kanji), default=0)
         n = max(args.per_name, min(args.max_per_name, int(need / args.p_primary) + 1))
         alloc[t] = n
@@ -363,12 +430,16 @@ def main() -> None:
                     ja, via, f1 = en, "en_pinned", 1.0
                 ja_out.append(ja)
                 spans.append({"en": en, "ja": ja, "via": via, "f1": f1})
-        reg = REGISTER + ("_ja" if context == "ja" else "")
-        joiner = build_pairs.pick_joiner(rng)
+        if args.lang == "ja":
+            reg = REGISTER + ("_ja" if context == "ja" else "")
+        else:
+            reg = REGISTER + suffix + ("" if context == "ja" else "_en")
+        joiner = build_pairs.pick_joiner(rng if args.lang == "ja" else None)
         return {
             "id": f"SYN/{t}/{k}/{reg}",
             "source": "SYN",
             "register": reg,
+            "lang": args.lang,
             "en": ", ".join(en_out),
             "ja": joiner.join(ja_out),
             "joiner": joiner,
@@ -392,11 +463,11 @@ def main() -> None:
         return
 
     args.out.mkdir(parents=True, exist_ok=True)
-    synth = args.out / "names_synth.jsonl"
+    synth = args.out / f"names_synth{suffix}.jsonl"
     with synth.open("w", encoding="utf-8") as f:
         for p in pairs:
             f.write(json.dumps(p, ensure_ascii=False) + "\n")
-    merged = args.out / "pairs_synth.jsonl"
+    merged = args.out / f"pairs_synth{suffix}.jsonl"
     with merged.open("w", encoding="utf-8") as f:
         f.write(args.pairs.read_text(encoding="utf-8"))
         for p in pairs:
