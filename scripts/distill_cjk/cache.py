@@ -222,6 +222,11 @@ def main() -> None:
     )
     args = parser.parse_args()
     cfg = cfg_mod.resolve_config(args)
+    if len(cfg.cache_dirs) > 1:
+        raise SystemExit(
+            "staging writes one dir — pass a single --cache_dir "
+            "(the comma list is a distill-time reader feature)"
+        )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train, held = load_pairs(

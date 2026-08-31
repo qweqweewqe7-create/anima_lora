@@ -122,7 +122,13 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--text_encoder", default=None, help="Qwen3 text encoder")
     p.add_argument("--pairs", type=Path, default=DEFAULT_PAIRS)
     p.add_argument("--ext_prefix", type=Path, default=DEFAULT_EXT)
-    p.add_argument("--cache_dir", type=Path, default=DEFAULT_CACHE)
+    p.add_argument(
+        "--cache_dir",
+        default=str(DEFAULT_CACHE),
+        help="staged cache dir; distill also accepts a comma-separated list "
+        "for joint training over separately staged corpora (plan_ko K2: "
+        "cache_synth3,cache_ko — JA rows are never re-encoded)",
+    )
     p.add_argument(
         "--registers",
         default="",
@@ -265,7 +271,8 @@ class CJKDistillConfig:
     text_encoder: str
     pairs: Path
     ext_prefix: Path
-    cache_dir: Path
+    cache_dir: Path  # primary (staging writes here); distill reads cache_dirs
+    cache_dirs: tuple[Path, ...]
     registers: tuple[str, ...]
     train_registers: tuple[str, ...]
     max_pairs: int
@@ -360,7 +367,8 @@ def resolve_config(args: argparse.Namespace) -> CJKDistillConfig:
         text_encoder=args.text_encoder or ckpt.text_encoder,
         pairs=Path(args.pairs),
         ext_prefix=Path(args.ext_prefix),
-        cache_dir=Path(args.cache_dir),
+        cache_dir=Path(str(args.cache_dir).split(",")[0]),
+        cache_dirs=tuple(Path(p) for p in str(args.cache_dir).split(",") if p.strip()),
         registers=tuple(r for r in str(args.registers).split(",") if r.strip()),
         train_registers=tuple(
             r.strip() for r in str(args.train_registers).split(",") if r.strip()

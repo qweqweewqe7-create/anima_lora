@@ -441,9 +441,9 @@ def load_context(cfg, device, dtype) -> dict:
     """
     from bench.cjk_adapter import ext_vocab
 
-    train_cache = CachedPairs(cfg.cache_dir, "train")
+    train_cache = CachedPairs(cfg.cache_dirs, "train")
     try:
-        hold_cache = CachedPairs(cfg.cache_dir, "holdout")
+        hold_cache = CachedPairs(cfg.cache_dirs, "holdout")
     except FileNotFoundError:
         logger.warning("no holdout split cached — eval metrics disabled")
         hold_cache = None
