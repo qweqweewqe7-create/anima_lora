@@ -1,0 +1,187 @@
+# CJK-aware Anima — Korean extension plan
+
+*Appends `ko` to the shipped v1 line ([`plan.md`](plan.md) Phase 3). Drafted
+2026-08-30 from the on-disk state; nothing below is measured yet unless it
+cites [`findings.md`](findings.md). Read that file and `datasets/README.md`
+first — every JA lever that was closed is closed for KO too (MT-prompt
+tuning, mT5, adapter LoRA, more synthetic pairs, JESC/STAIR-style prose).*
+
+Premise: **the encoder does not change.** Korean is a *corpus* job plus one
+joint retrain of the same pack. What carries over for free, checked on disk:
+
+| Piece | KO status |
+|---|---|
+| `ext_vocab._CJK_RANGES` | hangul syllables / jamo / compat jamo already routed to the ext table |
+| `bench/cjk_adapter/assets/ext_embed.*` | already holds **all 3,473 pure-hangul Qwen pieces + 8,933 hangul char rows** (anchor-init, never trained — risk 3 in `plan.md`: they are the "zero-shot ko rows") |
+| `HybridT5Encoder` / `scripts/distill_cjk/` | language-agnostic; the `ja` field is just "student-side text" |
+| `mt.py` (`MTEngine`) | `LANG_NAMES` has `ko`; `target_lang="ko"` is a parameter everywhere |
+| `wikidata_lexicon.py` | `--langs ja ko zh` supported; the shipped asset was built with `langs=['ja']` only → **rebuild** |
+| Danbooru wiki dump | **3,760** entries carry hangul `other_names` (vs 73,452 with kana) — small but it is exactly the community register (`twintails`→트윈테일, `maid`→메이드, `touhou`→동방) |
+| `p1atdev/danbooru-ja-tag-pair` | JA-only; **no KO analog known** (verify on HF before assuming) → MT fills a larger share, so the KO review is bigger than JA's |
+| Native prose source (D7 LoveHina analog) | **none** — the register-drift instrument has no KO counterpart; see risks |
+
+Tokenisation reality (Qwen byte-BPE on KO): common syllables are whole
+pieces (`이 다 하 는 …`), most content words split 1 piece/syllable
+(`트윈테일` → 4, `세라복` → 3), and some syllables fall to UTF-8 fragments
+(`머` in `검은 머리`) → the char-row fallback. So KO rows are *more* char-like
+than JA, i.e. the same "rare names fall to char pieces" regime findings §1
+already accepted; not a reason to touch the vocab.
+
+## Phase K0 — size the gap (CPU + one daemon job, no data work)
+
+Same shape as the 2026-08-15 JA probe, on the *current* `synthja` pack:
+
+1. Author `assets/ko_eval_prompts.json` — the 21 JA ids (`t1_tags_school` …
+   `n*`, `c*`) with the KO wording a Korean user would type (Arca Live
+   register, not textbook Korean: `1girl` → `소녀 1명`/`1girl` — decide per
+   row and record it; `looking at viewer` → `카메라 응시`; `twintails` →
+   `트윈테일`). `en` stays the faithful teacher-side translation.
+2. `run_bench.py --prompts ko_eval_prompts.json` arms `ko_unk` (stock T5),
+   `ko_ext` (synthja pack, zero-shot KO rows), `ko_t5en` (teacher).
+   Expected from findings §1: `ko_ext` ≈ 0.05 cos / disc ≈ 0.9 — i.e. the
+   hangul rows are inert until trained. If it is *already* ≥ 0.3 the
+   shared `param=global` correction transfers across scripts and K2 can
+   start from a smaller corpus.
+3. `gates/coverage.py --prompts ko_eval_prompts.json --pairs pairs_synth.jsonl`
+   — should report every KO content row at 0 visits; this is the baseline the
+   K1 corpus must move.
+
+Output: `reports/09xx_ko_phase0.md` (one table). No go/no-go here — it only
+fixes the yardstick.
+
+## Phase K1 — corpus (CPU except the two `--mt` passes)
+
+Mirror the JA builders; do not fork the pipeline, parameterise it. Every
+step writes `assets/*_ko.*` next to the JA asset.
+
+1. **Lexicon**: `wikidata_lexicon.py --langs ja ko` → `wikidata_lexicon.json`
+   gains `ko` labels (KO transliterations of JA names: 하쿠레이 레이무). Keep
+   the `≥2-token + Q95074` guard. JA output must be byte-identical for the
+   `ja` keys (diff the asset).
+2. **Glossary** `tag_glossary.py --lang ko` → `assets/tag_glossary_ko.json` +
+   `tag_glossary_review_ko.md`. Language-specific pieces to add, in the
+   existing priority order (`overrides → artist passthrough → rating →
+   lexicon → wiki other_names → MT`):
+   - `is_korean(s)`: any hangul syllable. No Shift-JIS / kanji-inventory
+     trick is needed — hangul is unambiguous. Han-only `other_names` are
+     **not** Korean (hanja is not what users type).
+   - Back-translation scoring unchanged (KO→EN via Hy-MT2-7B, token F1,
+     `--accept-f1 0.75`, ties → shorter).
+   - Hand-checked KO exemplar list for the MT prompt in `mt.py` (the JA rule
+     "never draw exemplars from the unverified wiki head" applies verbatim).
+   - New `datasets/tag_overrides_ko.json` (committed) for the review fixes.
+   - **`--mt` is mandatory on the rebuild** (same trap as JA: the CPU path
+     silently drops the MT tier). Runs through the daemon with
+     `--gpu-budget 13GiB --max-new-tokens 32`.
+   Expect `mt_unverified` well above JA's 36.6% (no tag-pair source). That is
+   what the review is for; G4b says noisy spans still beat none, so ship
+   with the review done on the top-N by occurrence, not on everything.
+3. **Review sign-off** (human) — same two axes as JA (polysemy `bow`; and the
+   KO-specific one: **loanword vs native** — `armor` → 갑옷 vs 아머,
+   `cape` → 망토, `sailor uniform` → 세라복 vs 세일러복). Fixes →
+   `tag_overrides_ko.json` → `--reselect`. Same rule as JA: re-cache only
+   rows whose wording changed.
+4. **Pairs** `build_pairs.py --lang ko --glossary tag_glossary_ko.json`:
+   registers `tags_ko`, `tags_alt_ko`, `names_ko`; joiner `", "` only
+   (`pick_joiner` already records the joiner per pair since 2026-08-30 —
+   for KO pass an rng-free/`ALT_JOINER_FRAC=0` path; nobody types `、` in
+   Korean). The axis fallback (`resolve_axis`: index → wiki category →
+   artist-OC) applies unchanged — KO names must never reach MT either.
+   Field name stays `ja` (it is "student text"; renaming touches every
+   consumer for no gain) but every KO record carries `"lang": "ko"`.
+   D2 commentary and D6 quotes: **skip** for KO (no native source; the JA
+   quote registers are eval-only anyway).
+5. **Synthetic names** `synth_names.py --lang ko --context ko` →
+   `names_synth_ko`, same rarity-weighted allocation to the visit floor, but
+   **capped** (see the cache budget below). Names pinned from the `ko` lexicon
+   labels; captions with no resolvable KO name are skipped, as for JA.
+6. `gates/coverage.py --prompts ko_eval_prompts.json` on the merged pairs:
+   no user-facing KO tag token under floor. If a t* prompt still has a 0-visit
+   row, it goes into a KO instance of plan.md §5a (targeted tag widening)
+   before training, not after.
+
+## Phase K2 — cache + joint retrain (GPU)
+
+**Cache budget.** `cache_synth2` is ~171 GB for 262,852 pairs (~0.66 MB/pair).
+After the 2026-08-30 clean-up (ConceptEdit tar, `easycontrol/{phash_edit,
+subject_edit}`, `ltxmodels` removed) the volume has ~150 GB free with the
+JA cache in place, so a KO corpus at the full JA recipe (~150 GB) *just*
+fits but leaves no headroom. Preferred shape regardless:
+
+- Stage KO into a **separate** cache dir (`cache_ko`) — the stager is
+  pair-keyed and `distill.py` takes one `--pairs`/`--cache_dir`; add a
+  `--cache_dir` list (or a merged manifest) rather than re-staging JA. JA
+  rows are untouched, so nothing already cached is re-encoded.
+- **Start KO at ≈ 60k pairs** (~40 GB): `tags_ko` 17k + `tags_alt_ko` 17k +
+  `names_ko` ≈ 16k + `names_synth_ko` ≈ 13k; grow `names_synth_ko` only if
+  the K3 name gate asks for it. The JA `names_synth_ja` register is 176k of
+  the 263k and buys visits, not vocabulary (findings: "more captions multiply
+  the same glossary"), so if disk binds, **trim `names_synth_ja` first**.
+- If more room is genuinely needed, the lever is a `--max_pairs`-style
+  per-register cap at stage time, not a lower-precision cache.
+
+Train **one pack, jointly**: the settled recipe (`--loss span --steps 12000
+--batch_size 32 --param global --trust provenance`, register sampling passed
+explicitly) with the KO registers added to `--train_registers` and sampled so
+KO ≈ 25–30 % of a batch (`--register_sampling`), warm-started from the
+signed-off `synthja` weights. Label `synthjako`. ~20–30 GPU-min.
+
+Why joint and not a second pack: `param=global` is a shared low-rank + diag +
+gain over *all* ext rows — a KO-only pack trained from scratch would move the
+JA rows too, and two packs cannot be loaded at once. That same sharing is the
+risk in the other direction (KO training drifting JA), which is the first
+gate below.
+
+## Phase K3 — gates
+
+Ordered; the first two are kill criteria for the *joint* pack.
+
+1. **G1** EN bit-exact — unit test, unchanged.
+2. **JA non-regression** — the 2c grid `ja_ext` vs the `synthja` render at
+   the same seed: every t*/q*/m* prompt visually unchanged; per-register
+   `cos_student_vs_en_attn` within the `synthja` band on the JA holdout.
+   *Fail → ship `synthja` for JA and fall back to a KO-weighted sampling
+   sweep (0.1 / 0.2); if JA still moves, KO ships as a separate pack behind a
+   language switch and the plan records that `global` does not share across
+   scripts.*
+3. **KO recovery** — `ko_ext ≈ ko_t5en` on the rendered grid for t*/c*
+   prompts; per-register readout at the JA `tags` band (teacher ceiling
+   0.823 is the same teacher). `n*` full-KO names are **expected fails**
+   (same as JA v1, plan.md Phase 5b territory).
+4. **Coverage** — no KO tag token under floor; far-disc ≤ 0.2.
+5. **Register drift** — no D7 analog exists for KO. Substitute: hold out 300
+   *hand-typed* Arca-Live-style KO prompts (not composed from the glossary)
+   and report their readout vs the composed holdout; a gap > the JA D7 gap is
+   the signal. Owed before ship, cheap (CPU + one eval job).
+
+## Phase K4 — ship
+
+Rides `plan.md` Phase 3 steps 3–5 unchanged: same sidecar, same auto-discovery,
+same `docs/methods/cjk_vocab_pack.md` (add a KO section + the KO TE-cache
+regeneration note), same ComfyUI node — the pack file just grows its trained
+rows. Guidebook line goes through the `translator` agent for `가이드북.md`.
+
+## Not planned
+
+- A KO-specific vocab/tokenizer, jamo decomposition, or any change to
+  `ext_vocab.py` — the rows exist.
+- KO quoted-text (D6) or in-image hangul rendering — that is the glyph line
+  (`plan.md` Phase 4), which stays deferred for JA first.
+- zh — same recipe again once KO has shipped; the wiki has far more zh
+  `other_names` than ko, so it is the easier third language, not the second.
+- Any adapter-LoRA / rank / attn arm for KO — plan3 closed these with no
+  ranking instrument, language does not reopen them.
+
+## Risks specific to KO
+
+1. **Loanword-vs-native register** is the KO polysemy axis and MT chooses
+   inconsistently; only the review fixes it. Budget the review time, it is
+   larger than JA's.
+2. **Spacing**: `segment_runs` folds whitespace into CJK runs and pure-hangul
+   pieces with a leading space exist (`' 이'`), but K0 must confirm a
+   space-separated KO tag (`검은 머리`) encodes to the same rows whether or
+   not it follows a comma — otherwise `tags_ko` trains rows the user never
+   hits.
+3. **No native KO prose** for drift detection (gate 5's substitute is weaker
+   than D7).
+4. **Cache disk** — 50 GB free; the K2 cap is not optional.

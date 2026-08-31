@@ -7,19 +7,30 @@ part lives on as [`reports/0830_adapter_lora.md`](reports/0830_adapter_lora.md),
 the glyph-line proposal at `_archive/cjk_aware_anima/plan2_glyph_line.md`).*
 
 Status: **research levers on the encoder side are exhausted except one; v1
-is shippable with `cjk_vocab_pack_synthja` once the glossary is signed off.**
-Scope stays Japanese-only; zh/ko = rerun the pipeline with another corpus.
+is shippable with `cjk_vocab_pack_synthja_v2` (glossary signed off 2026-08-30; corpus rebuilt + retrained 2026-08-31, [`reports/0831_axis_joiner_rebuild.md`](reports/0831_axis_joiner_rebuild.md)).**
+Scope stays Japanese-only for v1; Korean is planned in [`plan_ko.md`](plan_ko.md) (corpus job + joint retrain, encoder unchanged); zh after that.
 
 ## Phase 3 — ship v1 (the vocab pack)
 
 Ordered; nothing here needs a new experiment.
 
-1. **Glossary sign-off** (hard blocker, human, CPU) — review
+1. ~~**Glossary sign-off**~~ DONE 2026-08-30, no overrides changed → no re-cache. (Was: review
    `assets/tag_glossary_review.md`, write fixes to `datasets/tag_overrides.json`,
    `tag_glossary.py --reselect`, rebuild pairs. Re-cache is only needed for
    rows whose wording changed (the stager is pair-keyed) — in practice one
    `cache_synth2` refresh.
-2. **Retrain `synthja`** on the signed-off glossary (~20 GPU-min; pass
+   **2026-08-30 addendum — two corpus bugs fixed before the retrain** (see
+   `datasets/README.md`): (a) character tags outside `image_dataset` fell to
+   `general` and were MT-rendered as words (`ame (mignon)` → 雨（可愛い）);
+   axis now falls back to the wiki category / artist-OC form. (b) the student
+   joiner `、` was itself an ext row; pairs now join with `", "` (80 %) /
+   `、` (20 %), recorded per pair. Both change wordings corpus-wide →
+   `cache_synth2` restaged from scratch; retrained as
+   `cjk_vocab_pack_synthja_v2` (label `2c-synthja-v2`).
+2. ~~**Retrain `synthja`**~~ DONE 2026-08-31 as `synthja_v2` — acceptance met
+   where v1 promised it (tags clean, mixed names improved, far-disc 0.089,
+   coverage unchanged, G1 green); n1/n2/r3 full-JA names remain the expected
+   fails. Recipe for the record: (~20 GPU-min; pass
    `--loss span --steps 12000 --batch_size 32 --param global --trust provenance`
    + the register sampling explicitly — `distill.py` defaults are a different
    experiment) and re-render both grids. Acceptance = the 2c surface:
@@ -28,6 +39,14 @@ Ordered; nothing here needs a new experiment.
    per-register `cos_student_vs_en_attn` at the `synthja` band; `coverage.py`
    no user-facing tag token under floor; far-disc ≤ 0.2; D7 LoveHina readout
    reported; G1 green.
+2b. ~~**Allowed-kanji filter**~~ DONE 2026-08-31 — JA wordings gated on
+   joyo+jinmeiyo+reviewed whitelist (3,072 chars, veto-only; zh leakage the
+   kana/Shift-JIS guards missed is gone: 崩坏→崩壊, 结月ゆかり dropped,
+   僵尸→キョンシー). 22-wording glossary diff, 0 emoticon/general regressions,
+   corpus census clean; retrained as `cjk_vocab_pack_synthja_v4`
+   (label `2c-synthja-v4-kanjifilter`). See
+   [`reports/0831_kanji_filter.md`](reports/0831_kanji_filter.md).
+
 3. **Promote the encoder** — `HybridT5Encoder` + strategy shim out of
    `bench/cjk_adapter/` into `library/anima/`, sidecar auto-discovery (flag to
    disable), `load_dit_model` row append, TE-cache path through the shim.
@@ -57,13 +76,12 @@ Two sub-items, cheapest first; both are text-only builds off the existing
 
 ### 5a. Under-floor general tags (cheap, ships in the pack)
 
-Report 0827 §6.1: substitute/insert under-floor *general* tags from
-`gates/coverage.py`'s under-floor list (`鎧`:23, `照明`:3, `巫`:176) into
-JA-context templates, rarity-weighted to the 300 floor — `synth_names.py`'s
-allocation applied to tags. This is "targeted caption widening" without a
-crawl. Gate: t3 armor (knight, armor, castle) renders; t1/t2 unchanged.
-Expected to work — it is exactly the mechanism that moved every coverage-bound
-tag prompt so far. Can ride Phase 3 step 2 if it lands before the sign-off.
+**Run 2026-08-31** (`datasets/synth_tags.py`, register `tags_synth_ja`,
+pack `synthja_v3` — report 0831 §6): the mechanism works — every 0-visit
+target moved (c1/c2/c3/t2/t6) with no name regression — **but the t3 armor
+gate did not clear at floor 300** (`銀の鎧` 193→300 was only 107 pairs).
+Remaining §5a item: one rerun at a higher floor/per-target for the armor
+family (+ `--extra-terms`) before calling t3 phrase-binding-limited.
 
 ### 5b. Real co-occurrence corpus for names (research)
 

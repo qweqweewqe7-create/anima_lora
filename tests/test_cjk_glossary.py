@@ -15,6 +15,7 @@ guard the two rules that were established by measurement:
 
 from __future__ import annotations
 
+import collections
 import importlib.util
 import json
 import random
@@ -185,8 +186,9 @@ def test_names_register_swaps_only_names_and_skips_nameless_captions():
     """The name-swap contract: character/copyright go JA, everything else — the
     general tags *and* an unswappable name — stays EN with `via: en_pinned`,
     and a caption with no resolvable name emits no pair (it would visit no ext
-    rows). The student joins with 、 like every span-carrying register, because
-    the distill side's `_ja_span_chars` hardcodes that joiner.
+    rows). The student joins with the record's ``joiner`` (``", "`` when no rng
+    is given) and stores it, because the distill side's `_ja_span_chars`
+    derives span offsets from that field.
     """
     glossary = {
         "acheron (honkai: star rail)": {"axis": "character", "ja": "黄泉"},
@@ -200,7 +202,8 @@ def test_names_register_swaps_only_names_and_skips_nameless_captions():
     p = pairs[0]
     assert p["register"] == "names"
     assert p["en"] == caption
-    assert p["ja"] == "1girl、黄泉、崩壊：スターレイル、no-ja name"
+    assert p["joiner"] == ", "
+    assert p["ja"] == "1girl, 黄泉, 崩壊：スターレイル, no-ja name"
     assert p["n_missing"] == 1  # the name the glossary could not swap
     assert [s["via"] for s in p["spans"]] == [
         "en_pinned",
@@ -214,6 +217,59 @@ def test_names_register_swaps_only_names_and_skips_nameless_captions():
     assert all("en_pinned" in pol for name, pol in TRUST_POLICIES.items() if pol)
 
     assert build_pairs.build_names([("img2", "1girl, solo")], glossary) == []
+
+
+def test_joiner_is_recorded_and_span_offsets_follow_it():
+    """`, ` is primary (native T5 piece shared with the teacher), 、 stays a
+    minority variant so its ext row keeps visits; the distill side must read
+    the joiner off the record rather than assume either."""
+    from scripts.distill_cjk.data import _ja_span_chars
+
+    rng = random.Random(0)
+    picks = collections.Counter(build_pairs.pick_joiner(rng) for _ in range(2000))
+    assert set(picks) == {", ", "、"}
+    assert 0.1 < picks["、"] / 2000 < 0.3
+    assert build_pairs.pick_joiner(None) == ", "
+
+    segs = ["女の子1人", "黒髪", "笑顔"]
+    for joiner in (", ", "、"):
+        text = joiner.join(segs)
+        for seg, (lo, hi) in zip(segs, _ja_span_chars(segs, joiner=joiner)):
+            assert text[lo:hi] == seg
+
+
+def test_axis_falls_back_to_the_wiki_category_for_tags_outside_the_index():
+    """The caption index only classifies tags of `image_dataset`; a D1-wide
+    character it never saw must still be a name (never MT-translated), and the
+    index wins where both know the tag."""
+    axis_of = {"kanna (swimsuit) (blue archive)": "character", "arknights": "copyright"}
+    wiki_axes = {
+        "grani (arknights)": "character",
+        "arknights": "general_would_be_wrong",
+    }
+    assert tag_glossary.resolve_axis("grani (arknights)", axis_of, wiki_axes) == (
+        "character",
+        "wiki",
+    )
+    assert tag_glossary.resolve_axis("arknights", axis_of, wiki_axes) == (
+        "copyright",
+        "index",
+    )
+    assert tag_glossary.resolve_axis("@pepper0", axis_of, wiki_axes) == (
+        "artist",
+        "default",
+    )
+    artists = frozenset({"@pepper0"})
+    assert tag_glossary.resolve_axis(
+        "akiyama fumika (pepper0)", axis_of, wiki_axes, artists
+    ) == ("character", "artist_oc")
+    assert tag_glossary.resolve_axis(
+        "shrug (clothing)", axis_of, wiki_axes, artists
+    ) == ("general", "default")
+    assert tag_glossary.resolve_axis("smile", axis_of, wiki_axes) == (
+        "general",
+        "default",
+    )
 
 
 tag_pairs = _load("tag_pairs")

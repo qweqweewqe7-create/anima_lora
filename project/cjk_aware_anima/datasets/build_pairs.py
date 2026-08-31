@@ -241,13 +241,15 @@ def build_d1(captions, glossary, args, rng) -> list[dict]:
             ja, missing, spans = compose(
                 segs, glossary, alt=alt, rng=rng, min_f1=args.alt_min_f1
             )
+            joiner = pick_joiner(rng)
             pairs.append(
                 {
                     "id": f"D1/{image_id}/{register}",
                     "source": "D1",
                     "register": register,
                     "en": en,
-                    "ja": "、".join(ja),
+                    "ja": joiner.join(ja),
+                    "joiner": joiner,
                     "n_missing": len(missing),
                     "spans": spans,
                 }
@@ -257,8 +259,26 @@ def build_d1(captions, glossary, args, rng) -> list[dict]:
 
 NAME_AXES = {"character", "copyright"}
 
+# Student-side tag joiner. ``", "`` is what users type (Civitai / Arca / pixiv
+# prompt boxes take ASCII commas in every language) *and* it is a native T5
+# piece, so teacher and student share the identical delimiter token and differ
+# only on the content spans. ``、`` (U+3001) is an ext row itself
+# (`ext_vocab._CJK_RANGES` CJK punctuation) — it was the joiner for every pair
+# until 2026-08-30 and is kept as a minority variant so its row stays visited.
+# Every span-carrying record stores the joiner it used (``"joiner"``); the
+# distill side derives span offsets from that field, never from a constant.
+JOINER = ", "
+JOINER_ALT = "、"
+ALT_JOINER_FRAC = 0.2
 
-def build_names(captions, glossary) -> list[dict]:
+
+def pick_joiner(rng: random.Random | None) -> str:
+    if rng is None:
+        return JOINER
+    return JOINER_ALT if rng.random() < ALT_JOINER_FRAC else JOINER
+
+
+def build_names(captions, glossary, rng: random.Random | None = None) -> list[dict]:
     """Name-swap register: only character/copyright segments go JA.
 
     A name is an entity identity, not a wording choice — 黄泉 and
@@ -275,8 +295,9 @@ def build_names(captions, glossary) -> list[dict]:
     that signal without a cache rebuild. Captions with no resolvable name are
     skipped outright: an all-EN pair visits no ext rows.
 
-    The student side joins with 、 like every span-carrying register — the
-    distill side's ``_ja_span_chars`` derives span offsets from that joiner.
+    The student side joins with ``pick_joiner`` like every span-carrying
+    register and records it in ``"joiner"`` — the distill side's
+    ``_ja_span_chars`` derives span offsets from that field.
     """
     pairs = []
     for image_id, en in captions:
@@ -297,13 +318,15 @@ def build_names(captions, glossary) -> list[dict]:
             out.append(ja)
         if not n_swapped:
             continue
+        joiner = pick_joiner(rng)
         pairs.append(
             {
                 "id": f"D1/{image_id}/names",
                 "source": "D1",
                 "register": "names",
                 "en": en,
-                "ja": "、".join(out),
+                "ja": joiner.join(out),
+                "joiner": joiner,
                 "n_missing": n_unresolved,
                 "spans": spans,
             }
@@ -535,7 +558,7 @@ def main() -> None:
 
     pairs = (
         build_d1(captions, glossary, args, rng)
-        + build_names(captions, glossary)
+        + build_names(captions, glossary, rng)
         + build_d6(glossary, args, rng)
         + build_d2(args, rng)
     )

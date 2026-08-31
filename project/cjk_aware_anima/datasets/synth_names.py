@@ -364,12 +364,14 @@ def main() -> None:
                 ja_out.append(ja)
                 spans.append({"en": en, "ja": ja, "via": via, "f1": f1})
         reg = REGISTER + ("_ja" if context == "ja" else "")
+        joiner = build_pairs.pick_joiner(rng)
         return {
             "id": f"SYN/{t}/{k}/{reg}",
             "source": "SYN",
             "register": reg,
             "en": ", ".join(en_out),
-            "ja": "、".join(ja_out),
+            "ja": joiner.join(ja_out),
+            "joiner": joiner,
             "n_missing": 0,
             "spans": spans,
         }

@@ -50,6 +50,7 @@ REPO = ROOT.parents[2]
 sys.path.insert(0, str(ROOT))
 
 import build_pairs  # noqa: E402  (sibling module — caption roots + loader)
+import kanji_allow  # noqa: E402  (sibling — the allowed-kanji set)
 
 WIKI_REPO = "kierarkia/danbooru-wiki-2026"
 WIKI_FILE = "danbooru_wiki_dataset_2026-04-28.jsonl"
@@ -59,6 +60,8 @@ DEFAULT_OUT = ASSETS / "tag_glossary_ja.json"
 
 KANA = re.compile(r"[぀-ゟ゠-ヿー]")
 HAN = re.compile(r"[一-鿿]")
+# Guard-width Han: ext-A/compat too (䌷 U+4337 slipped past the narrow class).
+HAN_WIDE = re.compile(r"[㐀-鿿豈-﫿]")
 
 # The rating band is ours (safe/sensitive/nsfw/explicit), not a Danbooru tag
 # whose wiki would carry a Japanese name.
@@ -83,17 +86,34 @@ RATING_JA = {
 }
 
 
+def han_allowed(s: str) -> bool:
+    """Veto only disallowed Han — a wording with no Han at all passes.
+
+    This is the guard for slots that never required Japaneseness (the MT
+    fallback, stored-candidate re-checks, the wikidata wording): `:d`, `OL`,
+    `3D` are legitimate wordings there and must not be rejected for merely
+    not being Japanese. ``is_japanese`` (below) is the stricter predicate for
+    the *name* paths, where Japaneseness is the point.
+    """
+    return all(c in kanji_allow.ALLOWED for c in HAN_WIDE.findall(s))
+
+
 def is_japanese(s: str) -> bool:
-    """Kana ⇒ Japanese. Han-only ⇒ Japanese iff Shift-JIS can encode it."""
+    """Kana ⇒ Japanese — but every Han char must be in ``kanji_allow.ALLOWED``.
+
+    The char-set guard runs before the kana short-circuit on purpose: zh
+    wordings with decorative kana (结月ゆかり, 歌爱ユキ) used to pass on their
+    kana, and Shift-JIS — the old Han-only test — happily encodes 崩坏's 坏
+    and 海梦's 梦 (JIS level 2 carries some simplified forms). The allowed set
+    is joyo + jinmeiyo + a reviewed hyogai whitelist; census in
+    ``kanji_allow.py``.
+    """
+    han = HAN_WIDE.findall(s)
+    if any(c not in kanji_allow.ALLOWED for c in han):
+        return False
     if KANA.search(s):
         return True
-    if not HAN.search(s):
-        return False
-    try:
-        s.encode("shift_jis")
-    except UnicodeEncodeError:
-        return False
-    return True
+    return bool(han)
 
 
 def rank_names(names: list[str]) -> list[str]:
@@ -119,6 +139,54 @@ def ja_kanji_inventory(path: Path, min_count: int = 3) -> set[str]:
             if KANA.search(name):
                 freq.update(c for c in name if HAN.match(c))
     return {c for c, n in freq.items() if n >= min_count}
+
+
+# Danbooru wiki ``category_name`` → our axis. Only consulted for tags the
+# caption index does not classify: the index covers ``image_dataset`` (~3k
+# images) while the glossary is built over the D1-wide roots (16k captions), so
+# every character that never occurs in the small set used to fall through to
+# ``general`` — and then went through MT, which renders a *name* as words
+# (``ame (mignon)`` → 雨（可愛い）; 6,149 of 14,959 `names` pairs were affected
+# on 2026-08-30). Names are never MT-able; the wiki knows which tags are names.
+WIKI_AXES = {"Character": "character", "Copyright": "copyright", "Artist": "artist"}
+
+
+def load_wiki_axes(path: Path) -> dict[str, str]:
+    """``title -> axis`` for every wiki entry whose category is a name axis."""
+    out: dict[str, str] = {}
+    for line in path.open(encoding="utf-8"):
+        d = json.loads(line)
+        axis = WIKI_AXES.get(d.get("category_name") or "")
+        title = (d.get("title") or "").replace("_", " ").strip().lower()
+        if axis and title:
+            out[title] = axis
+    return out
+
+
+_OC_RE = re.compile(r"^.+ \(([^()]+)\)$")
+
+
+def resolve_axis(
+    tag: str,
+    axis_of: dict[str, str],
+    wiki_axes: dict[str, str],
+    artists: frozenset[str] = frozenset(),
+) -> tuple[str, str]:
+    """(axis, source): caption index → wiki category → artist-OC form →
+    ``@`` handle → general.
+
+    ``name (handle)`` where ``@handle`` is an artist in the corpus is an
+    original character of that artist (``akiyama fumika (pepper0)``); such OCs
+    rarely have a wiki page, so without this rule they fall to ``general`` and
+    get MT-rendered as words."""
+    if tag in axis_of:
+        return axis_of[tag], "index"
+    if tag.lower() in wiki_axes:
+        return wiki_axes[tag.lower()], "wiki"
+    m = _OC_RE.match(tag)
+    if m and f"@{m.group(1)}" in artists:
+        return "character", "artist_oc"
+    return ("artist" if tag.startswith("@") else "general"), "default"
 
 
 def load_wiki(path: Path) -> dict[str, list[str]]:
@@ -179,6 +247,7 @@ def build(args: argparse.Namespace) -> dict:
     )
     lexicon = json.loads(Path(args.lexicon).read_text())["characters"]
     wiki = load_wiki(Path(args.wiki))
+    wiki_axes = load_wiki_axes(Path(args.wiki))
     roots = [(Path(p), False) for p in args.captions]
     roots += [(Path(p), True) for p in (args.raw_captions or [])]
     counts = tag_counts(roots, Path(args.tag_rules))
@@ -188,10 +257,11 @@ def build(args: argparse.Namespace) -> dict:
         for tag in index["groups"][axis]:
             axis_of[tag] = axis
 
+    artists = frozenset(t for t in counts if t.startswith("@"))
     tags: dict[str, dict] = {}
     for tag, count in counts.most_common():
-        axis = axis_of.get(tag, "artist" if tag.startswith("@") else "general")
-        entry = {"count": count, "axis": axis, "alts": []}
+        axis, axis_src = resolve_axis(tag, axis_of, wiki_axes, artists)
+        entry = {"count": count, "axis": axis, "axis_src": axis_src, "alts": []}
 
         wiki_names = wiki.get(tag.lower(), [])
         lex = lexicon.get(tag)
@@ -207,7 +277,7 @@ def build(args: argparse.Namespace) -> dict:
             entry |= {"ja": tag, "via": "passthrough"}
         elif tag in RATING_JA:
             entry |= {"ja": RATING_JA[tag], "via": "rating"}
-        elif lex and lex.get("ja"):
+        elif lex and lex.get("ja") and han_allowed(lex["ja"]):
             entry |= {"ja": lex["ja"], "via": "wikidata", "qid": lex.get("qid")}
             entry["alts"] = [n for n in wiki_names if n != lex["ja"]][: args.max_alts]
         elif wiki_names:
@@ -347,10 +417,11 @@ def choose(entry: dict, cands: list[dict], mt: str, accept_f1: float) -> None:
             "via": via,
             "f1": best["f1"],
         }
-    elif mt:
+    elif mt and han_allowed(mt):
         # No candidate recovers the tag — `closed mouth` came back as 目を閉じる
         # (closed *eyes*). Keep it, but mark it so the review file surfaces the
-        # class instead of shipping it silently.
+        # class instead of shipping it silently. (A rendering that fails the
+        # kanji guard — 僵尸 — is not kept: better unresolved than Chinese.)
         entry |= {"ja": mt, "via": "mt_unverified"}
     elif best:
         entry |= {"ja": best["ja"], "via": "wiki_unverified", "f1": best["f1"]}
@@ -378,7 +449,12 @@ def reselect(tags: dict[str, dict], prior_path: Path, accept_f1: float) -> int:
         cands = [
             {
                 **c,
-                "ja_ok": True,  # prior build already dropped the non-JA ones
+                # Re-check the Han veto instead of trusting the prior build:
+                # the guard may have tightened since (kanji_allow), and
+                # reselect exists precisely to apply such fixes without the
+                # GPU. Veto-only — latin candidates (`:d`, `OL`) stay eligible
+                # exactly as the prior build treated them.
+                "ja_ok": han_allowed(c["ja"]),
                 "kana": KANA.search(c["ja"]) is not None,
                 "mt": c["ja"] == mt,
                 # pre-src builds only banked wiki candidates + the MT rendering
@@ -500,8 +576,9 @@ def _mt_pass(tags: dict[str, dict], args: argparse.Namespace) -> None:
         list
     )
     for (tag, cand), en in zip(pairs, back):
-        ja_ok = KANA.search(cand) is not None or all(
-            c in inventory for c in cand if HAN.match(c)
+        ja_ok = han_allowed(cand) and (
+            KANA.search(cand) is not None
+            or all(c in inventory for c in cand if HAN.match(c))
         )
         scored[tag].append(
             {

@@ -59,13 +59,23 @@ artist passthrough (pixiv handles stay latin — users type them latin) → rati
 band → Wikidata lexicon → Danbooru wiki `other_names` → MT.
 
 `other_names` mixes languages, so script detection matters twice over. Kana
-proves Japanese. Han-only strings are kept only if Shift-JIS can encode them,
-which rejects simplified Chinese (小鸟游星野 out, 火宮チナツ in) — but *not*
-traditional Chinese (棕毛, 藍眼睛 both encode fine and both scored a perfect
-back-translation), so Han-only candidates are additionally checked against a
-JA-kanji inventory learned from the dump itself: every `other_names` entry
-containing kana is Japanese by construction, so the kanji inside those entries
-are a free census of the JA repertoire.
+proves Japanese — but only for the kana itself: **every Han char must also be
+in `kanji_allow.ALLOWED`** (joyo + jinmeiyo + a reviewed hyogai whitelist,
+2026-08-31), checked before the kana short-circuit. The old guards leaked two
+ways: kana-bearing zh wordings passed on their kana (结月ゆかり, 歌爱ユキ), and
+Shift-JIS — the old Han-only test — encodes some simplified forms (崩坏's 坏,
+海梦's 梦 are JIS level 2). Census behind the whitelist: out-of-set kanji are
+1% of corpus occurrences and heavy-tailed (top-100 = 96%); the head is
+community register (膣 7134×, 掴む, 舐める, 狐…) and is whitelisted
+(`HYOGAI_KEEP`), tail chars carried only by real character names
+(火焔猫燐, 龍驤, 姫海棠はたて…) ride `NAME_RESCUE`, and everything else that
+falls outside is zh/hangul leakage. Wordings that fail fall to the next source
+or EN passthrough — never row deletion, so coverage is unchanged. Han-only
+candidates are *additionally* checked against a JA-kanji inventory learned
+from the dump itself (every kana-bearing `other_names` entry is Japanese by
+construction, so its kanji are a free census of the JA repertoire) — the
+allowed set can't tell traditional-Chinese *wordings* built from JA-legal
+chars (棕毛, 藍眼睛) from Japanese; the inventory can.
 
 The wiki is authoritative on idiom but *not* a synonym list — it also carries
 narrower compounds (`underwear` → 下着コート) and different concepts
@@ -75,6 +85,20 @@ the best scorer above `--accept-f1` wins, and ties break toward brevity so
 `黒髪ロング` loses to `黒髪`. Exemplars for the MT prompt come from a
 hand-checked list in `mt.py`, never from the unverified wiki head — drawing
 them automatically fed 下着コート back into the prompts and MT reproduced it.
+
+**Axis comes from three sources, in order** (`resolve_axis`, 2026-08-30): the
+caption index (`image_dataset` only, ~3k images) → the wiki dump's
+`category_name` → the artist-OC form `name (handle)` where `@handle` is an
+artist in the corpus → `general`. Before the fallbacks, every character that
+never occurred in `image_dataset` (the D1-wide roots are 5× larger) fell to
+`general` and went through **MT, which renders a name as words** —
+`ame (mignon)` → 雨（可愛い）, `grani (arknights)` → グラニ（アークナイト） —
+and the `names` register silently kept it EN (`n_missing` stayed 0). The
+fix moved 2,683 tags onto name axes (2,138 character / 540 copyright / 5
+artist via the wiki, 33 OCs via the artist rule), changed 2,400 name wordings
+(グラニ; OCs with no wiki name are `unresolved` → pass through EN), and touched
+**zero** general-axis wordings, so the signed-off review still stands. Each
+entry records `axis_src` (`index` / `wiki` / `artist_oc` / `default`).
 
 Disagreements between the two sources land in `assets/tag_glossary_review.md`,
 ordered by occurrence count, for the sign-off the phase gate asks for. Fixes go
@@ -112,6 +136,19 @@ job, blocked on the sequence-term decision in [`../plan.md`](../plan.md).
 defaults to `assets/commentary_pairs.jsonl`, which is not what the D2 MT pass
 wrote; a rebuild without it prints one `skipping D2` line and silently drops all
 9,068 commentary pairs (45,230 → 36,162, and ext rows visited 6,538 → 3,577).
+
+**Student-side joiner (2026-08-30).** Span registers join tags with `", "`
+(80 %) or `、` (20 %), chosen per pair (`build_pairs.pick_joiner`, seeded)
+and stored in the record's `"joiner"` field, which `scripts/distill_cjk/data.py`
+reads to derive span offsets (records without the field are pre-change
+`、` pairs). `", "` is what users type in every language's prompt box *and*
+is a native T5 piece, so teacher and student share the delimiter token and
+differ only on content spans; `、` is an ext row of its own
+(`ext_vocab._CJK_RANGES`) and is kept as a minority variant so it stays
+visited. Every pair built before this used `、` — `cache_synth2` was
+restaged from scratch, and the tag-style `assets/ja_eval_prompts*.json`
+prompts were re-expressed with `", "` (prose prompts keep 、 as
+punctuation), so pre-0830 grid numbers are not directly comparable.
 
 Coverage is reported in **ext rows**, encoded with the same
 `HybridT5Encoder` training will use — the histogram is what says which rows a

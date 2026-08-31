@@ -26,7 +26,7 @@ here duplicates measured tables — those stay with the reports and
 |---|---|---|
 | `wikidata_lexicon.py` | EN↔JA/KO/ZH proper-noun lexicon (CC0) | ≥2-token + `P31/P279* Q95074` guard; 0/89 artists |
 | `tag_glossary.py` (`--mt` GPU; `--reselect` CPU) | `assets/tag_glossary_ja.json` + `tag_glossary_review.md` (400 sourced rows) | 14,678/14,753 tags, 99.86% coverage; `.pre_item2.json` kept |
-| `tag_overrides.json` | hand-pinned wordings, beat every source on rebuild | **review sign-off still open** |
+| `tag_overrides.json` | hand-pinned wordings, beat every source on rebuild | review signed off 2026-08-30 — no new overrides, glossary/pairs/`cache_synth2` unchanged |
 | `tag_pairs.py` | fill-only from `p1atdev/danbooru-ja-tag-pair-20241015`; arbiter candidates | `via: tagpair` 0.6 / `tagpair_verified` 1.0 |
 | `build_pairs.py` (multi-root, `--commentary`, `names` register) | `post_image_dataset/cjk_distill/{pairs,pairs_synth}.jsonl` + `coverage.json` + `spotcheck.md` | 45,230 base pairs; dedup by artist-relative path |
 | `synth_names.py --context ja\|en\|both` | `names_synth{,_ja}` registers (wiki ∩ tag-pair canonical names, rarity-weighted to a visit floor) | 261k pairs with `both` |
@@ -44,7 +44,9 @@ Caches on disk: `post_image_dataset/cjk_distill/cache_synth2` (~155–170 G,
 
 | pack | recipe | role |
 |---|---|---|
-| **`synthja`** | `param=global`, `loss=span`, registers `tags,tags_alt,names,names_synth,names_synth_ja`, 12k steps | **the ship candidate** — best span pack; tags, quotes, katakana names, mixed-register names all work |
+| **`synthja_v3`** | v2 corpus + §5a `tags_synth_ja` (2,249 under-floor tag pairs; report 0831 §6) | **the ship candidate** — keeps every v2 gain, adds c1/c2/c3/t2/t6; t3 armor still open |
+| `synthja_v2` | first pack on the rebuilt corpus (name-axis fix + `, ` joiner) | superseded by `synthja_v3` same day |
+| `synthja` | `param=global`, `loss=span`, registers `tags,tags_alt,names,names_synth,names_synth_ja`, 12k steps, `、`-joined corpus | superseded by `synthja_v2`; keep as the pre-rebuild reference |
 | `synthja_lora16{,_reg}` (+ `.adapter_lora.safetensors`) | plan3 arms | kept as reference for a future DiT-side-target line; nothing ships |
 | `synthja_attn`, `synth`, `synth_bal`, `names`, `item2`, `tagpair`, `wide`, `global{,_row}` | the measured ladder | superseded; safe to delete once `findings.md` is trusted |
 
@@ -60,7 +62,7 @@ Envelopes: `bench/cjk_distill/results/<stamp>-<label>/`; render grids:
 
 ## Ship contract
 
-The v1 artifact is a **vocab pack**, not a LoRA: `cjk_vocab_pack_synthja.safetensors`
+The v1 artifact is a **vocab pack**, not a LoRA: `cjk_vocab_pack_synthja_v3.safetensors`
 (rows + global correction baked) + `.json` (segmentation rules, char/token →
 row-id map, per-row provenance `trained` / `zero-shot`, training metadata).
 Rare kanji character names are **out of scope for v1** (users type
@@ -81,9 +83,9 @@ Surfaces (none built yet — [`plan.md`](plan.md) Phase 3):
   patches the adapter embed (forward-hook-not-override). Endgame: upstream.
 - Release asset pattern: the CNS γ npz (must be attached to the release tag).
 
-## Hard blocker on ship
+## Hard blocker on ship — CLEARED 2026-08-30
 
-**Human sign-off on `assets/tag_glossary_review.md` → `datasets/tag_overrides.json`.**
+**Human sign-off on `assets/tag_glossary_review.md` → `datasets/tag_overrides.json`** — done; the 22 pinned overrides stood, no re-cache needed (rows unchanged, stager is pair-keyed). Rationale kept for the record:
 36.6% of span tokens are `mt_unverified`; a wrong wording trains that tag's
 rows toward the wrong meaning and no aggregate metric can see it (G4b). Two
 review axes: the polysemy class (`bow`) and katakana-vs-kanji (`armor`→鎧 vs

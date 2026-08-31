@@ -90,6 +90,19 @@ back-translation layer and regressed 1,991 wordings — tried and reverted);
 leaving danbooru tags latin is strictly worse (routes to original spiece rows,
 trains *no* ext rows); Wikidata covers 0/89 artists (handles are not entities).
 
+**2026-08-31 corpus rebuild** ([`reports/0831_axis_joiner_rebuild.md`](reports/0831_axis_joiner_rebuild.md)):
+two corpus-wide bugs found by reading `spotcheck.md` — (a) characters outside
+`image_dataset` fell to the `general` axis and were **MT-rendered as words**
+(`ame (mignon)` → 雨（可愛い）; 6,149/14,959 `names` pairs left the name EN);
+(b) the `、` joiner was itself an ext row on every pair. Fixed (wiki-category
+/ artist-OC axis fallback; `, ` 80 % / `、` 20 % joiner recorded per pair),
+zero general-axis wordings changed, corpus + cache rebuilt, `synthja_v2`
+retrained: readout 0.53 → 0.67, tags-register attn recovery 0.54 → 1.13,
+grids gain on t2/t3/a1/a2/r2/m1 with no regression. **Pre-0831 bands and
+grids are not comparable to anything built after** (joiner, prompts, holdout
+all changed). Lesson: a spot-check that reads *whole records* catches what
+per-register aggregates cannot — keep `spotcheck.md` in the review loop.
+
 ## 4. Names: the failure that closed two lines (2026-08-27 → 08-30)
 
 Question: can text pairs alone make a rare kanji character name render in a

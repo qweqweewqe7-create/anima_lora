@@ -148,7 +148,14 @@ def _en_span_chars(text: str, segments: list[str]) -> list[tuple[int, int]]:
     return out
 
 
-def _ja_span_chars(segments: list[str], joiner: str = "、") -> list[tuple[int, int]]:
+# Pre-2026-08-30 records carry no ``joiner`` field and were built with 、;
+# newer builders (build_pairs / synth_names) record the joiner per pair.
+LEGACY_JOINER = "、"
+
+
+def _ja_span_chars(
+    segments: list[str], joiner: str = LEGACY_JOINER
+) -> list[tuple[int, int]]:
     """Char spans inside ``joiner.join(segments)`` — exact by construction."""
     out, pos = [], 0
     for seg in segments:
@@ -230,7 +237,9 @@ class PairEncoder:
         raw = pair.get("spans") or []
         if raw:
             en_chars = _en_span_chars(en, [s["en"] for s in raw])
-            ja_chars = _ja_span_chars([s["ja"] for s in raw])
+            ja_chars = _ja_span_chars(
+                [s["ja"] for s in raw], joiner=pair.get("joiner") or LEGACY_JOINER
+            )
             for s, ec, jc in zip(raw, en_chars, ja_chars):
                 t_idx = _tokens_in_span(t_offsets, t_mask, ec)
                 s_idx = _tokens_in_span(s_offsets, s_mask, jc)
