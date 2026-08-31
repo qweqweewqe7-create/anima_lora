@@ -105,6 +105,23 @@ step writes `assets/*_ko.*` next to the JA asset.
    row, it goes into a KO instance of plan.md §5a (targeted tag widening)
    before training, not after.
 
+## Phase K1.5 — user inspection of the corpus (human; added 2026-08-31)
+
+After K1 completes, before any GPU is spent on K2 staging/training, the user
+inspects the corpus and signs off:
+
+1. **Glossary review round 2** — `tag_glossary_review_ko.md` (the MT-arbitrated
+   top-200 disagreements + whatever round 1 — 2026-08-31: exemplars, rating
+   band, 14 overrides — did not cover).
+2. **Corpus spot-check** — `spotcheck_ko.md` (~200 sampled pairs, EN vs KO,
+   including `names_synth_ko` samples).
+3. **Coverage gate output** — the K1 step-6 table: every eval-prompt token
+   over floor, or the §5a widening list that will fix it.
+
+Fixes loop back cheaply while nothing is trained yet: `tag_overrides_ko.json`
+→ `--reselect` (CPU) → rebuild pairs. **K2 runs only after this sign-off.**
+(The post-train render-grid eyeball stays where it always was — K3's grids.)
+
 ## Phase K2 — cache + joint retrain (GPU)
 
 **Cache budget.** `cache_synth2` is ~171 GB for 262,852 pairs (~0.66 MB/pair).
@@ -136,21 +153,6 @@ gain over *all* ext rows — a KO-only pack trained from scratch would move the
 JA rows too, and two packs cannot be loaded at once. That same sharing is the
 risk in the other direction (KO training drifting JA), which is the first
 gate below.
-
-## Phase K2.5 — user inspection (human; added 2026-08-31 at user request)
-
-After the K2 retrain, before any K3 verdict is called, the user inspects:
-
-1. **Rendered grid eyeball** — the 2c-style grid on `ko_eval_prompts.json`
-   (`en` / `ko_t5en` / `ko_ext`) plus the mixed set; user judges t*/c*/n*
-   rows directly, not just the metrics.
-2. **Corpus spot-check** — `spotcheck_ko.md` (~200 sampled pairs, EN vs KO).
-3. **Glossary review round 2** — `tag_glossary_review_ko.md` residue that
-   round 1 (2026-08-31: exemplars, rating band, 14 overrides) did not cover.
-
-Wording fixes found here loop back cheaply: `tag_overrides_ko.json` →
-`--reselect` (CPU) → re-cache only rows whose wording changed → one short
-retrain (~20-30 GPU-min). K3's kill gates run only after this sign-off.
 
 ## Phase K3 — gates
 
