@@ -307,6 +307,39 @@ TAG_FEWSHOT: list[tuple[str, str]] = [
     ("censored", "修正あり"),
 ]
 
+TAG_BACKGROUND_KO = (
+    "These are Danbooru-style annotation tags for an anime/illustration image "
+    "dataset. Each tag names a visual attribute, pose, clothing item, body "
+    "feature, camera framing, or scene element. Translate as a short noun "
+    "phrase a Korean user would type as an image-generation prompt keyword, "
+    "not as a sentence. Use the wording actually used by Korean illustration "
+    "communities (Arca Live / Korean-speaking Danbooru users), including "
+    "established loanwords written in hangul, rather than a literal "
+    "word-by-word rendering. Never use hanja."
+)
+
+# KO few-shot exemplars (plan_ko.md K1: hand-checked list, never drawn from the
+# unverified wiki head). Drafted 2026-08-31; part of the K1 review sign-off.
+# Kept disjoint from IDIOM_PROBE so a future KO probe port stays held-out.
+TAG_FEWSHOT_KO: list[tuple[str, str]] = [
+    ("1girl", "소녀 1명"),
+    ("solo", "혼자"),
+    ("blonde hair", "금발"),
+    ("short hair", "짧은 머리"),
+    ("hair ornament", "머리 장식"),
+    ("open mouth", "입 벌림"),
+    ("bare shoulders", "어깨 노출"),
+    ("thighhighs", "니하이"),
+    ("school uniform", "교복"),
+    ("simple background", "단순한 배경"),
+    ("from behind", "뒤에서"),
+    ("full body", "전신"),
+    ("sitting", "앉아 있음"),
+    ("closed eyes", "눈 감음"),
+    ("large breasts", "거유"),
+    ("censored", "검열"),
+]
+
 # Held-out idiom probe: tags whose Japanese form is an established community
 # idiom a literal translation gets wrong. `expect` is the accepted rendering
 # (substring match — inflection/particles around it are fine); `literal_trap`

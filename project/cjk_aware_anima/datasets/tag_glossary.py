@@ -68,14 +68,14 @@ HAN_WIDE = re.compile(r"[㐀-鿿豈-﫿]")
 # Sources the arbitration may re-open. Everything else (override / rating /
 # wikidata / artist passthrough) is pinned: letting MT touch those overwrote the
 # rating band with デリケート instead of センシティブ.
-ARBITRATED = {"wiki", "wiki_han", "unresolved"}
+ARBITRATED = {"wiki", "wiki_han", "kb", "unresolved"}
 
 # Candidate provenance, best first at equal evidence: the 2026 wiki dump is the
 # freshest reading of the community field; the tag-pair set is the same field at
 # Oct-2024 partly LLM-filled; MT renders the *string*, not the booru sense
 # (`bow` → お辞儀 "bowing" where the tag means 蝶結び the ribbon), so at equal
 # back-translation F1 a community-attested name outranks it.
-SRC_RANK = {"wiki": 0, "tagpair": 1, "mt": 2}
+SRC_RANK = {"wiki": 0, "tagpair": 1, "kb": 1, "mt": 2}
 TAGPAIR_VERIFIED_VIA = "tagpair_verified"
 
 RATING_JA = {
@@ -84,6 +84,17 @@ RATING_JA = {
     "nsfw": "成人向け",
     "explicit": "露骨な性描写",
 }
+
+HANGUL = re.compile(r"[가-힣ㄱ-ㅎㅏ-ㅣ]")
+
+RATING_KO = {
+    "safe": "전체 이용가",
+    "sensitive": "센시티브",
+    "nsfw": "성인용",
+    "explicit": "노골적인 성묘사",
+}
+
+RATING = {"ja": RATING_JA, "ko": RATING_KO}
 
 
 def han_allowed(s: str) -> bool:
@@ -116,11 +127,85 @@ def is_japanese(s: str) -> bool:
     return bool(han)
 
 
-def rank_names(names: list[str]) -> list[str]:
-    """Japanese candidates, kana-bearing first (the least ambiguous evidence)."""
+# Correctly-bounded wide Han for the KO veto. NB ``HAN_WIDE`` above has a
+# latent quirk: its compat range starts at the *unified* 豈 (U+8C48), not the
+# compatibility one (U+F900), so it also swallows hangul/Yi/private-use —
+# harmless in the JA path (hangul is not Japanese either way; kept as-is to
+# leave JA behavior bit-identical), fatal for KO.
+HAN_KO = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
+
+
+def ko_wording_ok(s: str) -> bool:
+    """Veto-only KO analog of ``han_allowed``: hanja is not what users type
+    (plan_ko.md K1 — Han-only ``other_names`` are not Korean) and kana means
+    the candidate is Japanese; latin/digit wordings pass, as in the JA path."""
+    return not HAN_KO.search(s) and not KANA.search(s)
+
+
+def is_korean(s: str) -> bool:
+    """Any hangul syllable/jamo ⇒ Korean — unless ``ko_wording_ok`` vetoes."""
+    return bool(HANGUL.search(s)) and ko_wording_ok(s)
+
+
+def wording_ok(s: str, lang: str = "ja") -> bool:
+    """Lang-dispatched veto (never *requires* nativeness — see the JA note)."""
+    return han_allowed(s) if lang == "ja" else ko_wording_ok(s)
+
+
+def is_native(s: str, lang: str = "ja") -> bool:
+    return is_japanese(s) if lang == "ja" else is_korean(s)
+
+
+# proof-of-nativeness script per language (kana for JA, hangul for KO)
+NATIVE_RE = {"ja": KANA, "ko": HANGUL}
+
+
+def rank_names(names: list[str], lang: str = "ja") -> list[str]:
+    """Native candidates; for JA, kana-bearing first (least ambiguous evidence)."""
+    if lang != "ja":
+        keep = [n for n in names if is_native(n, lang)]
+        keep.sort(key=len)
+        return keep
     ja = [n for n in names if is_japanese(n)]
     ja.sort(key=lambda n: (0 if KANA.search(n) else 1, len(n)))
     return ja
+
+
+_KB_KEYWORDS = re.compile(r"키워드\s*:\s*(.+)$", re.S)
+
+
+def load_kr_kb(path: Path, lang: str = "ko") -> dict[str, list[str]]:
+    """EN tag -> hangul keyword list from ``danbooru_tags_classified.csv``.
+
+    The Korean community KB (Localsmile/danbooru_KR_wiki_tag_search, fetched by
+    ``make download-danbooru-tags``) carries a ``키워드:`` field per tag — the
+    Korean names users actually search with (트윈테일/양갈래, 갑옷/아머). It is
+    the KO analog of the JA tag-pair set: 83.6%% of our general tag types
+    (95.7%% of occurrences) measured 2026-08-31. Search keywords are noisier
+    than a curated pair set, so entries compete through the same
+    back-translation arbitration (``src: "kb"``), never win unexamined.
+    """
+    import csv  # noqa: PLC0415
+
+    out: dict[str, list[str]] = {}
+    if not path.exists():
+        print(f"  [glossary] KR KB missing at {path} — kb tier disabled")
+        return out
+    with path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.reader(f)
+        next(reader, None)
+        for row in reader:
+            if len(row) < 4 or not row[0].strip():
+                continue
+            m = _KB_KEYWORDS.search(row[3])
+            if not m:
+                continue
+            name = row[0].strip().replace("_", " ").lower()
+            kws = [k.strip() for k in m.group(1).split(",")]
+            kws = [k for k in kws if k and is_native(k, lang)]
+            if kws:
+                out[name] = kws
+    return out
 
 
 def ja_kanji_inventory(path: Path, min_count: int = 3) -> set[str]:
@@ -189,7 +274,7 @@ def resolve_axis(
     return ("artist" if tag.startswith("@") else "general"), "default"
 
 
-def load_wiki(path: Path) -> dict[str, list[str]]:
+def load_wiki(path: Path, lang: str = "ja") -> dict[str, list[str]]:
     if not path.exists():
         print(f"  [glossary] fetching {WIKI_REPO} …", flush=True)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -211,7 +296,7 @@ def load_wiki(path: Path) -> dict[str, list[str]]:
     for line in path.open(encoding="utf-8"):
         d = json.loads(line)
         title = (d.get("title") or "").replace("_", " ").strip().lower()
-        names = rank_names(d.get("other_names") or [])
+        names = rank_names(d.get("other_names") or [], lang)
         if title and names:
             out[title] = names
     return out
@@ -246,8 +331,9 @@ def build(args: argparse.Namespace) -> dict:
         else {}
     )
     lexicon = json.loads(Path(args.lexicon).read_text())["characters"]
-    wiki = load_wiki(Path(args.wiki))
+    wiki = load_wiki(Path(args.wiki), args.lang)
     wiki_axes = load_wiki_axes(Path(args.wiki))
+    kr_kb = load_kr_kb(Path(args.kr_kb)) if args.lang == "ko" else {}
     roots = [(Path(p), False) for p in args.captions]
     roots += [(Path(p), True) for p in (args.raw_captions or [])]
     counts = tag_counts(roots, Path(args.tag_rules))
@@ -275,23 +361,33 @@ def build(args: argparse.Namespace) -> dict:
             # pixiv/danbooru handles are latin identity — users type them latin,
             # and translating them would train rows nobody prompts with.
             entry |= {"ja": tag, "via": "passthrough"}
-        elif tag in RATING_JA:
-            entry |= {"ja": RATING_JA[tag], "via": "rating"}
-        elif lex and lex.get("ja") and han_allowed(lex["ja"]):
-            entry |= {"ja": lex["ja"], "via": "wikidata", "qid": lex.get("qid")}
-            entry["alts"] = [n for n in wiki_names if n != lex["ja"]][: args.max_alts]
+        elif tag in RATING[args.lang]:
+            entry |= {"ja": RATING[args.lang][tag], "via": "rating"}
+        elif lex and lex.get(args.lang) and wording_ok(lex[args.lang], args.lang):
+            entry |= {"ja": lex[args.lang], "via": "wikidata", "qid": lex.get("qid")}
+            entry["alts"] = [n for n in wiki_names if n != lex[args.lang]][
+                : args.max_alts
+            ]
         elif wiki_names:
             entry |= {
                 "ja": wiki_names[0],
-                "via": "wiki" if KANA.search(wiki_names[0]) else "wiki_han",
+                "via": "wiki"
+                if NATIVE_RE[args.lang].search(wiki_names[0])
+                else "wiki_han",
             }
             entry["alts"] = wiki_names[1 : 1 + args.max_alts]
+        elif kr_kb.get(tag):
+            # general entries stay ARBITRATED (the --mt pass re-opens them);
+            # name axes keep the KB wording directly, like the wiki tier
+            kb_names = kr_kb[tag]
+            entry |= {"ja": kb_names[0], "via": "kb"}
+            entry["alts"] = kb_names[1 : 1 + args.max_alts]
         else:
             entry |= {"ja": None, "via": "unresolved"}
         tags[tag] = entry
 
     if args.reselect:
-        n = reselect(tags, Path(args.reselect), args.accept_f1)
+        n = reselect(tags, Path(args.reselect), args.accept_f1, args.lang)
         print(f"  [glossary] re-selected {n} tags from {args.reselect} (no GPU)")
     elif args.mt:
         _mt_pass(tags, args)
@@ -307,11 +403,12 @@ def build(args: argparse.Namespace) -> dict:
         for e in tags.values()
         if e["ja"]
         for c in e["ja"]
-        if is_japanese(c) or KANA.search(c)
+        if is_native(c, args.lang) or NATIVE_RE[args.lang].search(c)
     }
 
     return {
         "meta": {
+            "lang": args.lang,
             "caption_index": str(args.caption_index),
             "wiki": f"{WIKI_REPO}/{WIKI_FILE}",
             "lexicon": str(args.lexicon),
@@ -376,7 +473,9 @@ def _f1(a: str, b: str) -> float:
     return 2 * p * r / (p + r)
 
 
-def choose(entry: dict, cands: list[dict], mt: str, accept_f1: float) -> None:
+def choose(
+    entry: dict, cands: list[dict], mt: str, accept_f1: float, lang: str = "ja"
+) -> None:
     """Pick the wording for one tag from its scored candidates.
 
     Pure post-processing over stored data — no GPU. Ranking is: recovered
@@ -417,7 +516,7 @@ def choose(entry: dict, cands: list[dict], mt: str, accept_f1: float) -> None:
             "via": via,
             "f1": best["f1"],
         }
-    elif mt and han_allowed(mt):
+    elif mt and wording_ok(mt, lang):
         # No candidate recovers the tag — `closed mouth` came back as 目を閉じる
         # (closed *eyes*). Keep it, but mark it so the review file surfaces the
         # class instead of shipping it silently. (A rendering that fails the
@@ -429,7 +528,9 @@ def choose(entry: dict, cands: list[dict], mt: str, accept_f1: float) -> None:
         entry |= {"ja": None, "via": "unresolved"}
 
 
-def reselect(tags: dict[str, dict], prior_path: Path, accept_f1: float) -> int:
+def reselect(
+    tags: dict[str, dict], prior_path: Path, accept_f1: float, lang: str = "ja"
+) -> int:
     """Re-derive every choice from a previous build's stored candidates.
 
     Selection is pure post-processing, so a ranking or threshold fix must never
@@ -454,15 +555,15 @@ def reselect(tags: dict[str, dict], prior_path: Path, accept_f1: float) -> int:
                 # reselect exists precisely to apply such fixes without the
                 # GPU. Veto-only — latin candidates (`:d`, `OL`) stay eligible
                 # exactly as the prior build treated them.
-                "ja_ok": han_allowed(c["ja"]),
-                "kana": KANA.search(c["ja"]) is not None,
+                "ja_ok": wording_ok(c["ja"], lang),
+                "kana": NATIVE_RE[lang].search(c["ja"]) is not None,
                 "mt": c["ja"] == mt,
                 # pre-src builds only banked wiki candidates + the MT rendering
                 "src": c.get("src") or ("mt" if c["ja"] == mt else "wiki"),
             }
             for c in (p.get("candidates") or [])
         ]
-        choose(e, cands, mt, accept_f1)
+        choose(e, cands, mt, accept_f1, lang)
         n += 1
     return n
 
@@ -491,7 +592,17 @@ def _mt_pass(tags: dict[str, dict], args: argparse.Namespace) -> None:
     tie-break in ``choose`` puts community sources ahead of the MT rendering.
     """
     sys.path.insert(0, str(ROOT))
-    from mt import TAG_BACKGROUND, TAG_FEWSHOT, MTEngine, Request  # noqa: PLC0415
+    from mt import (  # noqa: PLC0415
+        TAG_BACKGROUND,
+        TAG_BACKGROUND_KO,
+        TAG_FEWSHOT,
+        TAG_FEWSHOT_KO,
+        MTEngine,
+        Request,
+    )
+
+    background = TAG_BACKGROUND if args.lang == "ja" else TAG_BACKGROUND_KO
+    fewshot = TAG_FEWSHOT if args.lang == "ja" else TAG_FEWSHOT_KO
 
     general = [
         t for t, e in tags.items() if e["axis"] == "general" and e["via"] in ARBITRATED
@@ -503,12 +614,24 @@ def _mt_pass(tags: dict[str, dict], args: argparse.Namespace) -> None:
     # Exemplars must be hand-checked: drawing them from the unverified wiki head
     # fed junk back into the prompts (`underwear` → 下着コート became a shot and
     # MT then reproduced it).
-    shots = TAG_FEWSHOT[: args.n_shots]
-    inventory = ja_kanji_inventory(Path(args.wiki))
-    print(f"  [glossary] JA kanji inventory: {len(inventory)} chars", flush=True)
+    shots = fewshot[: args.n_shots]
+    if args.lang == "ja":
+        inventory = ja_kanji_inventory(Path(args.wiki))
+        print(f"  [glossary] JA kanji inventory: {len(inventory)} chars", flush=True)
+    else:
+        inventory = set()  # hangul is unambiguous; the veto is ko_wording_ok
 
     pair_names: dict[str, list[str]] = {}
-    if not args.no_tag_pairs:
+    pair_src = "tagpair"
+    if args.lang == "ko" and not args.no_tag_pairs:
+        # the KO analog of the tag-pair set: the KR KB's keyword field
+        kr_kb = load_kr_kb(Path(args.kr_kb))
+        pair_names = {t: kr_kb.get(t, [])[: args.n_pair_candidates] for t in todo}
+        pair_src = "kb"
+        n_with = sum(1 for v in pair_names.values() if v)
+        print(f"  [glossary] KR-KB candidates for {n_with}/{len(todo)} tags")
+    # the HF tag-pair set is JA-only (no KO analog on HF, verified 2026-08-31)
+    if args.lang == "ja" and not args.no_tag_pairs:
         import tag_pairs  # noqa: PLC0415  (sibling — the shared source + guards)
 
         print(f"  [glossary] fetching {tag_pairs.PAIR_REPO} …", flush=True)
@@ -524,20 +647,24 @@ def _mt_pass(tags: dict[str, dict], args: argparse.Namespace) -> None:
 
     engine = MTEngine(args.model, greedy=True, gpu_budget=args.gpu_budget)
 
-    print(f"  [glossary] EN→JA over {len(todo)} general tags", flush=True)
+    print(
+        f"  [glossary] EN→{args.lang.upper()} over {len(todo)} general tags",
+        flush=True,
+    )
     order = sorted(todo)
     mt_ja = dict(
         zip(
             order,
             engine.translate(
                 [
-                    Request(text=t, background=TAG_BACKGROUND, terms=shots)
+                    Request(text=t, background=background, terms=shots)
                     for t in order
                 ],
+                target_lang=args.lang,
                 batch_size=args.batch_size,
                 progress_every=20,
                 max_new_tokens=args.max_new_tokens,
-                cache=args.mt_cache / "glossary_en2ja.jsonl",
+                cache=args.mt_cache / f"glossary_en2{args.lang}.jsonl",
             ),
         )
     )
@@ -547,11 +674,14 @@ def _mt_pass(tags: dict[str, dict], args: argparse.Namespace) -> None:
     src_of: dict[tuple[str, str], str] = {}
     for tag in order:
         e = tags[tag]
-        wiki_c = ([e["ja"]] if e["via"].startswith("wiki") and e["ja"] else []) + e[
-            "alts"
-        ]
-        sourced = [(c, "wiki") for c in wiki_c[: args.n_candidates]]
-        sourced += [(c, "tagpair") for c in pair_names.get(tag, [])]
+        primary_src = "kb" if e["via"] == "kb" else "wiki"
+        wiki_c = (
+            [e["ja"]]
+            if (e["via"].startswith("wiki") or e["via"] == "kb") and e["ja"]
+            else []
+        ) + e["alts"]
+        sourced = [(c, primary_src) for c in wiki_c[: args.n_candidates]]
+        sourced += [(c, pair_src) for c in pair_names.get(tag, [])]
         if mt_ja.get(tag):  # the literal rendering competes on the same terms
             sourced.append((mt_ja[tag].strip().splitlines()[0].strip(), "mt"))
         seen: dict[str, str] = {}
@@ -569,24 +699,27 @@ def _mt_pass(tags: dict[str, dict], args: argparse.Namespace) -> None:
         batch_size=args.batch_size,
         progress_every=20,
         max_new_tokens=args.max_new_tokens,
-        cache=args.mt_cache / "glossary_ja2en.jsonl",
+        cache=args.mt_cache / f"glossary_{args.lang}2en.jsonl",
     )
 
     scored: dict[str, list[tuple[float, str, str, bool]]] = collections.defaultdict(
         list
     )
     for (tag, cand), en in zip(pairs, back):
-        ja_ok = han_allowed(cand) and (
-            KANA.search(cand) is not None
-            or all(c in inventory for c in cand if HAN.match(c))
-        )
+        if args.lang == "ja":
+            ja_ok = han_allowed(cand) and (
+                KANA.search(cand) is not None
+                or all(c in inventory for c in cand if HAN.match(c))
+            )
+        else:
+            ja_ok = ko_wording_ok(cand)
         scored[tag].append(
             {
                 "f1": round(_f1(tag, en), 3),
                 "ja": cand,
                 "back": en.strip(),
                 "ja_ok": ja_ok,
-                "kana": KANA.search(cand) is not None,
+                "kana": NATIVE_RE[args.lang].search(cand) is not None,
                 "src": src_of[(tag, cand)],
                 "mt": cand == (mt_ja.get(tag) or "").strip().splitlines()[:1][0]
                 if mt_ja.get(tag)
@@ -597,7 +730,11 @@ def _mt_pass(tags: dict[str, dict], args: argparse.Namespace) -> None:
     for tag in order:
         mt = (mt_ja.get(tag) or "").strip().splitlines()
         choose(
-            tags[tag], scored.get(tag, []), mt[0].strip() if mt else "", args.accept_f1
+            tags[tag],
+            scored.get(tag, []),
+            mt[0].strip() if mt else "",
+            args.accept_f1,
+            args.lang,
         )
 
 
@@ -688,7 +825,11 @@ def write_review(payload: dict, path: Path, top: int) -> int:
             f"| {count} | {tag} | **{e['ja']}** | {e['via']} | {e.get('mt_ja')} | {cands} |"
         )
 
-    kanji = kanji_review_rows(payload)[:top]
+    kanji = (
+        kanji_review_rows(payload)[:top]
+        if payload["meta"].get("lang", "ja") == "ja"
+        else []
+    )
     if kanji:
         lines += [
             "",
@@ -717,6 +858,13 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
+    ap.add_argument(
+        "--lang",
+        default="ja",
+        choices=["ja", "ko"],
+        help="student-side language; entry keys stay `ja` ('student text' — "
+        "plan_ko.md K1) so every consumer works unchanged",
+    )
     ap.add_argument("--caption-index", type=Path, default=DEFAULT_INDEX)
     ap.add_argument("--captions", type=Path, nargs="+", default=[DEFAULT_CAPTIONS])
     ap.add_argument(
@@ -729,6 +877,12 @@ def main() -> None:
     ap.add_argument("--tag-rules", type=Path, default=build_pairs.GELCRAWL_RULES)
     ap.add_argument("--lexicon", type=Path, default=ASSETS / "wikidata_lexicon.json")
     ap.add_argument("--wiki", type=Path, default=ASSETS / ".wiki" / WIKI_FILE)
+    ap.add_argument(
+        "--kr-kb",
+        type=Path,
+        default=REPO / "models" / "danbooru_tags_classified.csv",
+        help="KR community KB (--lang ko candidate source; make download-danbooru-tags)",
+    )
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--max-alts", type=int, default=4)
     ap.add_argument("--overrides", type=Path, default=ROOT / "tag_overrides.json")
@@ -765,6 +919,13 @@ def main() -> None:
         help="per-batch translation cache — a killed run resumes from here",
     )
     args = ap.parse_args()
+    if args.lang != "ja":  # per-language artifact defaults, JA names untouched
+        if args.out == DEFAULT_OUT:
+            args.out = ASSETS / f"tag_glossary_{args.lang}.json"
+        if args.review == ASSETS / "tag_glossary_review.md":
+            args.review = ASSETS / f"tag_glossary_review_{args.lang}.md"
+        if args.overrides == ROOT / "tag_overrides.json":
+            args.overrides = ROOT / f"tag_overrides_{args.lang}.json"
 
     payload = build(args)
     args.out.parent.mkdir(parents=True, exist_ok=True)
