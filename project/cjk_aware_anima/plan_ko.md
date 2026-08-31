@@ -29,6 +29,11 @@ already accepted; not a reason to touch the vocab.
 
 ## Phase K0 — size the gap (CPU + one daemon job, no data work)
 
+**DONE 2026-08-31** → [`reports/0831_ko_phase0.md`](reports/0831_ko_phase0.md):
+`ko_ext` cos 0.072 (inert, < 0.3 → full K1 corpus), disc healthy (0.146 —
+alignment failure, not collapse); teacher 0.786 in the JA band; coverage
+100 % v=0; risk-2 spacing probe cleared.
+
 Same shape as the 2026-08-15 JA probe, on the *current* `synthja` pack:
 
 1. Author `assets/ko_eval_prompts.json` — the 21 JA ids (`t1_tags_school` …

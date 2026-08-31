@@ -46,6 +46,7 @@ def main() -> None:
         default="project/cjk_aware_anima/assets/ja_eval_prompts.json",
     )
     ap.add_argument("--registers", default="tags,tags_alt")
+    ap.add_argument("--lang", default="ja", help="prompt-file key holding the native text (ja/ko/zh)")
     ap.add_argument("--floor", type=int, default=5, help="low-visit threshold")
     args = ap.parse_args()
     registers = set(args.registers.split(","))
@@ -98,7 +99,7 @@ def main() -> None:
     for key, entry in prompts.items():
         if key.startswith("_"):
             continue
-        raw, mask = enc.encode(entry["ja"], 512)
+        raw, mask = enc.encode(entry[args.lang], 512)
         n = sum(mask)
         rows = [i - T5 for i in raw[:n] if i >= T5]
         unk = sum(1 for i in raw[:n] if i == ext_vocab.T5_UNK_ID)
