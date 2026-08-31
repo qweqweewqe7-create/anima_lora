@@ -25,7 +25,7 @@ here duplicates measured tables — those stay with the reports and
 | Builder | Output | Notes |
 |---|---|---|
 | `wikidata_lexicon.py` | EN↔JA/KO/ZH proper-noun lexicon (CC0) | ≥2-token + `P31/P279* Q95074` guard; 0/89 artists |
-| `tag_glossary.py` (`--mt` GPU; `--reselect` CPU) | `assets/tag_glossary_ja.json` + `tag_glossary_review.md` (400 sourced rows) | 14,678/14,753 tags, 99.86% coverage; `.pre_item2.json` kept |
+| `tag_glossary.py` (`--mt` GPU; `--reselect` CPU) | `assets/tag_glossary_ja.json` + `tag_glossary_review.md` (400 sourced rows) | 14,678/14,753 tags, 99.86% coverage; `.pre_item2.json` snapshot since pruned |
 | `tag_overrides.json` | hand-pinned wordings, beat every source on rebuild | review signed off 2026-08-30 — no new overrides, glossary/pairs/`cache_synth2` unchanged |
 | `tag_pairs.py` | fill-only from `p1atdev/danbooru-ja-tag-pair-20241015`; arbiter candidates | `via: tagpair` 0.6 / `tagpair_verified` 1.0 |
 | `build_pairs.py` (multi-root, `--commentary`, `names` register) | `post_image_dataset/cjk_distill/{pairs,pairs_synth}.jsonl` + `coverage.json` + `spotcheck.md` | 45,230 base pairs; dedup by artist-relative path |
