@@ -74,3 +74,20 @@ widening) **before K2**, folded into K1.5.
 the 똑같은 옷 decision → `tag_overrides_ko.json` → `--reselect` + pairs
 rebuild (CPU, minutes). Then **K2**: stage `cache_ko`, joint retrain
 `synthjako` warm-started from synthja_v4, KO 25–30% sampling.
+
+## Review round 2 (K1.5, applied 2026-08-31)
+
+User audit over the review file + spotcheck: 16 semantic overrides (홍조,
+카메라 응시, 리본, 점, 하이레그, 섹스 후, 상납 자세, 엎드린 뒤치기, 커플룩,
+질내사정, 노모, 애액, 옷 입은 여성과 나체의 남성, 가슴 노출, 고무줄에 살이
+눌린, 뒤치기) + all 40 `* thighhighs` variants moved off MT's 니하이 onto the
+니삭스 exemplar (색깔 있는것들도 수정). `tag_overrides_ko.json` now 71 entries
+= 9.6% of occurrences. Applied via `--reselect` (prior banked as
+`tag_glossary_ko.pre_round2.json`) + pairs/synth rebuild — same 62,494-pair
+corpus, no GPU.
+
+The t5 똑같은 옷 decision: **커플룩** on both sides — glossary override *and*
+the `ko_eval_prompts.json` t5 wording (the corpus can only visit the register
+it trains). Gate now fully green: every t*/q*/n*/c* prompt at v=0/v<5 = 0;
+remaining misses are the expected s* prose rows + q3 라고 (untrained
+registers, same as JA v1).
