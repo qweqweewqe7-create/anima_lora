@@ -58,10 +58,10 @@ fixes the yardstick.
 
 **DONE 2026-08-31** → [`reports/0831_ko_phase_k1.md`](reports/0831_ko_phase_k1.md):
 62,494 pairs (tags/tags_alt/names 50,190 + names_synth_ko 12,304), glossary
-99.66% occ coverage, gate green on every t*/q*/n*/c* prompt except t5's 똑
-(K1.5 decision). Plan deviation that helped: the KR KB
-(`models/danbooru_tags_classified.csv`) is the KO tag-pair analog — 83.6% of
-general types — wired as `src: "kb"`. K2 blocked on K1.5.
+99.66% occ coverage, gate green on every t*/q*/n*/c* prompt except t5's 똑 —
+resolved in K1.5 round 2 (커플룩 on both sides). Plan deviation that helped:
+the KR KB (`models/danbooru_tags_classified.csv`) is the KO tag-pair analog —
+83.6% of general types — wired as `src: "kb"`.
 
 Mirror the JA builders; do not fork the pipeline, parameterise it. Every
 step writes `assets/*_ko.*` next to the JA asset.
@@ -114,9 +114,14 @@ step writes `assets/*_ko.*` next to the JA asset.
 
 ## Phase K1.5 — user inspection of the corpus (human; added 2026-08-31)
 
-**PENDING — the current blocker.** Artifacts ready: `tag_glossary_review_ko.md`
-(top-200), `spotcheck_ko.md`, the gate table + known-issue list in
-`reports/0831_ko_phase_k1.md` §Known review classes.
+**DONE 2026-08-31** — two rounds. Round 1: exemplars, rating band, 14
+overrides. Round 2 (user audit over the review file + spotcheck): 16 semantic
+overrides + all 40 `* thighhighs` variants onto the 니삭스 exemplar —
+`tag_overrides_ko.json` now 71 entries / 9.6% of occurrences; the t5
+똑같은 옷 decision landed as **커플룩** on both the glossary and the eval
+prompt. `--reselect` + pairs/synth rebuild (CPU); gate fully green on every
+t*/q*/n*/c* prompt (s*/q3 prose rows expected-open as in JA). Details in
+[`reports/0831_ko_phase_k2.md`](reports/0831_ko_phase_k2.md) §K1.5.
 
 After K1 completes, before any GPU is spent on K2 staging/training, the user
 inspects the corpus and signs off:
@@ -134,6 +139,18 @@ Fixes loop back cheaply while nothing is trained yet: `tag_overrides_ko.json`
 (The post-train render-grid eyeball stays where it always was — K3's grids.)
 
 ## Phase K2 — cache + joint retrain (GPU)
+
+**DONE 2026-08-31** → [`reports/0831_ko_phase_k2.md`](reports/0831_ko_phase_k2.md):
+`cache_ko` staged separately (61,994+500 pairs, 44 GB) exactly per the
+preferred shape below — `distill --cache_dir` grew the comma-list reader
+(`CachedPairs` concatenates staged dirs; JA never re-encoded). Joint retrain
+`2c-synthjako-v1` → `output/ckpt/cjk_vocab_pack_synthjako`: v4 recipe +
+`--init_pack cjk_vocab_pack_synthja_v4`, KO registers sampled 0.55 → ≈28% of
+a batch, `--eval_limit 1000` (holdout concat is JA-then-KO; the first-N eval
+slice would otherwise score JA only), 45 GPU-min. Holdout: tags_ko attn
+0.46–0.47 (0.061 zero-shot at K0), names_ko 0.955; JA registers near the v4
+band (names recovery 0.879→0.780 is the watch item, partly sample
+composition).
 
 **Cache budget.** `cache_synth2` is ~171 GB for 262,852 pairs (~0.66 MB/pair).
 After the 2026-08-30 clean-up (ConceptEdit tar, `easycontrol/{phash_edit,
@@ -169,7 +186,7 @@ gate below.
 
 Ordered; the first two are kill criteria for the *joint* pack.
 
-1. **G1** EN bit-exact — unit test, unchanged.
+1. **G1** EN bit-exact — unit test, unchanged. **GREEN 2026-08-31.**
 2. **JA non-regression** — the 2c grid `ja_ext` vs the `synthja` render at
    the same seed: every t*/q*/m* prompt visually unchanged; per-register
    `cos_student_vs_en_attn` within the `synthja` band on the JA holdout.
@@ -177,12 +194,23 @@ Ordered; the first two are kill criteria for the *joint* pack.
    sweep (0.1 / 0.2); if JA still moves, KO ships as a separate pack behind a
    language switch and the plan records that `global` does not share across
    scripts.*
+   **Metric level GREEN 2026-08-31** — both same-seed grids
+   (`20260831-1827/-1843`) within ±0.013 of the v4 twins, discrimination
+   unchanged; `global` does share across scripts. **Render eyeball pending
+   (user)** — check n1/n2 against the names-recovery dip.
 3. **KO recovery** — `ko_ext ≈ ko_t5en` on the rendered grid for t*/c*
    prompts; per-register readout at the JA `tags` band (teacher ceiling
    0.823 is the same teacher). `n*` full-KO names are **expected fails**
    (same as JA v1, plan.md Phase 5b territory).
+   **Metric level 2026-08-31**: holdout attn tags_ko 0.46–0.47, just under
+   the JA tags band (0.52–0.56); grid (`20260831-1848`) `ko_ext` off the K0
+   floor on every t* prompt (flat cos is not the recovery instrument — the
+   shipped JA pack sits at the same flat level). **Render eyeball pending
+   (user).**
 4. **Coverage** — no KO tag token under floor; far-disc ≤ 0.2.
-5. **Register drift** — no D7 analog exists for KO. Substitute: hold out 300
+   **GREEN 2026-08-31** (K1.5 gate table; disc_far 0.087 train / 0.144 grid).
+5. **Register drift** — **OWED before ship.** No D7 analog exists for KO.
+   Substitute: hold out 300
    *hand-typed* Arca-Live-style KO prompts (not composed from the glossary)
    and report their readout vs the composed holdout; a gap > the JA D7 gap is
    the signal. Owed before ship, cheap (CPU + one eval job).
