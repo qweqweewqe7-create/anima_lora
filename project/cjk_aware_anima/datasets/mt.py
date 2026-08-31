@@ -323,13 +323,13 @@ TAG_BACKGROUND_KO = (
 # Kept disjoint from IDIOM_PROBE so a future KO probe port stays held-out.
 TAG_FEWSHOT_KO: list[tuple[str, str]] = [
     ("1girl", "소녀 1명"),
-    ("solo", "혼자"),
+    ("solo", "솔로"),
     ("blonde hair", "금발"),
-    ("short hair", "짧은 머리"),
+    ("short hair", "단발"),
     ("hair ornament", "머리 장식"),
     ("open mouth", "입 벌림"),
     ("bare shoulders", "어깨 노출"),
-    ("thighhighs", "니하이"),
+    ("thighhighs", "니삭스"),
     ("school uniform", "교복"),
     ("simple background", "단순한 배경"),
     ("from behind", "뒤에서"),

@@ -87,11 +87,12 @@ RATING_JA = {
 
 HANGUL = re.compile(r"[가-힣ㄱ-ㅎㅏ-ㅣ]")
 
+# user-reviewed 2026-08-31 — Arca Live register (후방주의 = community NSFW slang)
 RATING_KO = {
-    "safe": "전체 이용가",
-    "sensitive": "센시티브",
-    "nsfw": "성인용",
-    "explicit": "노골적인 성묘사",
+    "safe": "건전",
+    "sensitive": "약후방",
+    "nsfw": "후방주의",
+    "explicit": "성인용",
 }
 
 RATING = {"ja": RATING_JA, "ko": RATING_KO}
