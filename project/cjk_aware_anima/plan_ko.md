@@ -137,6 +137,21 @@ JA rows too, and two packs cannot be loaded at once. That same sharing is the
 risk in the other direction (KO training drifting JA), which is the first
 gate below.
 
+## Phase K2.5 — user inspection (human; added 2026-08-31 at user request)
+
+After the K2 retrain, before any K3 verdict is called, the user inspects:
+
+1. **Rendered grid eyeball** — the 2c-style grid on `ko_eval_prompts.json`
+   (`en` / `ko_t5en` / `ko_ext`) plus the mixed set; user judges t*/c*/n*
+   rows directly, not just the metrics.
+2. **Corpus spot-check** — `spotcheck_ko.md` (~200 sampled pairs, EN vs KO).
+3. **Glossary review round 2** — `tag_glossary_review_ko.md` residue that
+   round 1 (2026-08-31: exemplars, rating band, 14 overrides) did not cover.
+
+Wording fixes found here loop back cheaply: `tag_overrides_ko.json` →
+`--reselect` (CPU) → re-cache only rows whose wording changed → one short
+retrain (~20-30 GPU-min). K3's kill gates run only after this sign-off.
+
 ## Phase K3 — gates
 
 Ordered; the first two are kill criteria for the *joint* pack.
