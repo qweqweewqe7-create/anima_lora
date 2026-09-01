@@ -160,6 +160,46 @@ on disk under their labels), sidecar + auto-discovery untouched,
    the docs regardless; if the pack ships to HF, note the source the way
    the JA tag-pair set is noted.
 
+## Open question O1 — what does the KO corpus achieve *alone*? (user, 2026-09-01)
+
+Every pack to date is joint: warm-started from `synthja_v4`, KO ≈ 28–31 % of
+a batch beside the JA mass. So the measured KO numbers are KO-corpus quality
+**times** JA scaffolding, and the two have never been separated. Three
+things a KO-only arm would tell us that nothing else can:
+
+1. **Does the JA mass help or tax KO?** If KO-only lands *above* the joint
+   pack's tags_ko band, joint training is costing KO capacity (the shared
+   `param=global` low-rank is being spent on JA); if *below*, the
+   cross-script sharing (`global` does share across scripts — gate 2, v1)
+   is doing real transfer work and the joint recipe is vindicated.
+2. **Corpus attribution**: KO-only-from-scratch is the cleanest possible
+   readout of the r5+desc corpus itself — no warm-start inheritance, no JA
+   gradient interference.
+3. **The fallback path's cost**: plan_ko gate 2's fail-path ("KO ships as a
+   separate pack behind a language switch") has never been priced. If KO
+   ever needs to escape the joint pack, this arm is its feasibility study.
+
+Design (diagnostic arm, ~45 GPU-min, caches already staged):
+
+- `--cache_dir cache_ko,cache_desc_ko`, `--train_registers
+  tags_ko,tags_alt_ko,names_ko,names_synth_ko,desc_ko`, **no `--init_pack`**
+  (from-scratch is the point; a `synthja_v4`-warm-started KO-only variant is
+  a second, cheaper sub-arm if the first result is interesting), same
+  recipe otherwise, `--out output/ckpt/cjk_vocab_pack_ko_only`,
+  label `2c-ko-only`.
+- Readout: holdout tags_ko/names_ko attn vs the joint pack's 0.524/0.936;
+  KO recovery grid same-seed vs `20260901-1111`. **G1 EN bit-exact and the
+  JA grids are NOT gates here** — this pack is expected to move JA rows and
+  must never ship into the joint slot; it is a measurement, not a ship
+  candidate.
+- Interpretation guard: `ko_only > joint` on tags_ko does NOT by itself
+  justify shipping a separate pack — the language-switch UX cost and the
+  two-packs-can't-coexist constraint stand; it would instead argue for
+  re-balancing the joint sampling (KO weight sweep upward) at ko3.
+
+Status: **designed, not yet run** — queue when a GPU slot is free; it
+blocks nothing in R4/R5.
+
 ## Not planned
 
 - Encoder/vocab/tokenizer changes, jamo, new adapter arms — unchanged from
