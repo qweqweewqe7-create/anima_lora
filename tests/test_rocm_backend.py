@@ -207,6 +207,21 @@ def test_flagless_sync_resolves_cuda_torch_on_windows():
     ]
     assert flash_win, "the default export must ship the Windows flash-attn wheel"
 
+    # Preserve the complete non-ROCm resolution from main@aca37c93, across all
+    # required platforms. Source URLs may move between equivalent indexes, but
+    # every emitted requirement/version/marker must remain unchanged.
+    actual = [
+        line
+        for line in result.stdout.splitlines()
+        if line and not line[0].isspace() and not line.startswith("#")
+    ]
+    expected = (
+        (ROOT / "tests" / "fixtures" / "default_requirements.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
+    assert actual == expected
+
 
 def test_rocm_group_resolves_pytorch_213_rocm10():
     """The ROCm group must resolve the stable Windows ROCm 10 / torch 2.13 stack."""
