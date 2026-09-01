@@ -55,6 +55,10 @@ TRUST_POLICIES = {
         # `tagpair`. Replaces `mt_unverified` wording for 97% of the KO tail
         # (reports/0901_ko_phase_k3.md).
         "kb_unverified": 0.6,
+        # desc_ko full-width spans (EN wiki sentence ↔ KB KO description):
+        # human community translation, but loosely aligned (the KO side is a
+        # summary, sometimes a sentence longer) — mt_verified class.
+        "kb_desc": 0.8,
         "mt_unverified": 0.3,
         "unresolved": 0.0,
         "unmapped": 0.0,

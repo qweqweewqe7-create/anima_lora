@@ -7,10 +7,13 @@ yields domain prose pairs — tag vocabulary inside real Korean sentences
 (particles, spacing), the register the composed tag-bag corpus never
 exercises and the s* prose prompts measure at floor.
 
-Rows are span-less like the D2 ``commentary`` register (the span loss's
-whole-sequence fallback path); ``via: kb_desc``. Restricted to tags the
-caption corpus actually uses (the glossary tag list), so visits land on
-rows the eval prompts can reach.
+Each pair carries ONE full-width span (whole EN sentence ↔ whole KO
+description, ``via: kb_desc``): under the span loss a span-less row
+contributes zero gradient — the D2 ``commentary`` rows are inert for exactly
+that reason (and a pure span-less eval batch raises), so the single
+full-width span is what makes this register supervision at all. Restricted
+to tags the caption corpus actually uses (the glossary tag list), so visits
+land on rows the eval prompts can reach.
 
 CPU-only. Output: ``post_image_dataset/cjk_distill/pairs_desc_ko.jsonl``.
 """
@@ -121,6 +124,9 @@ def main() -> None:
                         "ja": ko,
                         "via": "kb_desc",
                         "n_missing": 0,
+                        "spans": [
+                            {"en": en_side[tag], "ja": ko, "via": "kb_desc", "f1": 0.0}
+                        ],
                     },
                     ensure_ascii=False,
                 )

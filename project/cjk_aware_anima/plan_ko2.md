@@ -52,9 +52,15 @@ list.
 ## Phase R2 — `desc_ko` staging decisions
 
 Built and on disk: `post_image_dataset/cjk_distill/pairs_desc_ko.jsonl` —
-11,631 pairs, EN wiki first sentence ↔ KB KO description, span-less
-(`via: kb_desc`, rides the D2-commentary whole-sequence path; no loss-side
-change). Two knobs fixed before staging:
+11,631 pairs, EN wiki first sentence ↔ KB KO description, each carrying
+**one full-width span** (`via: kb_desc`, trust 0.8). *Correction 2026-09-01:
+the original span-less design was inert — under the span loss a row without
+spans contributes zero gradient (the D2 commentary rows are dead weight for
+exactly this reason, which is plausibly the mechanism behind the
+JESC/STAIR "NO under span loss" verdict), and a pure span-less eval batch
+raises (`losses.py:125` caught it on the first chain run). The full-width
+span is what makes the register supervision at all.* Two knobs fixed before
+staging:
 
 - **Looseness**: the KO side keeps its full description and is sometimes one
   sentence longer than the EN (`1girl`: KO adds the dolls/posters
