@@ -236,7 +236,40 @@ not a bulk ship; KO side keeps its full description (sometimes one sentence
 longer than EN — same looseness precedent as commentary rows; a
 first-sentence-truncation knob is the fallback if the loose rows hurt).
 
-### Proposed next loop (two arms, clean attribution)
+## ko2 verdict (2026-09-01 midday — `2c-synthjako2`, single-arm run)
+
+Executed per the revised plan_ko2 R3 (user: replace, don't compare). Chain
+`20260901-0954*` after one crash-and-fix (span-less desc rows are inert under
+span loss — each desc pair now carries a full-width span, `kb_desc` 0.8).
+
+**Headline: the tags_ko band gap is closed.** Holdout student attn
+tags_ko **0.370 → 0.524**, tags_alt_ko **0.384 → 0.532** — both inside the
+JA tags band (0.52–0.56). JA registers unchanged-or-up (tags 0.523→0.538,
+names 0.894→0.896); disc_far 0.068; span loss 0.101→0.089.
+
+| gate | result |
+|---|---|
+| G2 JA non-regression | **GREEN, cleaner than v2** — main grid worst delta +0.015 @ n2 (positive = toward EN; n2 is the known per-seed flipper), mixed grid fully in band (worst +0.012), discrimination unchanged. The v2 round's negative q1/q2 deltas are gone |
+| tags_ko band | **GREEN** (0.524/0.532; slice-redraw caveat noted, magnitude far beyond it) |
+| 흑백 binding (c3) | **FIXED** — ko_ext now renders true monochrome (v2 gave full color) |
+| 쌍둥이 (t5) | still weak: two girls + holding hands + spring bind, twin-ness does not; render quality rough |
+| s\* prose (desc_ko's gate) | **NOT moved** — s1 renders the same sunny girl-by-a-house scene as v2 (비/밤/우산/횡단보도 all unbound); flat cos ≈ v2. desc_ko trains (holdout attn 0.991 — whole-sentence spans are an easy target) but does not transfer to prose renders |
+| names_synth_ko | 0.674→0.622 watch (holdout redraw caveat) |
+
+**desc_ko attribution is indeterminate by design**: the single-arm run can't
+say whether it contributed to the tags_ko jump (vocabulary-in-context
+visits) or was inert freight — the r5 wording alone may explain everything.
+Plan R4-4's retire clause needs the lazy Arm A (r5-only, ~45 GPU-min) to
+fire; alternatives: run it before ship, or ship `synthjako2` as-is (desc_ko
+demonstrably costs nothing — JA clean, KO up) and settle desc_ko's fate at
+the ko3/post-ship round.
+
+Remaining before ship: user eyeball of the ko2 grids
+(`20260901-1111-ko2-recovery-grid`, `20260901-104x-*ja-grid*`), the G5′
+pre-ship smoke, and the shipped-slot rename (`cjk_vocab_pack_synthjako2` →
+shipped name; v2 stays on disk).
+
+### Proposed next loop (two arms, clean attribution) — SUPERSEDED by the single-arm run above
 
 1. User reviews r5 section A (117 rows, pick MT-vs-KB) + spot-checks B.
 2. **Arm A** — r5 glossary only: `choose()` rule + re-arbitrate → reselect →
