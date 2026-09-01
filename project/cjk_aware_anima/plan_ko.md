@@ -1,5 +1,9 @@
 # CJK-aware Anima — Korean extension plan
 
+> **Continued in [`plan_ko2.md`](plan_ko2.md)** (2026-09-01): the
+> corpus-enhanced iteration — r5 KB re-arbitration, the `desc_ko` prose
+> register, and the re-scoped G5. This file stays the record of K0–K3.
+
 *Appends `ko` to the shipped v1 line ([`plan.md`](plan.md) Phase 3). Drafted
 2026-08-30 from the on-disk state; nothing below is measured yet unless it
 cites [`findings.md`](findings.md). Read that file and `datasets/README.md`
@@ -135,9 +139,13 @@ including a round-4 pass of user vetoes and the MT-eaten emoticon tags —
 `:t`/`:s`/`:i` all read `:소녀 1명`), collision groups pending **93 → 3**,
 gate re-run unchanged and green. Merges
 the user keeps (bow/ribbon) live in `collisions_accepted_ko.json` so they are
-not re-raised each round. **Owed:** 65.8% of pairs changed student text and the
+not re-raised each round. ~~**Owed:** 65.8% of pairs changed student text and the
 stager is positionally keyed, so `cache_ko` must be re-staged in full and
-`synthjako` retrained before K3 speaks about the shipped wording.
+`synthjako` retrained before K3 speaks about the shipped wording.~~
+**Cleared same evening** → [`reports/0901_ko_phase_k3.md`](reports/0901_ko_phase_k3.md):
+pairs rebuilt, `cache_ko` fully re-staged, `2c-synthjako-v2` retrained
+(21:04–21:58); the on-disk `cjk_vocab_pack_synthjako` is the v2 and matches
+the committed wording.
 
 After K1 completes, before any GPU is spent on K2 staging/training, the user
 inspects the corpus and signs off:
@@ -167,6 +175,13 @@ slice would otherwise score JA only), 45 GPU-min. Holdout: tags_ko attn
 0.46–0.47 (0.061 zero-shot at K0), names_ko 0.955; JA registers near the v4
 band (names recovery 0.879→0.780 is the watch item, partly sample
 composition).
+
+**v2 retrain 2026-08-31 (post-r3/r4 wording)** →
+[`reports/0901_ko_phase_k3.md`](reports/0901_ko_phase_k3.md): same recipe on
+the rebuilt corpus (`2c-synthjako-v2`, 289,209 pairs). JA holdout unchanged
+(names 0.894 stable — the recovery-dip watch did not worsen); tags_ko attn
+0.463→0.370 under the reworded holdout is the new **watch item** (grid shows
+no regression; re-read after G2/G5).
 
 **Cache budget.** `cache_synth2` is ~171 GB for 262,852 pairs (~0.66 MB/pair).
 After the 2026-08-30 clean-up (ConceptEdit tar, `easycontrol/{phash_edit,
@@ -210,19 +225,31 @@ Ordered; the first two are kill criteria for the *joint* pack.
    sweep (0.1 / 0.2); if JA still moves, KO ships as a separate pack behind a
    language switch and the plan records that `global` does not share across
    scripts.*
-   **Metric level GREEN 2026-08-31** — both same-seed grids
+   **Metric level GREEN 2026-08-31 for v1** — both same-seed grids
    (`20260831-1827/-1843`) within ±0.013 of the v4 twins, discrimination
-   unchanged; `global` does share across scripts. **Render eyeball pending
-   (user)** — check n1/n2 against the names-recovery dip.
+   unchanged; `global` does share across scripts. **Shipped v2 pack: metric
+   level GREEN 2026-09-01** (the 22:01 grid jobs died with the daemon; re-run
+   as `20260901-0809/-0825`): mixed grid fully in band, main grid in band on
+   every t*/n*/m* prompt with two marginal q* flat-cos deltas (q1 −0.015 /
+   q2 −0.016), discrimination unchanged. **Render level GREEN 2026-09-01** —
+   eyeball + 3-seed probe on the flagged prompts (`n2q2-probe-*`): the
+   seed-42 n2/q2 anomalies are chaos flips present in v4 at other seeds, not
+   v2 drift; core tags stable v1→v2. See `reports/0901_ko_phase_k3.md`.
 3. **KO recovery** — `ko_ext ≈ ko_t5en` on the rendered grid for t*/c*
    prompts; per-register readout at the JA `tags` band (teacher ceiling
    0.823 is the same teacher). `n*` full-KO names are **expected fails**
    (same as JA v1, plan.md Phase 5b territory).
-   **Metric level 2026-08-31**: holdout attn tags_ko 0.46–0.47, just under
-   the JA tags band (0.52–0.56); grid (`20260831-1848`) `ko_ext` off the K0
-   floor on every t* prompt (flat cos is not the recovery instrument — the
-   shipped JA pack sits at the same flat level). **Render eyeball pending
-   (user).**
+   **Metric level 2026-08-31**: holdout attn tags_ko 0.46–0.47 (v1) / 0.370
+   (v2, reworded holdout — watch item), under the JA tags band (0.52–0.56);
+   v2 grid (`20260831-2201-ko-k3-recovery-grid-v2`) `ko_ext` ≈ v1 on every
+   prompt, off the K0 floor on every t* (flat cos is not the recovery
+   instrument — the shipped JA pack sits at the same flat level).
+   **GREEN 2026-09-01 — render eyeball signed off (user) on the v2 grid.**
+   Independent render read (Claude, same day, in `reports/0901_ko_phase_k3.md`):
+   recovery real but uneven at the mid-frequency tier — KO-specific binding
+   misses 흑백/그레이스케일 (JA binds monochrome fine) and 쌍둥이 (weak);
+   t3's armor miss is shared with JA (ext ceiling, not KO). These go to the
+   §5a widening / `mt_unverified`-tail list, alongside the G5 result.
 4. **Coverage** — no KO tag token under floor; far-disc ≤ 0.2.
    **GREEN 2026-08-31** (K1.5 gate table; disc_far 0.087 train / 0.144 grid).
 5. **Register drift** — **OWED before ship.** No D7 analog exists for KO.
