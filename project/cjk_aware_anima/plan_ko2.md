@@ -197,8 +197,22 @@ Design (diagnostic arm, ~45 GPU-min, caches already staged):
   two-packs-can't-coexist constraint stand; it would instead argue for
   re-balancing the joint sampling (KO weight sweep upward) at ko3.
 
-Status: **designed, not yet run** — queue when a GPU slot is free; it
-blocks nothing in R4/R5.
+Status: **RUN 2026-09-01 midday (`2c-ko-only`) — the JA mass helps, joint
+vindicated.** Holdout tags_ko 0.418 / tags_alt_ko 0.410 vs the joint pack's
+0.524/0.532 — KO-only-from-scratch lands well below the JA band, *despite*
+receiving ~3.3× more KO gradient (5.2 epochs vs the joint's ~1.6 at 30%
+batch share), so the gap is transfer, not data volume. names_ko is
+scaffolding-indifferent (0.945 ≈ 0.936); names_synth_ko 0.683 > joint's
+0.622 (the joint dip reads as JA-competition pressure — noted, no action).
+Renders agree: more broken rows than joint (q1/q3/s4/t4), 흑백 still binds
+(r5's doing, not JA's). Separate-pack fallback is now priced: unattractive.
+Per the interpretation guard, no ko3 rebalance case either — that needed
+`ko_only > joint`. Envelope `bench/cjk_distill/results/20260901-1219-2c-ko-only`,
+grid `bench/cjk_adapter/results/20260901-1258-ko-only-recovery-grid`
+(+`contact_joint_vs_ko_only.png`). The warm-started sub-arm (`2c-ko-warm`)
+was queued then withdrawn (user call: judge on the grid first) — command
+shape is in the session log if the sequential-vs-cotraining decomposition
+is ever wanted.
 
 ## Not planned
 
