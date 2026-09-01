@@ -109,6 +109,69 @@ def test_base_rows_are_not_trainable_leaves():
 
 
 # ---------------------------------------------------------------------------
+# Minted word rows — greedy longest-match + the eojeol boundary guard
+# ---------------------------------------------------------------------------
+
+
+def _word_encoder(word_map):
+    """Encoder with a stubbed char path: 1 UNK per char, per-char offsets.
+
+    The word pass is pure string logic layered over ``_encode_cjk``; stubbing
+    the char path keeps the test tokenizer- and asset-free.
+    """
+    from bench.cjk_adapter import ext_vocab
+
+    enc = ext_vocab.HybridT5Encoder(
+        t5_tok=None, qwen_tok=None, qwen_map={}, char_map={}, word_map=word_map
+    )
+    enc._encode_cjk = lambda span: (
+        [T5_TABLE_SIZE - 1] * len(span),
+        [(k, k + 1) for k in range(len(span))],
+    )
+    return enc
+
+
+def _words_hit(enc, span):
+    ids, offs = enc._encode_cjk_words(span)
+    return [
+        span[a:b]
+        for i, (a, b) in zip(ids, offs)
+        if i >= T5_TABLE_SIZE + min(enc.word_map.values()) and span[a:b] in enc.word_map
+    ]
+
+
+def test_minted_word_matches_at_eojeol_boundaries_only():
+    enc = _word_encoder({"레이무": 100, "하쿠레이": 101})
+    assert _words_hit(enc, "레이무") == ["레이무"]  # BOS
+    assert _words_hit(enc, "레이무가 있다") == ["레이무"]  # particle after
+    assert _words_hit(enc, "마을 레이무") == ["레이무"]  # after space
+    assert _words_hit(enc, "하쿠레이 레이무") == ["하쿠레이", "레이무"]
+    assert _words_hit(enc, "아레이무") == []  # mid-eojeol: no match
+    assert _words_hit(enc, "옛하쿠레이") == []
+
+
+def test_minted_word_offsets_and_slot_counts():
+    enc = _word_encoder({"레이무": 100})
+    span = "마을 레이무가"
+    ids, offs = enc._encode_cjk_words(span)
+    assert len(ids) == len(offs)
+    k = ids.index(T5_TABLE_SIZE + 100)
+    assert span[offs[k][0] : offs[k][1]] == "레이무"  # one slot, exact span
+    # surrounding chars still flow through the char path with local offsets
+    assert all(span[a:b] for a, b in offs)
+
+
+def test_word_map_absent_is_bit_identical_to_the_char_path():
+    from bench.cjk_adapter import ext_vocab
+
+    enc_plain = _word_encoder(None)
+    enc_plain.word_map = None
+    ids, offs = enc_plain._encode_cjk_words("아무거나 레이무")
+    assert ids == [T5_TABLE_SIZE - 1] * len("아무거나 레이무")
+    assert ext_vocab.is_hangul_char("가") and not ext_vocab.is_hangul_char("愛")
+
+
+# ---------------------------------------------------------------------------
 # Parameterization
 # ---------------------------------------------------------------------------
 

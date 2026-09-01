@@ -58,6 +58,35 @@ widen pair coverage for minted *loanword tags* (그레이스케일 has 1 pair �
 below any floor). Re-run the n1/n2 probe; gate: n1 moves or the name tier is
 declared data-bound at a measured floor.
 
+*RUN 2026-09-01 (`2c-mint-m1`) — data works where the target is an
+attribute/style; identity is blocked by drift, not data.* Eojeol guard landed
+first (`is_hangul_char` + boundary check in `_encode_cjk_words`, unit-tested);
+그레이스케일 minted as an 11th row; corpus densified via `synth_names --only`
+(레이무 27→203 pairs) and the new `synth_tags --lang ko --rows-from`
+(그레이스케일 1→301, 커플룩 2→301, 무녀복 10→311; register `tags_synth_ko`);
+`mint_corpus.py` commits the smoke's filter rule (2,348 pairs; the spaced wiki
+label 동방 프로젝트 respaced to the eval surface 동방프로젝트 in synth pairs
+only). Readouts (envelope `20260901-1507-2c-mint-m1`, grids `1518/1529/1531`):
+
+- Embedding: F3 bar holds at scale — trained 0.227 vs pre-mint composition
+  0.321 (1,326 pairs); per-surface: reimu family 0.202 vs 0.227, tag tier
+  0.741→0.218. Every minted row learns.
+- Structure: EN + all 16 non-target KO prompts **pixel-identical** to the
+  shipped synthjako2 grid; diffs are exactly the 4 minted-target prompts.
+- Renders: **c3 그레이스케일 binds** (monochrome 90s style — the 1→301
+  densification did it); t5 recovers *human* twins (robot overshoot gone),
+  matching semi-binds (color-swapped outfits). **n1 does not land identity**
+  at 203 pairs and — the load-bearing observation — ko_ext renders drift
+  off-manifold (sketch/chibi/doodle styles) across seeds 42/7/1234 while the
+  EN arm renders canonical Reimu at the same seeds. n2's smoke win also
+  destabilizes across seeds (blonde sketch / chibi sticker).
+
+Verdict: the n1 miss cannot be declared data-bound — **drift confounds it**.
+The smoke's t5-only M2 diagnosis generalizes to the name tier: pure span
+focus (background weight 0) lets the 11 rows push any render they touch off
+the manifold. M2 is therefore the blocking phase, and the name-tier floor
+question is re-judged after an anti-drift arm on this densified corpus.
+
 **M2 — anti-drift (the t5 fix).** Candidates, cheapest first: (a) mixed
 focus — background spans at small weight (0.05–0.1) instead of 0, so the
 surrounding scene anchors the row on-manifold; (b) init-anchor penalty
@@ -124,5 +153,7 @@ audit first.
 - `bench/cjk_adapter/measure_minted_span_baseline.py` — the three-condition
   span-loss comparison.
 
-Note the eojeol-boundary guard (risk 1) is NOT yet implemented — M1 must not
-scale the word list before it lands.
+~~Note the eojeol-boundary guard (risk 1) is NOT yet implemented — M1 must not
+scale the word list before it lands.~~ Landed 2026-09-01 with M1
+(`ext_vocab.is_hangul_char`, boundary check in `_encode_cjk_words`,
+`tests/test_cjk_distill.py` word-match tests).

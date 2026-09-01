@@ -52,6 +52,11 @@ def is_cjk_char(ch: str) -> bool:
     return any(lo <= o <= hi for lo, hi in _CJK_RANGES)
 
 
+def is_hangul_char(ch: str) -> bool:
+    o = ord(ch)
+    return 0xAC00 <= o <= 0xD7AF or 0x1100 <= o <= 0x11FF or 0x3130 <= o <= 0x318F
+
+
 def segment_runs(text: str) -> list[tuple[str, str]]:
     """Split text into ("t5"|"cjk", span) runs.
 
@@ -286,6 +291,14 @@ class HybridT5Encoder:
         Minted word rows (``mapping["word"]``) take one slot for a surface the
         base vocab would spell out char-by-char; everything between matches
         goes through the ordinary Qwen path unchanged.
+
+        Eojeol boundary guard (plan_ko3 risk 1): a hangul surface may only
+        match where an eojeol starts — BOS, or after a non-hangul char
+        (space/punct/other script). Particles attach at the *end* of an
+        eojeol, so a boundary-anchored prefix match still fires on 레이무가;
+        what the guard kills is a surface waking up mid-word (…아레이무…).
+        JA has no spaces — minting JA words is deferred until it gets its own
+        boundary design (plan_ko3 M3).
         """
         if not self.word_map:
             return self._encode_cjk(span)
@@ -301,6 +314,9 @@ class HybridT5Encoder:
                 offs.extend((rest_start + a, rest_start + b) for a, b in r_offs)
 
         while i < len(span):
+            if is_hangul_char(span[i]) and i > 0 and is_hangul_char(span[i - 1]):
+                i += 1
+                continue
             hit = next(
                 (
                     span[i : i + n]

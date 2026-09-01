@@ -9,6 +9,7 @@ reference: was 0.189 an improvement over composition, or a regression?
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 
@@ -40,20 +41,29 @@ MINTED = {
 }
 BASE = REPO / "post_image_dataset" / "cjk_distill"
 
+# label=cache_dir[,cache_dir]:pack_prefix — the smoke's three conditions.
+SMOKE_ARMS = [
+    "pre-mint (spelled-out, joint pack)="
+    f"{BASE / 'cache_ko'},{BASE / 'cache_desc_ko'}:"
+    f"{REPO / 'output' / 'ckpt' / 'cjk_vocab_pack_synthjako2'}",
+    f"mint init (pooled)={BASE / 'cache_mint_smoke'}:{HERE / 'assets' / 'ext_embed_mint'}",
+    f"mint trained (smoke2)={BASE / 'cache_mint_smoke'}:"
+    f"{REPO / 'output' / 'ckpt' / 'cjk_vocab_pack_mint_smoke2'}",
+]
 
-def wanted_spans() -> dict[str, list[int]]:
+
+def wanted_spans(corpus: Path, minted: set[str]) -> dict[str, list[int]]:
     """pair id -> indices of spans whose ja side is a minted word."""
     out: dict[str, list[int]] = {}
-    for f in ("pairs_mint_smoke.jsonl",):
-        for line in open(BASE / f, encoding="utf-8"):
-            r = json.loads(line)
-            idxs = [
-                k
-                for k, s in enumerate(r.get("spans") or [])
-                if s.get("ja") in MINTED or s.get("ja", "").strip() in MINTED
-            ]
-            if idxs:
-                out[r["id"]] = idxs
+    for line in open(corpus, encoding="utf-8"):
+        r = json.loads(line)
+        idxs = [
+            k
+            for k, s in enumerate(r.get("spans") or [])
+            if s.get("ja") in minted or s.get("ja", "").strip() in minted
+        ]
+        if idxs:
+            out[r["id"]] = idxs
     return out
 
 
@@ -97,10 +107,36 @@ def masked_span_loss(cached, ids, adapter, device, dtype, span_sel, label):
 
 
 def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--corpus",
+        type=Path,
+        default=BASE / "pairs_mint_smoke.jsonl",
+        help="pairs jsonl whose minted-word spans define the measured set",
+    )
+    ap.add_argument(
+        "--mapping",
+        type=Path,
+        default=None,
+        help="mint mapping json — minted surfaces come from its word map "
+        "(default: the hardcoded smoke set)",
+    )
+    ap.add_argument(
+        "--arm",
+        action="append",
+        default=None,
+        metavar="LABEL=CACHE[,CACHE]:PACK",
+        help="condition to measure (repeatable; default: the smoke's three)",
+    )
+    args = ap.parse_args()
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     dtype = torch.bfloat16
-    sel = wanted_spans()
-    print(f"{len(sel)} pairs carry a minted-word span")
+    minted = MINTED
+    if args.mapping is not None:
+        minted = set(json.loads(args.mapping.read_text(encoding="utf-8"))["word"])
+    sel = wanted_spans(args.corpus, minted)
+    print(f"{len(sel)} pairs carry a minted-word span ({len(minted)} surfaces)")
 
     from anima_lora import default_checkpoints
 
@@ -124,24 +160,10 @@ def main() -> None:
         ids = [i for i, r in enumerate(cached.records) if r["id"] in sel]
         return masked_span_loss(cached, ids, adapter, device, dtype, sel, label)
 
-    # 1) pre-mint: spelled-out encoding, joint pack (old caches)
-    run(
-        [BASE / "cache_ko", BASE / "cache_desc_ko"],
-        REPO / "output" / "ckpt" / "cjk_vocab_pack_synthjako2",
-        "pre-mint (spelled-out, joint pack)",
-    )
-    # 2) minted init: minted encoding, un-trained minted rows
-    run(
-        [BASE / "cache_mint_smoke"],
-        HERE / "assets" / "ext_embed_mint",
-        "mint init (minted encoding, pooled init)",
-    )
-    # 3) minted trained: minted encoding, smoke2 rows
-    run(
-        [BASE / "cache_mint_smoke"],
-        REPO / "output" / "ckpt" / "cjk_vocab_pack_mint_smoke2",
-        "mint trained (smoke2)",
-    )
+    for arm in args.arm or SMOKE_ARMS:
+        label, rest = arm.split("=", 1)
+        caches, pack = rest.rsplit(":", 1)
+        run(caches.split(","), pack, label)
 
 
 if __name__ == "__main__":

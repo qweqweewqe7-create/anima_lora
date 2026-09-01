@@ -229,6 +229,15 @@ def main() -> None:
         help="always include",
     )
     ap.add_argument(
+        "--only",
+        nargs="*",
+        default=None,
+        help="restrict targets to these tags (plan_ko3 M1 densification: "
+        "top up one minted name to a pair floor without regenerating the "
+        "whole register — point --out at a scratch dir so the standing "
+        "names_synth/pairs_synth files are not clobbered)",
+    )
+    ap.add_argument(
         "--context",
         choices=["en", "ja", "both"],
         default="ja",
@@ -313,6 +322,11 @@ def main() -> None:
         for t, r in wiki.items()
         if r["cat"] == "character" and r["count"] >= args.min_posts
     }
+    if args.only:
+        missing = set(args.only) - cand
+        if missing:
+            raise SystemExit(f"--only tags not in the candidate set: {missing}")
+        cand &= set(args.only)
     targets = []
     for t in sorted(cand, key=lambda t: -wiki.get(t, {}).get("count", 0)):
         r = wiki.get(t)

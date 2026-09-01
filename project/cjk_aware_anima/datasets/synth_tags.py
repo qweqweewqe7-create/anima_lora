@@ -61,6 +61,11 @@ DEFAULT_PAIRS = REPO / "post_image_dataset" / "cjk_distill" / "pairs_synth.jsonl
 DEFAULT_CAPTIONS = REPO / "image_dataset"
 REGISTER = "tags_synth_ja"
 SEED_REGISTERS = ("tags", "tags_alt", "names", "names_synth_ja")
+# --lang ko: same machinery, KO surfaces (plan_ko3 M1 loanword-tag widening).
+KO_PROMPTS = REPO / "project" / "cjk_aware_anima" / "assets" / "ko_eval_prompts.json"
+KO_PAIRS = REPO / "post_image_dataset" / "cjk_distill" / "pairs_synth_ko.jsonl"
+KO_REGISTER = "tags_synth_ko"
+KO_SEED_REGISTERS = ("tags_ko", "tags_alt_ko", "names_ko", "names_synth_ko")
 
 
 def load_encoder(pack: Path):
@@ -90,7 +95,7 @@ def load_encoder(pack: Path):
     return rows
 
 
-def eval_targets(prompts: Path) -> list[tuple[str, str, str]]:
+def eval_targets(prompts: Path, key: str = "ja") -> list[tuple[str, str, str]]:
     """Aligned (prompt_id, en_seg, ja_seg) for every tag-style prompt seg."""
     data = json.loads(prompts.read_text(encoding="utf-8"))
     out, seen = [], set()
@@ -99,7 +104,7 @@ def eval_targets(prompts: Path) -> list[tuple[str, str, str]]:
             continue
         if pid[0] not in "tc":  # tag-style + composition registers only
             continue
-        en, ja = rec["en"].split(", "), rec["ja"].split(", ")
+        en, ja = rec["en"].split(", "), rec[key].split(", ")
         if len(en) != len(ja):
             raise SystemExit(f"{pid}: en/ja segment count mismatch")
         for e, j in zip(en, ja):
@@ -132,10 +137,34 @@ def main() -> None:
         default=[],
         help="extra 'en|ja' wordings to include regardless of the prompt files",
     )
+    ap.add_argument(
+        "--lang",
+        default="ja",
+        choices=["ja", "ko"],
+        help="student-side language: ko reads ko_eval_prompts / the _ko "
+        "registers, mints register tags_synth_ko, joins rng-free with ', '",
+    )
+    ap.add_argument(
+        "--rows-from",
+        type=int,
+        default=0,
+        help="keep only targets whose encoding touches an ext row >= this "
+        "index (plan_ko3 M1: scope allocation to minted word rows — under "
+        "--span_focus_from, pairs for any other target are dead weight)",
+    )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
     rng = random.Random(args.seed)
+    if args.lang == "ko":
+        if args.prompts == DEFAULT_PROMPTS:
+            args.prompts = KO_PROMPTS
+        if args.pairs == DEFAULT_PAIRS:
+            args.pairs = KO_PAIRS
+        if args.glossary == tag_glossary.DEFAULT_OUT:
+            args.glossary = tag_glossary.ASSETS / "tag_glossary_ko.json"
+    register = REGISTER if args.lang == "ja" else KO_REGISTER
+    seed_registers = SEED_REGISTERS if args.lang == "ja" else KO_SEED_REGISTERS
 
     rows = load_encoder(args.pack)
 
@@ -146,17 +175,19 @@ def main() -> None:
         for line in f:
             base.append(line.rstrip("\n"))
             rec = json.loads(line)
-            if rec.get("register") not in SEED_REGISTERS:
+            if rec.get("register") not in seed_registers:
                 continue
             for sp in rec.get("spans") or []:
                 if sp.get("via") != "en_pinned":
                     visits.update(rows(sp["ja"]))
 
-    cand = eval_targets(args.prompts)
+    cand = eval_targets(args.prompts, key=args.lang)
     cand += [("extra", *t.split("|", 1)) for t in args.extra_terms]
     targets = []
     for pid, en, ja in cand:
         r = rows(ja)
+        if args.rows_from and not any(i >= args.rows_from for i in r):
+            continue
         under = [i for i in r if visits[i] < args.floor]
         if under:
             targets.append((pid, en, ja, min(visits[i] for i in under)))
@@ -209,12 +240,13 @@ def main() -> None:
             segs[i] = en
             ja_out[i] = ja
             spans[i] = {"en": en, "ja": ja, "via": "eval_pinned", "f1": 0.0}
-            joiner = build_pairs.pick_joiner(rng)
+            joiner = build_pairs.pick_joiner(rng if args.lang == "ja" else None)
             minted.append(
                 {
                     "id": f"SYNT/{pid}/{en}/{k}",
                     "source": "SYNT",
-                    "register": REGISTER,
+                    "register": register,
+                    "lang": args.lang,
                     "en": ", ".join(segs),
                     "ja": joiner.join(ja_out),
                     "joiner": joiner,
@@ -224,9 +256,10 @@ def main() -> None:
             )
             by_target[(en, ja)] += 1
 
+    suffix = "" if args.lang == "ja" else f"_{args.lang}"
     out_dir = args.pairs.parent
-    only = out_dir / "tags_synth.jsonl"
-    merged = out_dir / "pairs_synth_tags.jsonl"
+    only = out_dir / f"tags_synth{suffix}.jsonl"
+    merged = out_dir / f"pairs_synth_tags{suffix}.jsonl"
     with only.open("w", encoding="utf-8") as f:
         for rec in minted:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
