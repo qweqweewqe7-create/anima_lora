@@ -335,12 +335,15 @@ def build_table(cfg, cached_train, pool, ext_init, device, visits=None) -> tuple
     if visits is None:
         visits = compute_visits(cached_train, pool, ext_init.shape[0])
     tunable = (visits >= cfg.min_visits).nonzero(as_tuple=True)[0]
+    if cfg.tunable_rows_from:
+        tunable = tunable[tunable >= cfg.tunable_rows_from]
     logger.info(
-        "ext rows: %d total, %d visited, %d tunable (>=%d visits)",
+        "ext rows: %d total, %d visited, %d tunable (>=%d visits, from row %d)",
         ext_init.shape[0],
         int((visits > 0).sum()),
         len(tunable),
         cfg.min_visits,
+        cfg.tunable_rows_from,
     )
     table = ext_table.ExtTable(
         ext_init, mode=cfg.param, rank=cfg.rank, tunable_rows=tunable
@@ -598,8 +601,20 @@ def train_arm(cfg, ctx, device, dtype) -> tuple[dict, object, torch.Tensor]:
             baseline["discrimination_far"],
         )
 
+    def focus_spans(b: dict) -> dict:
+        """--span_focus_from: keep only spans that touch a minted ext row."""
+        pk = b.get("span_pack")
+        if not cfg.span_focus_from or not pk:
+            return b
+        floor = ext_table.T5_TABLE_SIZE + cfg.span_focus_from
+        minted = (b["s_ids"].reshape(-1)[pk["s_flat"]] >= floor).float()
+        hits = torch.zeros(pk["n_spans"], device=minted.device)
+        hits.index_add_(0, pk["s_seg"], minted)
+        b["span_pack"] = {**pk, "w": pk["w"] * (hits > 0).float()}
+        return b
+
     for step in range(1, cfg.steps + 1):
-        b = prefetch.result()
+        b = focus_spans(prefetch.result())
         prefetch = loader.submit(next_batch)
         student = student_forward(adapter, b)
         total, parts = loss_mod.compute(

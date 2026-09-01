@@ -216,6 +216,7 @@ class HybridT5Encoder:
     qwen_tok: object
     qwen_map: dict[int, int]
     char_map: dict[str, int]
+    word_map: dict[str, int] | None = None
 
     @classmethod
     def from_mapping(cls, t5_tok, qwen_tok, mapping: dict) -> "HybridT5Encoder":
@@ -230,7 +231,11 @@ class HybridT5Encoder:
             if len(core) == 1:
                 char_map.setdefault(core, qwen_map[qid])
         return cls(
-            t5_tok=t5_tok, qwen_tok=qwen_tok, qwen_map=qwen_map, char_map=char_map
+            t5_tok=t5_tok,
+            qwen_tok=qwen_tok,
+            qwen_map=qwen_map,
+            char_map=char_map,
+            word_map=mapping.get("word") or None,
         )
 
     def _encode_cjk(self, span: str) -> tuple[list[int], list[tuple[int, int]]]:
@@ -275,6 +280,46 @@ class HybridT5Encoder:
         flush_frag()
         return out, offs
 
+    def _encode_cjk_words(self, span: str) -> tuple[list[int], list[tuple[int, int]]]:
+        """``_encode_cjk`` with a greedy longest-match pass over ``word_map``.
+
+        Minted word rows (``mapping["word"]``) take one slot for a surface the
+        base vocab would spell out char-by-char; everything between matches
+        goes through the ordinary Qwen path unchanged.
+        """
+        if not self.word_map:
+            return self._encode_cjk(span)
+        lengths = sorted({len(w) for w in self.word_map}, reverse=True)
+        out: list[int] = []
+        offs: list[tuple[int, int]] = []
+        i, rest_start = 0, 0
+
+        def flush_rest(end: int):
+            if end > rest_start:
+                r_ids, r_offs = self._encode_cjk(span[rest_start:end])
+                out.extend(r_ids)
+                offs.extend((rest_start + a, rest_start + b) for a, b in r_offs)
+
+        while i < len(span):
+            hit = next(
+                (
+                    span[i : i + n]
+                    for n in lengths
+                    if i + n <= len(span) and span[i : i + n] in self.word_map
+                ),
+                None,
+            )
+            if hit is None:
+                i += 1
+                continue
+            flush_rest(i)
+            out.append(T5_TABLE_SIZE + self.word_map[hit])
+            offs.append((i, i + len(hit)))
+            i += len(hit)
+            rest_start = i
+        flush_rest(len(span))
+        return out, offs
+
     def encode_aligned(
         self, text: str, max_length: int = 512
     ) -> tuple[list[int], list[int], list[tuple[int, int]]]:
@@ -291,7 +336,7 @@ class HybridT5Encoder:
         base = 0
         for kind, span in segment_runs(text):
             if kind == "cjk":
-                s_ids, s_offs = self._encode_cjk(span)
+                s_ids, s_offs = self._encode_cjk_words(span)
             else:
                 enc = self.t5_tok(
                     span, add_special_tokens=False, return_offsets_mapping=True

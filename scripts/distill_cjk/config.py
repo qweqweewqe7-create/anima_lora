@@ -174,6 +174,22 @@ def build_argparser() -> argparse.ArgumentParser:
         help="rows below this visit count get no per-row residual (they ride "
         "the global map alone) — 933 of 3002 visited rows are seen 1-4×.",
     )
+    p.add_argument(
+        "--tunable_rows_from",
+        type=int,
+        default=0,
+        help="freeze every ext row below this index at its init (row/global_row "
+        "modes) — the word-minting smoke trains only appended rows on top of a "
+        "trained pack passed as --ext_prefix.",
+    )
+    p.add_argument(
+        "--span_focus_from",
+        type=int,
+        default=0,
+        help="zero the span-loss weight of every span whose student tokens are "
+        "all below this ext-row index — concentrates the whole gradient on "
+        "minted-row spans instead of diluting it across the frozen 90%%.",
+    )
 
     # ---- adapter capacity (plan3: ext-gated LoRA on the LLM Adapter) --------
     p.add_argument(
@@ -290,6 +306,8 @@ class CJKDistillConfig:
     param: str
     rank: int
     min_visits: int
+    tunable_rows_from: int = 0
+    span_focus_from: int = 0
 
     adapter_lora: int = 0
     adapter_lora_targets: str = "self_qkvo,cross_q"
@@ -387,6 +405,8 @@ def resolve_config(args: argparse.Namespace) -> CJKDistillConfig:
         param=args.param,
         rank=int(args.rank),
         min_visits=int(args.min_visits),
+        tunable_rows_from=int(args.tunable_rows_from),
+        span_focus_from=int(args.span_focus_from),
         adapter_lora=int(args.adapter_lora),
         adapter_lora_targets=str(args.adapter_lora_targets),
         adapter_lora_lr=float(args.adapter_lora_lr),
