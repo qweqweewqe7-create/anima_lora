@@ -177,3 +177,72 @@ hardcodes 32128 in `comfy/ldm/anima/model.py`, and still can't carry the
 tokenizer). ComfyUI needs one node wrapping the CLIP's t5xxl tokenize path +
 an object patch on the adapter embed (forward-hook-not-override invariant);
 endgame is upstream to core. Details in [`deliverables.md`](deliverables.md#ship-contract).
+
+## 8. Word-row minting, one day in (plan_ko3 M1–M2, 2026-09-01)
+
+What ran (all same-day; envelopes `bench/cjk_distill/results/20260901-15*` /
+`-16*`, grids `bench/cjk_adapter/results/20260901-15*` / `-16*`):
+the eojeol boundary guard (risk 1) landed unit-tested; M1 densified the
+corpus (레이무 27→203 pairs via `synth_names --only`, 그레이스케일/커플룩/무녀복
+1/2/10→~300 via the new `synth_tags --lang ko`, 11th row minted, 2,348-pair
+`pairs_mint_m1` via the now-committed `mint_corpus.py`); M2 ran four
+anti-drift arms (a: `--span_focus_bg 0.05`, b: `--row_anchor 1.0`, c: 1000
+steps, d: `span:1.0,attn:0.25`); then a decomposition grid (composition /
+init / trained at the same seed) re-attributed the whole M2 phase.
+
+**Holds:**
+
+- **Tag-tier minting works and is data-driven.** c3 그레이스케일 binds
+  monochrome after 1→301 pairs (composition baseline fails it); non-target
+  prompts stay **pixel-identical** to the shipped pack (16/16, EN 20/20) —
+  the word-match layer is structurally clean. Embedding F3 bar holds at
+  scale: trained 0.227 ≤ composition 0.321 (per-surface: reimu 0.202 ≤
+  0.227, tags 0.741→0.218).
+- **Name-tier identity did not materialize at ~200 caption-swap pairs**
+  (one measured point, not a floor sweep; readout confounded by the
+  junk-mode issue below).
+- **The junk-mode re-attribution (the day's main lesson).** At seed 7 the
+  KO name prompts render junk (sketch/panda/chibi) under *every* encoder
+  variant — shipped spelled-out composition, pooled-mean init, and all four
+  trained arms — while EN renders canonical identity at the same seed. The
+  off-manifold modes are the **pre-existing weak-conditioning failure of KO
+  names in the shipped pack**, not something minting or its training
+  introduced. Mechanically verified while chasing a suspected bug: word
+  rows fire (pixel gates), frozen base bit-equal to the shipped pack,
+  arms produce genuinely different weights (Δ/init 0.11/0.16/0.22) and
+  genuinely different renders (pairwise pixel diffs 2–14) — no bug.
+- **attn loss does not bind on 11 rows** (m2d history: 0.55→0.50 bouncing,
+  `cos_student_vs_en_attn` 0.738→0.727) — the whole-sequence readout dilutes
+  11 rows' contribution the same way the batch span loss did in the smoke
+  (F2). Scoped to few-row training; not a verdict on `attn` as an objective.
+
+**Overclaims corrected (recorded per user call, 2026-09-01):**
+
+1. **M1's original verdict — "renders drift off-manifold; the smoke's t5
+   drift diagnosis generalizes to the name tier" — was a misattribution on
+   an incomplete control.** We compared minted renders only against the EN
+   arm; the right control (spelled-out composition at the same seed) was
+   first rendered *after* M2d and shows the same junk modes. The M2 phase
+   was aimed at a drift that does not exist.
+2. **Consequently M2a/b/c/d are NOT falsifications of their mechanisms.**
+   Mixed focus, init-anchor, step caps, and the attn regulariser were judged
+   against an unwinnable gate ("fix the s7 sketch"). None of these is a
+   closed lever; do not cite this day as "row_anchor doesn't work" etc.
+   (What did close: at these magnitudes none of them changes name-tier
+   renders materially — drift magnitude is not the knob.)
+3. **The smoke's F4 render claims were single-seed** (seed 42), violating
+   the line's own K3 rule: n2's "strongest result, every attribute binds"
+   did not survive seeds 7/1234 (blonde sketch / chibi sticker), and t5's
+   "row over-shot off the human manifold" presumed a drift causality the
+   decomposition undermines. Multi-seed before believing any render claim —
+   the rule existed and was skipped in the excitement.
+4. "이름 티어 로우 민팅 실패 확정" as stated mid-session is too strong:
+   one pair-count point, confounded readout. The honest form is the second
+   bullet under *Holds*.
+
+**Parked, not closed:** the C fallback (inference-time surface→EN-token
+substitution, `word_sub` in the encoder + `mint_words --subs`) is
+implemented, unit-tested, and one render pair was queued — **parked by user
+call before any verdict**. Its premise (the EN arm renders identity
+perfectly at every tested seed) is observed fact; whether substitution
+inherits it is unmeasured.

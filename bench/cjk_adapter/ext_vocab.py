@@ -222,6 +222,10 @@ class HybridT5Encoder:
     qwen_map: dict[int, int]
     char_map: dict[str, int]
     word_map: dict[str, int] | None = None
+    # surface → base-vocab t5 id sequence (the C fallback: substitute a known
+    # CJK surface with the EN tag's stock spiece tokens at encode time — the
+    # pretrained rows carry the identity no minted row learns; zero training).
+    word_sub: dict[str, list[int]] | None = None
 
     @classmethod
     def from_mapping(cls, t5_tok, qwen_tok, mapping: dict) -> "HybridT5Encoder":
@@ -241,6 +245,7 @@ class HybridT5Encoder:
             qwen_map=qwen_map,
             char_map=char_map,
             word_map=mapping.get("word") or None,
+            word_sub=mapping.get("word_sub") or None,
         )
 
     def _encode_cjk(self, span: str) -> tuple[list[int], list[tuple[int, int]]]:
@@ -300,9 +305,10 @@ class HybridT5Encoder:
         JA has no spaces — minting JA words is deferred until it gets its own
         boundary design (plan_ko3 M3).
         """
-        if not self.word_map:
+        surfaces: set[str] = set(self.word_map or ()) | set(self.word_sub or ())
+        if not surfaces:
             return self._encode_cjk(span)
-        lengths = sorted({len(w) for w in self.word_map}, reverse=True)
+        lengths = sorted({len(w) for w in surfaces}, reverse=True)
         out: list[int] = []
         offs: list[tuple[int, int]] = []
         i, rest_start = 0, 0
@@ -321,7 +327,7 @@ class HybridT5Encoder:
                 (
                     span[i : i + n]
                     for n in lengths
-                    if i + n <= len(span) and span[i : i + n] in self.word_map
+                    if i + n <= len(span) and span[i : i + n] in surfaces
                 ),
                 None,
             )
@@ -329,8 +335,16 @@ class HybridT5Encoder:
                 i += 1
                 continue
             flush_rest(i)
-            out.append(T5_TABLE_SIZE + self.word_map[hit])
-            offs.append((i, i + len(hit)))
+            group = (i, i + len(hit))
+            if self.word_sub and hit in self.word_sub:
+                # C fallback wins over a minted row for the same surface: the
+                # substituted stock tokens carry pretrained identity.
+                sub = self.word_sub[hit]
+                out.extend(int(t) for t in sub)
+                offs.extend(group for _ in sub)
+            else:
+                out.append(T5_TABLE_SIZE + self.word_map[hit])
+                offs.append(group)
             i += len(hit)
             rest_start = i
         flush_rest(len(span))

@@ -81,17 +81,70 @@ only). Readouts (envelope `20260901-1507-2c-mint-m1`, grids `1518/1529/1531`):
   EN arm renders canonical Reimu at the same seeds. n2's smoke win also
   destabilizes across seeds (blonde sketch / chibi sticker).
 
-Verdict: the n1 miss cannot be declared data-bound — **drift confounds it**.
+~~Verdict: the n1 miss cannot be declared data-bound — **drift confounds it**.
 The smoke's t5-only M2 diagnosis generalizes to the name tier: pure span
 focus (background weight 0) lets the 11 rows push any render they touch off
 the manifold. M2 is therefore the blocking phase, and the name-tier floor
-question is re-judged after an anti-drift arm on this densified corpus.
+question is re-judged after an anti-drift arm on this densified corpus.~~
+
+**CORRECTED same-day — this verdict was a misattribution on an incomplete
+control** (findings §8): the "off-manifold drift" renders exist in the
+spelled-out composition baseline (shipped pack, no word rows) at the same
+seeds — first rendered only after M2d. The junk modes are the pre-existing
+weak-conditioning failure of KO names, not mint-induced drift. The smoke's
+F4 render claims (n2 "every attribute binds", t5 "over-shot off the human
+manifold") were single-seed, in violation of the line's own K3 rule.
 
 **M2 — anti-drift (the t5 fix).** Candidates, cheapest first: (a) mixed
 focus — background spans at small weight (0.05–0.1) instead of 0, so the
 surrounding scene anchors the row on-manifold; (b) init-anchor penalty
 (`‖row − init‖`); (c) cap per-row lr/steps. One arm each on the smoke corpus,
-gate on t5 rendering *human* twins while n2 keeps its win.
+gate on t5 rendering *human* twins while n2 keeps its win. *(Arms run on the
+densified m1 corpus, not the smoke corpus — the ship candidate trains on it
+anyway and M1 landed first.)*
+
+*M2a RUN 2026-09-01 (`2c-mint-m2a`, `--span_focus_bg 0.05`) — **no effect on
+drift.*** Embedding unchanged (0.2275/0.2020 vs m1's 0.2273/0.2019), renders
+essentially identical to m1 at seeds 42/7/1234 (n1 still the hooded sketch at
+s7, n2 still the blonde sketch). Mechanism read: the background spans are
+already well-fit by the frozen base rows, so their gradient is ~0 — the
+anchor it was supposed to provide never materializes. Measured drift of the
+m1 rows: ‖Δ‖/‖init‖ 0.13–0.29 (쌍둥이/그레이스케일 highest at 0.29) — the
+drift lives in the minted rows themselves, motivating (b)/(c).
+
+*M2b RUN (`2c-mint-m2b`, `--row_anchor 1.0`: loss += λ·mean(‖Δ‖²/‖init‖²)) —
+**insufficient.*** Drift bound 0.21→0.16 mean, span pays (0.258 vs 0.244),
+n1 s7 still the same hooded sketch. *M2c RUN (`2c-mint-m2c`, 3000→1000
+steps) — **partial.*** Drift 0.11; n2 s7 visibly recovers (colored single
+girl, orange twin-tails vs m1's blonde sketch) but n1 stays a sketch. Read
+across a/b/c: all three throttle the drift's *magnitude* and none fixes n1 —
+the remaining hypothesis is penalizing its *direction* with a contextual
+term. **M2d queued: `--loss span:1.0,attn:0.25`** — the attn-bank readout
+(DiT cross-attn K/V probes, blocks 0/13/27, sink-accounted) is the in-repo
+context-distillation term, with precedent: plan3's `lora16_reg` where
+`attn:0.25` restored every metric and moved renders halfway back
+(findings §5). Note the eval metric (`cos_student_vs_en_attn`) is this same
+readout — span-only training never optimized it. *(M2d was a user proposal
+— "context distill, MLM처럼" — mapped onto the existing attn loss.)*
+
+*M2d RUN + decomposition — **the M2 phase closes as mis-aimed, not as four
+failed levers** (full record: findings §8).* M2d's attn term never bound on
+11 rows (loss 0.55→0.50 bouncing, `cos_student_vs_en_attn` 0.738→0.727 —
+the same few-row dilution as F2/M2a from the readout side); renders ≈ m1.
+The decomposition grid (composition / init / trained, same seed) then showed
+the junk modes exist **without any word rows at all** — the M2 gate ("fix
+the s7 sketch") was unwinnable because the sketch is the shipped pack's own
+weak-conditioning mode for KO names. None of a/b/c/d is thereby falsified
+as a mechanism; none of them is the name-tier lever either. Bug audit run
+in parallel: word rows fire, frozen base bit-equal, arms differ in weights
+and pixels — machinery clean.
+
+*Status after 2026-09-01:* tag tier (attributes/styles) is **working and
+ship-shaped** (M4 gates 1/2/5 green; c3 binds); name tier is open — the C
+fallback (`word_sub` surface→EN-token substitution, encoder + `mint_words
+--subs` + tests landed) is **built but parked by user call, verdict-free**;
+its two probe grids rendered to
+`bench/cjk_adapter/results/20260901-165*-mint-m1c-sub-grid-s{7,42}`, unread.
 
 **M3 — scale.** Only after M1+M2 gates: KO name families (500) + a curated
 loanword-tag list, allocation visit-floor-driven exactly like

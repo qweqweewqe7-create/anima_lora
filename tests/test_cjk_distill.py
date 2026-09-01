@@ -161,6 +161,21 @@ def test_minted_word_offsets_and_slot_counts():
     assert all(span[a:b] for a, b in offs)
 
 
+def test_word_sub_emits_stock_ids_and_wins_over_a_minted_row():
+    enc = _word_encoder({"레이무": 100})
+    enc.word_sub = {"레이무": [11, 22, 33], "동방": [44]}
+    span = "동방 레이무가"
+    ids, offs = enc._encode_cjk_words(span)
+    assert 44 in ids and [11, 22, 33] == [i for i in ids if i in (11, 22, 33)]
+    assert T5_TABLE_SIZE + 100 not in ids  # sub shadows the minted row
+    for want, (a, b) in zip(
+        [44, 11, 22, 33], [o for i, o in zip(ids, offs) if i < 100]
+    ):
+        assert span[a:b] in ("동방", "레이무")  # each sub id carries its surface span
+    # the eojeol guard applies to subs too
+    assert all(i >= T5_TABLE_SIZE - 1 for i in enc._encode_cjk_words("아레이무")[0])
+
+
 def test_word_map_absent_is_bit_identical_to_the_char_path():
     from bench.cjk_adapter import ext_vocab
 

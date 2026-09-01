@@ -610,7 +610,12 @@ def train_arm(cfg, ctx, device, dtype) -> tuple[dict, object, torch.Tensor]:
         minted = (b["s_ids"].reshape(-1)[pk["s_flat"]] >= floor).float()
         hits = torch.zeros(pk["n_spans"], device=minted.device)
         hits.index_add_(0, pk["s_seg"], minted)
-        b["span_pack"] = {**pk, "w": pk["w"] * (hits > 0).float()}
+        keep = torch.where(
+            hits > 0,
+            torch.ones_like(hits),
+            torch.full_like(hits, cfg.span_focus_bg),
+        )
+        b["span_pack"] = {**pk, "w": pk["w"] * keep}
         return b
 
     for step in range(1, cfg.steps + 1):
@@ -627,6 +632,11 @@ def train_arm(cfg, ctx, device, dtype) -> tuple[dict, object, torch.Tensor]:
             probes=probes,
             seq_total=SEQ_TOTAL,
         )
+        if cfg.row_anchor and table.has_rows and table.n_tunable_rows():
+            ref = table.init[table.tunable_rows].pow(2).sum(-1).clamp_min(1e-8)
+            anchor = (table.residual.pow(2).sum(-1) / ref).mean()
+            total = total + cfg.row_anchor * anchor
+            parts = {**parts, "anchor": float(anchor.detach())}
         opt.zero_grad(set_to_none=True)
         total.backward()
         opt.step()

@@ -190,6 +190,24 @@ def build_argparser() -> argparse.ArgumentParser:
         "all below this ext-row index — concentrates the whole gradient on "
         "minted-row spans instead of diluting it across the frozen 90%%.",
     )
+    p.add_argument(
+        "--span_focus_bg",
+        type=float,
+        default=0.0,
+        help="with --span_focus_from: weight kept by non-minted spans instead "
+        "of 0 (plan_ko3 M2a mixed focus — a small background weight keeps the "
+        "surrounding scene in the loss so minted rows stay on-manifold; the "
+        "smoke's pure focus drifted renders into sketch/robot styles).",
+    )
+    p.add_argument(
+        "--row_anchor",
+        type=float,
+        default=0.0,
+        help="plan_ko3 M2b init-anchor: add λ·mean(‖residual‖²/‖init‖²) over "
+        "the tunable rows so a minted row cannot buy span-cos with a large "
+        "off-manifold excursion (m1 drift was ‖Δ‖/‖init‖ 0.13–0.29 and "
+        "renders left the manifold while span loss improved).",
+    )
 
     # ---- adapter capacity (plan3: ext-gated LoRA on the LLM Adapter) --------
     p.add_argument(
@@ -308,6 +326,8 @@ class CJKDistillConfig:
     min_visits: int
     tunable_rows_from: int = 0
     span_focus_from: int = 0
+    span_focus_bg: float = 0.0
+    row_anchor: float = 0.0
 
     adapter_lora: int = 0
     adapter_lora_targets: str = "self_qkvo,cross_q"
@@ -407,6 +427,8 @@ def resolve_config(args: argparse.Namespace) -> CJKDistillConfig:
         min_visits=int(args.min_visits),
         tunable_rows_from=int(args.tunable_rows_from),
         span_focus_from=int(args.span_focus_from),
+        span_focus_bg=float(args.span_focus_bg),
+        row_anchor=float(args.row_anchor),
         adapter_lora=int(args.adapter_lora),
         adapter_lora_targets=str(args.adapter_lora_targets),
         adapter_lora_lr=float(args.adapter_lora_lr),

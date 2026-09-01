@@ -42,10 +42,22 @@ from bench.cjk_adapter import ext_vocab  # noqa: E402
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--pack", type=Path, required=True, help="trained pack prefix")
-    ap.add_argument("--words", nargs="+", required=True)
+    ap.add_argument("--words", nargs="*", default=[])
+    ap.add_argument(
+        "--subs",
+        nargs="*",
+        default=[],
+        metavar="표기=en text",
+        help="C-fallback substitutions: encode the surface as the EN text's "
+        "stock spiece ids instead of ext rows (zero training — the pretrained "
+        "rows carry identity no minted row learns; plan_ko3 M1-fail branch). "
+        "A surface in both --subs and the word map resolves to the sub.",
+    )
     ap.add_argument("--out", type=Path, required=True, help="output asset prefix")
     ap.add_argument("--text_encoder", default=None)
     args = ap.parse_args()
+    if not args.words and not args.subs:
+        ap.error("nothing to do: pass --words and/or --subs")
 
     from anima_lora import default_checkpoints
     from library.anima import strategy as strategy_anima
@@ -86,13 +98,22 @@ def main() -> None:
             f"{w}: minted row {row} (init = mean of {len(ext_ids)} rows, {len(ids)} slots → 1)"
         )
 
-    if len(rows) == 1:
+    word_sub: dict[str, list[int]] = dict(mapping.get("word_sub") or {})
+    for s in args.subs:
+        surface, en = s.split("=", 1)
+        ids = tok.t5_tokenizer(en, add_special_tokens=False)["input_ids"]
+        word_sub[surface] = [int(i) for i in ids]
+        print(f"{surface}: sub → {en!r} ({len(ids)} stock tokens)")
+
+    if len(rows) == 1 and not args.subs:
         print("nothing to mint")
         return
 
     out_table = torch.cat(rows)
     out_map = dict(mapping)
     out_map["word"] = word_map
+    if word_sub:
+        out_map["word_sub"] = word_sub
     out_map["rows"] = out_table.shape[0]
     out_map["minted_from"] = str(args.pack)
 
