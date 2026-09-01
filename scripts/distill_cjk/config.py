@@ -50,6 +50,11 @@ TRUST_POLICIES = {
         # below `wiki` — and note these rows have *no* supervision otherwise, so
         # the comparison is against 0, not against a better wording.
         "tagpair": 0.6,
+        # KO r5: sub-floor KB keyword that lost (or never faced) back-translation
+        # arbitration — community field, unverified, same trust class as
+        # `tagpair`. Replaces `mt_unverified` wording for 97% of the KO tail
+        # (reports/0901_ko_phase_k3.md).
+        "kb_unverified": 0.6,
         "mt_unverified": 0.3,
         "unresolved": 0.0,
         "unmapped": 0.0,

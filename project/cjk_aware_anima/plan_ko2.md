@@ -65,25 +65,33 @@ change). Two knobs fixed before staging:
   visits to move the s\* readout, small enough that tags_ko/JA sampling mass
   is essentially unchanged.
 
-## Phase R3 — two-arm retrain (GPU, ~2 × 45 min via daemon)
+## Phase R3 — single retrain, replace-not-compare (GPU, ~55 min via daemon)
 
-Both arms re-stage `cache_ko` in full first (r5 changes most pair wordings;
-the stager is positionally keyed — same lesson as r3/r4). Then:
+**Revised 2026-09-01 (user decision: "remove the old one")** — the two-arm
+A/B design is collapsed into one retrain carrying **both** extractions
+(r5 + `desc_ko`), on the argument that attribution on success is not worth a
+second run: if the combined pack passes R4, both changes ship together; only
+on a *failure* does attribution matter, and then an r5-only arm can be run
+lazily to isolate the cause (Arm A demoted to failure-contingency).
 
-- **Arm A** — r5 glossary only. Label `2c-synthjako2-a`.
-- **Arm B** — r5 + `desc_ko` at 0.10. Label `2c-synthjako2-b`.
+Safety rails for "remove the old one":
 
-Both warm-start from `cjk_vocab_pack_synthja_v4` with the settled recipe and
-write **distinct `--out` names** — the shipped `cjk_vocab_pack_synthjako`
-file is never overwritten (v1 was lost to exactly this; a pack that renders
-in a grid must stay reproducible).
+- The pre-r5 corpus state is recoverable: docs/plan committed (`2ca6bc91`),
+  glossary backed up on disk as `assets/tag_glossary_ko.pre_r5.json`
+  (assets/ is gitignored — the on-disk copy is the real snapshot, same
+  convention as r3's `pre_round3`).
+- The shipped `cjk_vocab_pack_synthjako` (v2) file is **not** overwritten —
+  the new pack trains to `cjk_vocab_pack_synthjako2` and takes the shipped
+  slot only after R4 (the v1-overwrite lesson).
+- Re-stage ≈ 44 GB in place + desc cache ≈ 8 GB; fits the ~54 GB free.
 
-Attribution contract: A-vs-v2 isolates the r5 glossary effect; B-vs-A
-isolates `desc_ko`. No other knob moves.
-
-Cache budget: re-stage ≈ 44 GB in place + desc cache ≈ 8 GB; volume had
-~54 GB free after the v2 round — fits, but nothing else lands on the volume
-during R3.
+Executed 2026-09-01 morning: r5 reselect applied (`kb_unverified` 3,015
+types / 32.6k occ; `mt_unverified` shrank 4,264→1,251 types), pairs + synth
+names rebuilt, coverage gate green (only the expected-open s\* prose
+morphemes and quote particles — which are exactly the tokens `desc_ko`
+exists to visit). Daemon chain `20260901-0922*`: cache_ko re-stage →
+cache_desc_ko stage → `2c-synthjako2` train (`--eval_limit 1200` so the
+holdout slice spans JA+KO+desc) → the three K3-style grids.
 
 ## Phase R4 — gates
 

@@ -78,6 +78,16 @@ ARBITRATED = {"wiki", "wiki_han", "kb", "unresolved"}
 SRC_RANK = {"wiki": 0, "tagpair": 1, "kb": 1, "mt": 2}
 TAGPAIR_VERIFIED_VIA = "tagpair_verified"
 
+# r5 (2026-09-01): below this occurrence count, an unverified KB keyword
+# outranks the unverified MT rendering. Back-translation F1 against the tag
+# *name* cannot verify booru jargon (백합→"lily"≠yuri, 파이즈리→"titjob"≠
+# paizuri), so in the tail — where nobody reviews and MT degrades into
+# semantic howlers (improvised gag→즉흥 개그) — the community field wins by
+# default. Above the floor the r1–r4-reviewed MT wording stands (blanket
+# KB-first regresses it: swimsuit→비키니, grey hair→은발). Evidence:
+# reports/0901_ko_phase_k3.md; decision file tag_glossary_review_ko_r5_kb.md.
+KB_UNVERIFIED_FLOOR = 100
+
 RATING_JA = {
     "safe": "全年齢",
     "sensitive": "センシティブ",
@@ -517,6 +527,15 @@ def choose(
             "via": via,
             "f1": best["f1"],
         }
+    elif (
+        lang == "ko"
+        and entry.get("count", 0) < KB_UNVERIFIED_FLOOR
+        and (kb := next((c for c in keep if c.get("src") == "kb"), None))
+    ):
+        # Sub-floor tail: the community keyword beats the unverified MT string
+        # (see KB_UNVERIFIED_FLOOR). Marked kb_unverified so the review file
+        # and the trust policy see the class.
+        entry |= {"ja": kb["ja"], "via": "kb_unverified", "f1": kb["f1"]}
     elif mt and wording_ok(mt, lang):
         # No candidate recovers the tag — `closed mouth` came back as 目を閉じる
         # (closed *eyes*). Keep it, but mark it so the review file surfaces the
