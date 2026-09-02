@@ -118,12 +118,7 @@ conflicts = [
 ]
 prerelease = "allow"
 override-dependencies = [
-    "numpy>=2.0.0 ; sys_platform != 'linux' or platform_machine != 'aarch64'",
-    # Preserve main's independently resolved Linux ARM64 stack when the Windows
-    # ROCm branch introduces stricter NumPy/Pillow metadata.
-    "numpy==2.5.2 ; sys_platform == 'linux' and platform_machine == 'aarch64'",
-    "pillow==12.2.0 ; sys_platform != 'linux' or platform_machine != 'aarch64'",
-    "pillow==12.3.0 ; sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "numpy>=2.0.0",
     # AMD's torch metadata requests a Linux-only triton distribution even on
     # Windows. triton-windows is declared in both Windows backend extras.
     "triton ; sys_platform != 'win32'",
@@ -149,22 +144,10 @@ torchvision = [
     { index = "pytorch-cu132", group = "cuda-windows" },
     { index = "amd-rocm-100", group = "rocm-windows" },
 ]
-numpy = [
-    { index = "pypi-preserved", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
-]
-pillow = [
-    { index = "pypi-preserved" },
-]
 
 [[tool.uv.index]]
 name = "pytorch-cu132"
 url = "https://download.pytorch.org/whl/cu132"
-explicit = true
-
-[[tool.uv.index]]
-# Keep non-ROCm NumPy/Pillow resolution independent of AMD's package mirror.
-name = "pypi-preserved"
-url = "https://pypi.org/simple"
 explicit = true
 
 # This index also hosts the ROCm runtime/device packages pulled by the device
